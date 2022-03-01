@@ -2,7 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-# Abstract Base Flow Class
+##### FLOW ABC #####
+
 class Flow(nn.Module):
     """
     Generic class for Flow Functions
@@ -20,7 +21,7 @@ class Flow(nn.Module):
     def inverse(self, z):
         raise NotImplementedError('This flow has no algebraic inverse.')
 
-## Flow Types
+##### PLANAR FLOW #####
 
 class Planar(Flow):
     """
@@ -98,6 +99,8 @@ class Planar(Flow):
         if log_det.dim() == 1:
             log_det = log_det.unsqueeze(1)
         return z_, log_det
+
+##### GLOW FLOW #####
 
 class GlowBlock(Flow):
     """
@@ -417,51 +420,6 @@ class Merge(Split):
     def inverse(self, z):
         return super().forward(z)
 
-class AffineConstFlow(Flow):
-    """
-    scales and shifts with learned constants per dimension. In the NICE paper
-    there is a scaling layer which is a special case of this where t is None.
-    """
-    
-    def __init__(self, shape, scale=True, shift=True) -> None:
-        """
-        Constructor
-        :param shape: Shape of the coupling layer
-        :param scale: Flag whether to apply scaling
-        :param shift: Flag whether to apply shift
-        :param logscale_factor: Optional factor which can be used to control
-        the scale of the log scale factor.
-        """
-        super().__init__()
-        if scale:
-            self.s = nn.Parameter(torch.zeros(shape)[None])
-        else:
-            self.register_buffer('s', torch.zeros(shape)[None])
-        if shift:
-            self.t = nn.Parameter(torch.zeros(shape)[None])
-        else:
-            self.register_buffer('t', torch.zeros(shape)[None])
-        self.n_dim = self.s.dim()
-        self.batch_dims = torch.nonzero(torch.tensor(self.s.shape) == 1, as_tuple=False)[:,0].tolist()
-
-    def forward(self, z):
-        z_ = z * torch.exp(self.s) + self.t
-        if len(self.batch_dims) > 1:
-            prod_batch_dims = np.prod([z.size(i) for i in self.batch_dims[1:]])
-        else:
-            prod_batch_dims = 1
-        log_det = -prod_batch_dims * torch.sum(self.s)
-        return z_, log_det
-
-    def inverse(self, z):
-        z_ = (z - self.t) * torch.exp(-self.s)
-        if len(self.batch_dims) > 1:
-            prod_batch_dims = np.prod([z.size(i) for i in self.batch_dims[1:]])
-        else:
-            prod_batch_dims = 1
-        log_det = -prod_batch_dims * torch.sum(self.s)
-        return z_, log_det
-
 class Invertible1x1Conv(Flow):
     """
     Invertible 1x1 convolution introduced in the Glow paper
@@ -537,6 +495,51 @@ class Invertible1x1Conv(Flow):
         log_det = log_det * z.size(2) * z.size(3)
         return z_, log_det
 
+class AffineConstFlow(Flow):
+    """
+    scales and shifts with learned constants per dimension. In the NICE paper
+    there is a scaling layer which is a special case of this where t is None.
+    """
+    
+    def __init__(self, shape, scale=True, shift=True) -> None:
+        """
+        Constructor
+        :param shape: Shape of the coupling layer
+        :param scale: Flag whether to apply scaling
+        :param shift: Flag whether to apply shift
+        :param logscale_factor: Optional factor which can be used to control
+        the scale of the log scale factor.
+        """
+        super().__init__()
+        if scale:
+            self.s = nn.Parameter(torch.zeros(shape)[None])
+        else:
+            self.register_buffer('s', torch.zeros(shape)[None])
+        if shift:
+            self.t = nn.Parameter(torch.zeros(shape)[None])
+        else:
+            self.register_buffer('t', torch.zeros(shape)[None])
+        self.n_dim = self.s.dim()
+        self.batch_dims = torch.nonzero(torch.tensor(self.s.shape) == 1, as_tuple=False)[:,0].tolist()
+
+    def forward(self, z):
+        z_ = z * torch.exp(self.s) + self.t
+        if len(self.batch_dims) > 1:
+            prod_batch_dims = np.prod([z.size(i) for i in self.batch_dims[1:]])
+        else:
+            prod_batch_dims = 1
+        log_det = -prod_batch_dims * torch.sum(self.s)
+        return z_, log_det
+
+    def inverse(self, z):
+        z_ = (z - self.t) * torch.exp(-self.s)
+        if len(self.batch_dims) > 1:
+            prod_batch_dims = np.prod([z.size(i) for i in self.batch_dims[1:]])
+        else:
+            prod_batch_dims = 1
+        log_det = -prod_batch_dims * torch.sum(self.s)
+        return z_, log_det
+        
 class ActNorm(AffineConstFlow):
     """
     An AffineConstFlow but with a data-dependent initialization,
@@ -568,3 +571,441 @@ class ActNorm(AffineConstFlow):
             self.t.data = z.mean(dim=self.batch_dims, keepdim=True).data
             self.data_dep_init_done = torch.tensor(1.)
         return super().inverse(z)
+
+# COQUI
+
+class ActNorm(nn.Module):
+    """Activation Normalization bijector as an alternative to Batch Norm. It computes
+    mean and std from a sample data in advance and it uses these values
+    for normalization at training.
+
+    Args:
+        channels (int): input channels.
+        ddi (False): data depended initialization flag.
+
+    Shapes:
+        - inputs: (B, C, T)
+        - outputs: (B, C, T)
+    """
+
+    def __init__(self, channels, ddi=False, **kwargs):  # pylint: disable=unused-argument
+        super().__init__()
+        self.channels = channels
+        self.initialized = not ddi
+
+        self.logs = nn.Parameter(torch.zeros(1, channels, 1))
+        self.bias = nn.Parameter(torch.zeros(1, channels, 1))
+
+    def forward(self, x, x_mask=None, reverse=False, **kwargs):  # pylint: disable=unused-argument
+        if x_mask is None:
+            x_mask = torch.ones(x.size(0), 1, x.size(2)).to(device=x.device, dtype=x.dtype)
+        x_len = torch.sum(x_mask, [1, 2])
+        if not self.initialized:
+            self.initialize(x, x_mask)
+            self.initialized = True
+
+        if reverse:
+            z = (x - self.bias) * torch.exp(-self.logs) * x_mask
+            logdet = None
+        else:
+            z = (self.bias + torch.exp(self.logs) * x) * x_mask
+            logdet = torch.sum(self.logs) * x_len  # [b]
+
+        return z, logdet
+
+    def store_inverse(self):
+        pass
+
+    def set_ddi(self, ddi):
+        self.initialized = not ddi
+
+    def initialize(self, x, x_mask):
+        with torch.no_grad():
+            denom = torch.sum(x_mask, [0, 2])
+            m = torch.sum(x * x_mask, [0, 2]) / denom
+            m_sq = torch.sum(x * x * x_mask, [0, 2]) / denom
+            v = m_sq - (m ** 2)
+            logs = 0.5 * torch.log(torch.clamp_min(v, 1e-6))
+
+            bias_init = (-m * torch.exp(-logs)).view(*self.bias.shape).to(dtype=self.bias.dtype)
+            logs_init = (-logs).view(*self.logs.shape).to(dtype=self.logs.dtype)
+
+            self.bias.data.copy_(bias_init)
+            self.logs.data.copy_(logs_init)
+
+from distutils.version import LooseVersion
+
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+from TTS.tts.layers.generic.wavenet import WN
+
+from ..generic.normalization import LayerNorm
+
+
+class ResidualConv1dLayerNormBlock(nn.Module):
+    """Conv1d with Layer Normalization and residual connection as in GlowTTS paper.
+    https://arxiv.org/pdf/1811.00002.pdf
+
+    ::
+
+        x |-> conv1d -> layer_norm -> relu -> dropout -> + -> o
+          |---------------> conv1d_1x1 ------------------|
+
+    Args:
+        in_channels (int): number of input tensor channels.
+        hidden_channels (int): number of inner layer channels.
+        out_channels (int): number of output tensor channels.
+        kernel_size (int): kernel size of conv1d filter.
+        num_layers (int): number of blocks.
+        dropout_p (float): dropout rate for each block.
+    """
+
+    def __init__(self, in_channels, hidden_channels, out_channels, kernel_size, num_layers, dropout_p):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.num_layers = num_layers
+        self.dropout_p = dropout_p
+        assert num_layers > 1, " [!] number of layers should be > 0."
+        assert kernel_size % 2 == 1, " [!] kernel size should be odd number."
+
+        self.conv_layers = nn.ModuleList()
+        self.norm_layers = nn.ModuleList()
+
+        for idx in range(num_layers):
+            self.conv_layers.append(
+                nn.Conv1d(
+                    in_channels if idx == 0 else hidden_channels, hidden_channels, kernel_size, padding=kernel_size // 2
+                )
+            )
+            self.norm_layers.append(LayerNorm(hidden_channels))
+
+        self.proj = nn.Conv1d(hidden_channels, out_channels, 1)
+        self.proj.weight.data.zero_()
+        self.proj.bias.data.zero_()
+
+    def forward(self, x, x_mask):
+        """
+        Shapes:
+            - x: :math:`[B, C, T]`
+            - x_mask: :math:`[B, 1, T]`
+        """
+        x_res = x
+        for i in range(self.num_layers):
+            x = self.conv_layers[i](x * x_mask)
+            x = self.norm_layers[i](x * x_mask)
+            x = F.dropout(F.relu(x), self.dropout_p, training=self.training)
+        x = x_res + self.proj(x)
+        return x * x_mask
+
+
+class InvConvNear(nn.Module):
+    """Invertible Convolution with input splitting as in GlowTTS paper.
+    https://arxiv.org/pdf/1811.00002.pdf
+
+    Args:
+        channels (int): input and output channels.
+        num_splits (int): number of splits, also H and W of conv layer.
+        no_jacobian (bool): enable/disable jacobian computations.
+
+    Note:
+        Split the input into groups of size self.num_splits and
+        perform 1x1 convolution separately. Cast 1x1 conv operation
+        to 2d by reshaping the input for efficiency.
+    """
+
+    def __init__(self, channels, num_splits=4, no_jacobian=False, **kwargs):  # pylint: disable=unused-argument
+        super().__init__()
+        assert num_splits % 2 == 0
+        self.channels = channels
+        self.num_splits = num_splits
+        self.no_jacobian = no_jacobian
+        self.weight_inv = None
+
+        if LooseVersion(torch.__version__) < LooseVersion("1.9"):
+            w_init = torch.qr(torch.FloatTensor(self.num_splits, self.num_splits).normal_())[0]
+        else:
+            w_init = torch.linalg.qr(torch.FloatTensor(self.num_splits, self.num_splits).normal_(), "complete")[0]
+
+        if torch.det(w_init) < 0:
+            w_init[:, 0] = -1 * w_init[:, 0]
+        self.weight = nn.Parameter(w_init)
+
+    def forward(self, x, x_mask=None, reverse=False, **kwargs):  # pylint: disable=unused-argument
+        """
+        Shapes:
+            - x: :math:`[B, C, T]`
+            - x_mask: :math:`[B, 1, T]`
+        """
+        b, c, t = x.size()
+        assert c % self.num_splits == 0
+        if x_mask is None:
+            x_mask = 1
+            x_len = torch.ones((b,), dtype=x.dtype, device=x.device) * t
+        else:
+            x_len = torch.sum(x_mask, [1, 2])
+
+        x = x.view(b, 2, c // self.num_splits, self.num_splits // 2, t)
+        x = x.permute(0, 1, 3, 2, 4).contiguous().view(b, self.num_splits, c // self.num_splits, t)
+
+        if reverse:
+            if self.weight_inv is not None:
+                weight = self.weight_inv
+            else:
+                weight = torch.inverse(self.weight.float()).to(dtype=self.weight.dtype)
+            logdet = None
+        else:
+            weight = self.weight
+            if self.no_jacobian:
+                logdet = 0
+            else:
+                logdet = torch.logdet(self.weight) * (c / self.num_splits) * x_len  # [b]
+
+        weight = weight.view(self.num_splits, self.num_splits, 1, 1)
+        z = F.conv2d(x, weight)
+
+        z = z.view(b, 2, self.num_splits // 2, c // self.num_splits, t)
+        z = z.permute(0, 1, 3, 2, 4).contiguous().view(b, c, t) * x_mask
+        return z, logdet
+
+    def store_inverse(self):
+        weight_inv = torch.inverse(self.weight.float()).to(dtype=self.weight.dtype)
+        self.weight_inv = nn.Parameter(weight_inv, requires_grad=False)
+
+
+class CouplingBlock(nn.Module):
+    """Glow Affine Coupling block as in GlowTTS paper.
+    https://arxiv.org/pdf/1811.00002.pdf
+
+    ::
+
+        x --> x0 -> conv1d -> wavenet -> conv1d --> t, s -> concat(s*x1 + t, x0) -> o
+        '-> x1 - - - - - - - - - - - - - - - - - - - - - - - - - ^
+
+    Args:
+         in_channels (int): number of input tensor channels.
+         hidden_channels (int): number of hidden channels.
+         kernel_size (int): WaveNet filter kernel size.
+         dilation_rate (int): rate to increase dilation by each layer in a decoder block.
+         num_layers (int): number of WaveNet layers.
+         c_in_channels (int): number of conditioning input channels.
+         dropout_p (int): wavenet dropout rate.
+         sigmoid_scale (bool): enable/disable sigmoid scaling for output scale.
+
+    Note:
+         It does not use the conditional inputs differently from WaveGlow.
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        kernel_size,
+        dilation_rate,
+        num_layers,
+        c_in_channels=0,
+        dropout_p=0,
+        sigmoid_scale=False,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.kernel_size = kernel_size
+        self.dilation_rate = dilation_rate
+        self.num_layers = num_layers
+        self.c_in_channels = c_in_channels
+        self.dropout_p = dropout_p
+        self.sigmoid_scale = sigmoid_scale
+        # input layer
+        start = torch.nn.Conv1d(in_channels // 2, hidden_channels, 1)
+        start = torch.nn.utils.weight_norm(start)
+        self.start = start
+        # output layer
+        # Initializing last layer to 0 makes the affine coupling layers
+        # do nothing at first.  This helps with training stability
+        end = torch.nn.Conv1d(hidden_channels, in_channels, 1)
+        end.weight.data.zero_()
+        end.bias.data.zero_()
+        self.end = end
+        # coupling layers
+        self.wn = WN(in_channels, hidden_channels, kernel_size, dilation_rate, num_layers, c_in_channels, dropout_p)
+
+    def forward(self, x, x_mask=None, reverse=False, g=None, **kwargs):  # pylint: disable=unused-argument
+        """
+        Shapes:
+            - x: :math:`[B, C, T]`
+            - x_mask: :math:`[B, 1, T]`
+            - g: :math:`[B, C, 1]`
+        """
+        if x_mask is None:
+            x_mask = 1
+        x_0, x_1 = x[:, : self.in_channels // 2], x[:, self.in_channels // 2 :]
+
+        x = self.start(x_0) * x_mask
+        x = self.wn(x, x_mask, g)
+        out = self.end(x)
+
+        z_0 = x_0
+        t = out[:, : self.in_channels // 2, :]
+        s = out[:, self.in_channels // 2 :, :]
+        if self.sigmoid_scale:
+            s = torch.log(1e-6 + torch.sigmoid(s + 2))
+
+        if reverse:
+            z_1 = (x_1 - t) * torch.exp(-s) * x_mask
+            logdet = None
+        else:
+            z_1 = (t + torch.exp(s) * x_1) * x_mask
+            logdet = torch.sum(s * x_mask, [1, 2])
+
+        z = torch.cat([z_0, z_1], 1)
+        return z, logdet
+
+    def store_inverse(self):
+        self.wn.remove_weight_norm()
+
+import torch
+from torch import nn
+
+from TTS.tts.layers.generic.normalization import ActNorm
+from TTS.tts.layers.glow_tts.glow import CouplingBlock, InvConvNear
+
+
+def squeeze(x, x_mask=None, num_sqz=2):
+    """GlowTTS squeeze operation
+    Increase number of channels and reduce number of time steps
+    by the same factor.
+
+    Note:
+        each 's' is a n-dimensional vector.
+        ``[s1,s2,s3,s4,s5,s6] --> [[s1, s3, s5], [s2, s4, s6]]``
+    """
+    b, c, t = x.size()
+
+    t = (t // num_sqz) * num_sqz
+    x = x[:, :, :t]
+    x_sqz = x.view(b, c, t // num_sqz, num_sqz)
+    x_sqz = x_sqz.permute(0, 3, 1, 2).contiguous().view(b, c * num_sqz, t // num_sqz)
+
+    if x_mask is not None:
+        x_mask = x_mask[:, :, num_sqz - 1 :: num_sqz]
+    else:
+        x_mask = torch.ones(b, 1, t // num_sqz).to(device=x.device, dtype=x.dtype)
+    return x_sqz * x_mask, x_mask
+
+
+def unsqueeze(x, x_mask=None, num_sqz=2):
+    """GlowTTS unsqueeze operation
+
+    Note:
+        each 's' is a n-dimensional vector.
+        ``[[s1, s3, s5], [s2, s4, s6]] --> [[s1, s3, s5], [s2, s4, s6]]``
+    """
+    b, c, t = x.size()
+
+    x_unsqz = x.view(b, num_sqz, c // num_sqz, t)
+    x_unsqz = x_unsqz.permute(0, 2, 3, 1).contiguous().view(b, c // num_sqz, t * num_sqz)
+
+    if x_mask is not None:
+        x_mask = x_mask.unsqueeze(-1).repeat(1, 1, 1, num_sqz).view(b, 1, t * num_sqz)
+    else:
+        x_mask = torch.ones(b, 1, t * num_sqz).to(device=x.device, dtype=x.dtype)
+    return x_unsqz * x_mask, x_mask
+
+
+class Decoder(nn.Module):
+    """Stack of Glow Decoder Modules.
+
+    ::
+
+        Squeeze -> ActNorm -> InvertibleConv1x1 -> AffineCoupling -> Unsqueeze
+
+    Args:
+        in_channels (int): channels of input tensor.
+        hidden_channels (int): hidden decoder channels.
+        kernel_size (int): Coupling block kernel size. (Wavenet filter kernel size.)
+        dilation_rate (int): rate to increase dilation by each layer in a decoder block.
+        num_flow_blocks (int): number of decoder blocks.
+        num_coupling_layers (int): number coupling layers. (number of wavenet layers.)
+        dropout_p (float): wavenet dropout rate.
+        sigmoid_scale (bool): enable/disable sigmoid scaling in coupling layer.
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        kernel_size,
+        dilation_rate,
+        num_flow_blocks,
+        num_coupling_layers,
+        dropout_p=0.0,
+        num_splits=4,
+        num_squeeze=2,
+        sigmoid_scale=False,
+        c_in_channels=0,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.kernel_size = kernel_size
+        self.dilation_rate = dilation_rate
+        self.num_flow_blocks = num_flow_blocks
+        self.num_coupling_layers = num_coupling_layers
+        self.dropout_p = dropout_p
+        self.num_splits = num_splits
+        self.num_squeeze = num_squeeze
+        self.sigmoid_scale = sigmoid_scale
+        self.c_in_channels = c_in_channels
+
+        self.flows = nn.ModuleList()
+        for _ in range(num_flow_blocks):
+            self.flows.append(ActNorm(channels=in_channels * num_squeeze))
+            self.flows.append(InvConvNear(channels=in_channels * num_squeeze, num_splits=num_splits))
+            self.flows.append(
+                CouplingBlock(
+                    in_channels * num_squeeze,
+                    hidden_channels,
+                    kernel_size=kernel_size,
+                    dilation_rate=dilation_rate,
+                    num_layers=num_coupling_layers,
+                    c_in_channels=c_in_channels,
+                    dropout_p=dropout_p,
+                    sigmoid_scale=sigmoid_scale,
+                )
+            )
+
+    def forward(self, x, x_mask, g=None, reverse=False):
+        """
+        Shapes:
+            - x:  :math:`[B, C, T]`
+            - x_mask: :math:`[B, 1 ,T]`
+            - g: :math:`[B, C]`
+        """
+        if not reverse:
+            flows = self.flows
+            logdet_tot = 0
+        else:
+            flows = reversed(self.flows)
+            logdet_tot = None
+
+        if self.num_squeeze > 1:
+            x, x_mask = squeeze(x, x_mask, self.num_squeeze)
+        for f in flows:
+            if not reverse:
+                x, logdet = f(x, x_mask, g=g, reverse=reverse)
+                logdet_tot += logdet
+            else:
+                x, logdet = f(x, x_mask, g=g, reverse=reverse)
+        if self.num_squeeze > 1:
+            x, x_mask = unsqueeze(x, x_mask, self.num_squeeze)
+        return x, logdet_tot
+
+    def store_inverse(self):
+        for f in self.flows:
+            f.store_inverse()
