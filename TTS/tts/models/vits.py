@@ -931,6 +931,7 @@ class Vits(BaseTTS):
             )
             loss_duration = torch.sum((log_durations - attn_log_durations) ** 2, [1, 2]) / torch.sum(x_mask)
         outputs["loss_duration"] = loss_duration
+        outputs["log_duration_pred"] = log_durations
         return outputs, attn
 
     def upsampling_z(self, z, slice_ids=None, y_lengths=None, y_mask=None):
@@ -1312,9 +1313,11 @@ class Vits(BaseTTS):
                     m_p=self.model_outputs_cache["m_p"].float(),
                     logs_p=self.model_outputs_cache["logs_p"].float(),
                     z_len=spec_lens,
+                    token_len=batch["token_lens"],
                     scores_disc_fake=scores_disc_fake,
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
+                    log_duration_pred=self.model_outputs_cache["log_duration_pred"].float(),
                     loss_duration=self.model_outputs_cache["loss_duration"],
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],

@@ -620,6 +620,7 @@ class VitsGeneratorLoss(nn.Module):
         self.feat_loss_alpha = c.feat_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
         self.mel_loss_alpha = c.mel_loss_alpha
+        self.char_dur_loss_alpha = c.char_dur_loss_alpha
         self.spk_encoder_loss_alpha = c.speaker_encoder_loss_alpha
         self.stft = TorchSTFT(
             c.audio.fft_size,
@@ -677,6 +678,13 @@ class VitsGeneratorLoss(nn.Module):
     def cosine_similarity_loss(gt_spk_emb, syn_spk_emb):
         return -torch.nn.functional.cosine_similarity(gt_spk_emb, syn_spk_emb).mean()
 
+    @staticmethod
+    def char_dur_loss(dur_output, decoder_output_lens, input_lens):
+        dur_per_input_pred = (torch.exp(dur_output) - 1).sum(-1)
+        dur_per_input_target = decoder_output_lens.float()
+        char_dur_loss = (nn.functional.l1_loss(dur_per_input_pred, dur_per_input_target, reduction="none") / input_lens.float()).mean()
+        return char_dur_loss
+
     def forward(
         self,
         mel_slice,
@@ -686,9 +694,11 @@ class VitsGeneratorLoss(nn.Module):
         m_p,
         logs_p,
         z_len,
+        token_len,
         scores_disc_fake,
         feats_disc_fake,
         feats_disc_real,
+        log_duration_pred,
         loss_duration,
         use_speaker_encoder_as_loss=False,
         gt_spk_emb=None,
@@ -721,7 +731,8 @@ class VitsGeneratorLoss(nn.Module):
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
         loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
-        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration
+        loss_char_dur = self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len) * self.char_dur_loss_alpha
+        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_char_dur
 
         if use_speaker_encoder_as_loss:
             loss_se = self.cosine_similarity_loss(gt_spk_emb, syn_spk_emb) * self.spk_encoder_loss_alpha
