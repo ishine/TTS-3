@@ -75,8 +75,6 @@ class TextEncoder(nn.Module):
             rel_attn_window_size=4,
         )
 
-        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
-
     def forward(self, x, x_lengths, lang_emb=None):
         """
         Shapes:
@@ -84,21 +82,67 @@ class TextEncoder(nn.Module):
             - x_length: :math:`[B]`
         """
         assert x.shape[0] == x_lengths.shape[0]
-        x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
+        x_emb = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
 
         # concat the lang emb in embedding chars
         if lang_emb is not None:
-            x = torch.cat((x, lang_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
+            x_emb = torch.cat((x_emb, lang_emb.transpose(2, 1).expand(x_emb.size(0), x_emb.size(1), -1)), dim=-1)
 
-        x = torch.transpose(x, 1, -1)  # [b, h, t]
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [b, 1, t]
+        x_emb = torch.transpose(x_emb, 1, -1)  # [b, h, t]
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x_emb.size(2)), 1).to(x_emb.dtype)  # [b, 1, t]
 
-        x = self.encoder(x * x_mask, x_mask)
-        stats = self.proj(x) * x_mask
+        o_en = self.encoder(x_emb * x_mask, x_mask)
+        # stats = self.proj(o_en) * x_mask
 
-        m, logs = torch.split(stats, self.out_channels, dim=1)
-        return x, m, logs, x_mask
+        # m, logs = torch.split(stats, self.out_channels, dim=1)
+        # return x_emb, o_en, m, logs, x_mask
+        return x_emb, o_en * x_mask, x_mask
 
+class ContextEncoder(nn.Module):
+    def __init__(self, in_channels, out_channels, cond_channels=0, spk_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
+        super().__init__()
+
+        self.out_channels = out_channels
+        in_lstm_channels = spk_emb_channels + in_channels
+        hidden_lstm_channels = int((spk_emb_channels + in_channels) / 2)
+
+        if cond_channels > 0:
+            in_lstm_channels = cond_channels + in_channels + spk_emb_channels
+            hidden_lstm_channels = in_lstm_channels // 2
+
+        self.lstm = torch.nn.LSTM(
+            input_size=in_lstm_channels,
+            hidden_size=hidden_lstm_channels,
+            num_layers=num_lstm_layers,
+            batch_first=True,
+            bidirectional=True,
+        )
+
+        if lstm_norm is not None:
+            if "spectral" in lstm_norm:
+                lstm_norm_fn = torch.nn.utils.spectral_norm
+            elif "weight" in lstm_norm:
+                lstm_norm_fn = torch.nn.utils.weight_norm
+
+        self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0")
+        self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0_reverse")
+        self.proj = nn.Conv1d(in_lstm_channels, out_channels * 2, 1)
+
+    def forward(self, x, x_len, spk_emb=None, cond=None):
+        spk_emb = spk_emb.expand(-1, -1, x.shape[2])
+        context_w_spk_emb = torch.cat((x, spk_emb), 1)
+        if cond is not None:
+            context_w_spk_emb = torch.cat((context_w_spk_emb, cond), 1)
+        unfolded_out_lens_packed = nn.utils.rnn.pack_padded_sequence(
+            context_w_spk_emb.transpose(1, 2), x_len.to('cpu'), batch_first=True, enforce_sorted=False
+        )
+        self.lstm.flatten_parameters()
+        context, _ = self.lstm(unfolded_out_lens_packed)
+        context, _ = nn.utils.rnn.pad_packed_sequence(context, batch_first=True)
+        context = context.transpose(1, 2)
+        context_proj = self.proj(context)
+        m, logs = torch.split(context_proj, self.out_channels, dim=1)
+        return context, m, logs
 
 class ResidualCouplingBlock(nn.Module):
     def __init__(
