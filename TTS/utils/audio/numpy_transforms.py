@@ -111,8 +111,8 @@ def deemphasis(*, x: np.ndarray = None, coef: float = 0.97, **kwargs) -> np.ndar
     return scipy.signal.lfilter([1], [1, -coef], x)
 
 
-def spec_to_mel(*, spec: np.ndarray, mel_basis: np.ndarray = None, **kwargs) -> np.ndarray:
-    """Convert a full scale linear spectrogram output of a network to a melspectrogram.
+def spec_to_mel(*, spectrogram: np.ndarray = None, mel_basis: np.ndarray = None, **kwargs) -> np.ndarray:
+    """Project a full scale spectrogram to a melspectrogram.
 
     Args:
         spec (np.ndarray): Normalized full scale linear spectrogram.
@@ -120,10 +120,11 @@ def spec_to_mel(*, spec: np.ndarray, mel_basis: np.ndarray = None, **kwargs) -> 
     Shapes:
         - spec: :math:`[C, T]`
 
+
     Returns:
-        np.ndarray: Normalized melspectrogram.
+        np.ndarray: Melspectrogram
     """
-    return np.dot(mel_basis, spec)
+    return np.dot(mel_basis, spectrogram)
 
 
 def mel_to_spec(*, mel: np.ndarray = None, mel_basis: np.ndarray = None, **kwargs) -> np.ndarray:
@@ -454,3 +455,18 @@ def quantize(*, x: np.ndarray, quantize_bits: int, **kwargs) -> np.ndarray:
 def dequantize(*, x, quantize_bits, **kwargs) -> np.ndarray:
     """Dequantize a waveform from the given number of bits."""
     return 2 * x / (2**quantize_bits - 1) - 1
+<<<<<<< HEAD
+=======
+
+
+def _log(x, base):
+    if base == 10:
+        return np.log10(x)
+    return np.log(x)
+
+
+def _exp(x, base):
+    if base == 10:
+        return np.power(10, x)
+    return np.exp(x)
+>>>>>>> Update from updated API :)

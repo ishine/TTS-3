@@ -237,7 +237,6 @@ class AudioProcessor(object):
         self,
     ) -> np.ndarray:
         """Build melspectrogram basis.
-
         Returns:
             np.ndarray: melspectrogram basis.
         """
