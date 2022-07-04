@@ -622,6 +622,18 @@ class VitsGeneratorLoss(nn.Module):
         self.mel_loss_alpha = c.mel_loss_alpha
         self.char_dur_loss_alpha = c.char_dur_loss_alpha
         self.spk_encoder_loss_alpha = c.speaker_encoder_loss_alpha
+        self.aligner_loss = ForwardSumLoss()
+        self.aligner_loss_alpha = c.aligner_loss_alpha
+        self.binary_alignment_loss_alpha = c.binary_alignment_loss_alpha
+
+        if c.model_args.use_pitch:
+            self.pitch_loss = MSELossMasked(False)
+            self.pitch_loss_alpha = c.pitch_loss_alpha
+
+        if c.model_args.use_energy_predictor:
+            self.energy_loss = MSELossMasked(False)
+            self.energy_loss_alpha = c.energy_loss_alpha
+
         self.stft = TorchSTFT(
             c.audio.fft_size,
             c.audio.hop_length,
@@ -633,6 +645,14 @@ class VitsGeneratorLoss(nn.Module):
             use_mel=True,
             do_amp_to_db=True,
         )
+
+    @staticmethod
+    def _binary_alignment_loss(alignment_hard, alignment_soft):
+        """Binary loss that forces soft alignments to match the hard alignments as
+        explained in `https://arxiv.org/pdf/2108.10447.pdf`.
+        """
+        log_sum = torch.log(torch.clamp(alignment_soft[alignment_hard == 1], min=1e-12)).sum()
+        return -log_sum / alignment_hard.sum()
 
     @staticmethod
     def feature_loss(feats_real, feats_generated):
@@ -700,6 +720,14 @@ class VitsGeneratorLoss(nn.Module):
         feats_disc_real,
         log_duration_pred,
         loss_duration,
+        aligner_logprob,
+        pitch_output,
+        pitch_target,
+        energy_output,
+        energy_target,
+        alignment_hard,
+        alignment_soft,
+        binary_loss_weight,
         use_speaker_encoder_as_loss=False,
         gt_spk_emb=None,
         syn_spk_emb=None,
@@ -732,18 +760,45 @@ class VitsGeneratorLoss(nn.Module):
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
         loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
         loss_char_dur = self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len) * self.char_dur_loss_alpha
-        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_char_dur
+        loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
+        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_char_dur + loss_aligner
 
         if use_speaker_encoder_as_loss:
             loss_se = self.cosine_similarity_loss(gt_spk_emb, syn_spk_emb) * self.spk_encoder_loss_alpha
             loss = loss + loss_se
             return_dict["loss_spk_encoder"] = loss_se
+
+        if hasattr(self, "pitch_loss") and self.pitch_loss_alpha > 0:
+            pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), token_len)
+            loss = loss + self.pitch_loss_alpha * pitch_loss
+            return_dict["loss_pitch"] = self.pitch_loss_alpha * pitch_loss
+
+        if hasattr(self, "energy_loss") and self.energy_loss_alpha > 0:
+            energy_loss = self.energy_loss(
+                energy_output.transpose(1, 2), energy_target.transpose(1, 2), token_len
+            )
+            loss = loss + self.energy_loss_alpha * energy_loss
+            return_dict["loss_energy"] = self.energy_loss_alpha * energy_loss
+
+        if self.binary_alignment_loss_alpha > 0 and alignment_hard is not None:
+            binary_alignment_loss = self._binary_alignment_loss(alignment_hard, alignment_soft)
+            loss = loss + self.binary_alignment_loss_alpha * binary_alignment_loss
+            if binary_loss_weight:
+                return_dict["loss_binary_alignment"] = (
+                    self.binary_alignment_loss_alpha * binary_alignment_loss * binary_loss_weight
+                )
+            else:
+                return_dict["loss_binary_alignment"] = self.binary_alignment_loss_alpha * binary_alignment_loss
+
+
         # pass losses to the dict
         return_dict["loss_gen"] = loss_gen
         return_dict["loss_kl"] = loss_kl
         return_dict["loss_feat"] = loss_feat
         return_dict["loss_mel"] = loss_mel
         return_dict["loss_duration"] = loss_duration
+        return_dict["loss_char_dur"] = loss_char_dur
+        return_dict["loss_aligner"] = loss_aligner
         return_dict["loss"] = loss
         return return_dict
 
