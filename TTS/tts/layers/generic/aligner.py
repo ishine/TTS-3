@@ -67,7 +67,7 @@ class AlignmentNetwork(torch.nn.Module):
             - mask: :math:`[B, T_de]`
         Output:
             attn (torch.tensor): :math:`[B, 1, T_en, T_de]` soft attention mask.
-            attn_logp (torch.tensor): :math:`[ßB, 1, T_en , T_de]` log probabilities.
+            attn_logp (torch.tensor): :math:`[B, 1, T_en , T_de]` log probabilities.
         """
         key_out = self.key_layer(keys)
         query_out = self.query_layer(queries)
@@ -77,5 +77,5 @@ class AlignmentNetwork(torch.nn.Module):
             attn_logp = self.log_softmax(attn_logp) + torch.log(attn_prior[:, None] + 1e-8)
         if mask is not None:
             attn_logp.data.masked_fill_(~mask.bool().unsqueeze(2), -float("inf"))
-        attn = self.softmax(attn_logp)
+        attn = self.softmax(attn_logp)  # [B, 1, T_de, T_en]
         return attn, attn_logp
