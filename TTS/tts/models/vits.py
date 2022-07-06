@@ -782,13 +782,14 @@ class Vits(BaseTTS):
 
         context_cond_channels = 0
         if self.args.use_pitch:
-            self.pitch_predictor = DurationPredictor(
-                self.args.hidden_channels,
-                self.args.pitch_predictor_hidden_channels,
-                self.args.pitch_predictor_kernel_size,
-                self.args.pitch_predictor_dropout_p,
-                cond_channels=self.embedded_speaker_dim,
-            )
+            # self.pitch_predictor = DurationPredictor(
+            #     self.args.hidden_channels,
+            #     self.args.pitch_predictor_hidden_channels,
+            #     self.args.pitch_predictor_kernel_size,
+            #     self.args.pitch_predictor_dropout_p,
+            #     cond_channels=self.embedded_speaker_dim,
+            # )
+            self.pitch_predictor = DurationPredictorLSTM(self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=2)
             self.pitch_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
@@ -798,13 +799,14 @@ class Vits(BaseTTS):
             context_cond_channels += self.args.hidden_channels
 
         if self.args.use_energy_predictor:
-            self.energy_predictor = DurationPredictor(
-                self.args.hidden_channels,
-                self.args.energy_predictor_hidden_channels,
-                self.args.energy_predictor_kernel_size,
-                self.args.energy_predictor_dropout_p,
-                cond_channels=self.embedded_speaker_dim,
-            )
+            # self.energy_predictor = DurationPredictor(
+            #     self.args.hidden_channels,
+            #     self.args.energy_predictor_hidden_channels,
+            #     self.args.energy_predictor_kernel_size,
+            #     self.args.energy_predictor_dropout_p,
+            #     cond_channels=self.embedded_speaker_dim,
+            # )
+            self.energy_predictor = DurationPredictorLSTM(self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=2)
             self.energy_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
@@ -1123,6 +1125,7 @@ class Vits(BaseTTS):
         dr: torch.IntTensor = None,
         g: torch.FloatTensor = None,
         pitch_transform: Callable = None,
+        x_lengths: torch.IntTensor = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         """Pitch predictor forward pass.
         1. Predict pitch from encoder outputs.
@@ -1143,7 +1146,12 @@ class Vits(BaseTTS):
             - pitch: :math:`(B, 1, T_{de})`
             - dr: :math:`(B, T_{en})`
         """
-        o_pitch = self.pitch_predictor(o_en, x_mask, g=g)
+        # o_pitch = self.pitch_predictor(o_en, x_mask, g=g)
+        o_pitch = self.pitch_predictor(
+                txt_enc = o_en,
+                spk_emb = g.detach(),
+                lens = x_lengths,
+            )
         if pitch_transform is not None:
             o_pitch = pitch_transform(o_pitch, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if pitch is not None:
@@ -1161,8 +1169,14 @@ class Vits(BaseTTS):
         dr: torch.IntTensor = None,
         g: torch.FloatTensor = None,
         energy_transform: Callable = None,
+        x_lengths: torch.IntTensor = None,
     ) -> torch.FloatTensor:
-        o_energy = self.energy_predictor(o_en, x_mask, g=g)
+        # o_energy = self.energy_predictor(o_en, x_mask, g=g)
+        o_energy = self.energy_predictor(
+                txt_enc = o_en,
+                spk_emb = g.detach(),
+                lens = x_lengths,
+            )
         if energy_transform is not None:
             o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if energy is not None:
@@ -1323,7 +1337,7 @@ class Vits(BaseTTS):
         avg_pitch = None
         if self.args.use_pitch:
             o_pitch_emb, o_pitch, avg_pitch = self._forward_pitch_predictor(
-                o_en=o_en, x_mask=x_mask, pitch=pitch, dr=aligner_durations.int(), g=None
+                o_en=o_en, x_mask=x_mask, pitch=pitch, dr=aligner_durations.int(), g=g, x_lengths=x_lengths
             )
 
         # energy predictor pass
@@ -1331,7 +1345,7 @@ class Vits(BaseTTS):
         avg_energy = None
         if self.args.use_energy_predictor:
             o_energy_emb, o_energy, avg_energy = self._forward_energy_predictor(
-                o_en=o_en, x_mask=x_mask, energy=energy, dr=aligner_durations.int(), g=None
+                o_en=o_en, x_mask=x_mask, energy=energy, dr=aligner_durations.int(), g=g, x_lengths=x_lengths
             )
 
         # context encoder pass
@@ -1486,13 +1500,13 @@ class Vits(BaseTTS):
         o_pitch = None
         if self.args.use_pitch:
             o_pitch_emb, o_pitch = self._forward_pitch_predictor(
-                o_en=o_en, x_mask=x_mask, g=None, pitch_transform=pitch_transform
+                o_en=o_en, x_mask=x_mask, g=g, pitch_transform=pitch_transform, x_lengths=x_lengths
             )
         # energy predictor pass
         o_energy = None
         if self.args.use_energy_predictor:
             o_energy_emb, o_energy = self._forward_energy_predictor(
-                o_en=o_en, x_mask=x_mask, g=None, energy_transform=energy_transform
+                o_en=o_en, x_mask=x_mask, g=g, energy_transform=energy_transform, x_lengths=x_lengths
             )
 
         # context encoder pass
