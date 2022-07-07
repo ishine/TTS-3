@@ -2224,6 +2224,80 @@ class Vits(BaseTTS):
         return Vits(new_config, ap, tokenizer, speaker_manager, language_manager)
 
 
+    def synthesize(self, text: str, speaker_id, language_id, d_vector, ref_waveform, pitch_transform=None, noise_scale=0.66):
+        # TODO: add language_id
+        is_cuda = next(self.parameters()).is_cuda
+
+        # convert text to sequence of token IDs
+        text_inputs = np.asarray(
+            self.tokenizer.text_to_ids(text, language=language_id),
+            dtype=np.int32,
+        )
+
+        # pass tensors to backend
+        if speaker_id is not None:
+            speaker_id = id_to_torch(speaker_id, cuda=is_cuda)
+
+        if d_vector is not None:
+            d_vector = embedding_to_torch(d_vector, cuda=is_cuda)
+
+        # ref_waveform_len = None
+        # if ref_waveform is not None:
+            # ref_waveform, ref_waveform_len = self.load_ref_waveform(ref_wav=ref_waveform, cuda=is_cuda)
+
+        # if language_id is not None:
+        #     language_id = id_to_torch(language_id, cuda=is_cuda)
+
+        text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=is_cuda)
+        text_inputs = text_inputs.unsqueeze(0)
+
+        # synthesize voice
+        self.inference_noise_scale = noise_scale
+        outputs = self.inference(
+            text_inputs,
+            aux_input={"d_vectors": d_vector, "speaker_ids": speaker_id},
+            pitch_transform=pitch_transform,
+        )
+
+        # collect outputs
+        wav = outputs["model_outputs"][0].data.cpu().numpy()
+        alignments = outputs["alignments"]
+        return_dict = {
+            "wav": wav,
+            "alignments": alignments,
+            "text_inputs": text_inputs,
+            "outputs": outputs,
+        }
+        return return_dict
+
+
+def id_to_torch(aux_id, cuda=False):
+    if aux_id is not None:
+        aux_id = np.asarray(aux_id)
+        aux_id = torch.from_numpy(aux_id)
+    if cuda:
+        return aux_id.cuda()
+    return aux_id
+
+
+def embedding_to_torch(d_vector, cuda=False):
+    if d_vector is not None:
+        d_vector = np.asarray(d_vector)
+        d_vector = torch.from_numpy(d_vector).type(torch.FloatTensor)
+        d_vector = d_vector.squeeze().unsqueeze(0)
+    if cuda:
+        return d_vector.cuda()
+    return d_vector
+
+
+def numpy_to_torch(np_array, dtype, cuda=False):
+    if np_array is None:
+        return None
+    tensor = torch.as_tensor(np_array, dtype=dtype)
+    if cuda:
+        return tensor.cuda()
+    return tensor
+
 ##################################
 # VITS CHARACTERS
 ##################################
