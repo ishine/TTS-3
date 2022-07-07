@@ -5,13 +5,14 @@ import numpy as np
 import pysbd
 import torch
 
-from TTS.config import load_config
+from TTS.config import get_from_config_or_model_args, load_config
 from TTS.tts.models import setup_model as setup_tts_model
 
 # pylint: disable=unused-wildcard-import
 # pylint: disable=wildcard-import
 from TTS.tts.utils.synthesis import synthesis, transfer_voice, trim_silence
-from TTS.utils.audio import AudioProcessor
+from TTS.utils.audio.numpy_transforms import save_wav
+from TTS.utils.audio.processor import AudioProcessor
 from TTS.vocoder.models import setup_model as setup_vocoder_model
 from TTS.vocoder.utils.generic_utils import interpolate_vocoder_input
 
@@ -78,6 +79,8 @@ class Synthesizer(object):
         if vocoder_checkpoint:
             self._load_vocoder(vocoder_checkpoint, vocoder_config, use_cuda)
             self.output_sample_rate = self.vocoder_config.audio["sample_rate"]
+        else:
+            print(" > Using Griffin-Lim as no vocoder model defined")
 
     @staticmethod
     def _get_segmenter(lang: str):
@@ -169,7 +172,7 @@ class Synthesizer(object):
             path (str): output path to save the waveform.
         """
         wav = np.array(wav)
-        self.tts_model.ap.save_wav(wav, path, self.output_sample_rate)
+        save_wav(wav=wav, path=path, sample_rate=self.output_sample_rate)
 
     def tts(
         self,
@@ -181,6 +184,7 @@ class Synthesizer(object):
         style_text=None,
         reference_wav=None,
         reference_speaker_name=None,
+        **kwargs,
     ) -> List[int]:
         """🐸 TTS magic. Run all the models and generate speech.
 
@@ -198,6 +202,7 @@ class Synthesizer(object):
         """
         start_time = time.time()
         wavs = []
+        outputss = []
 
         if not text and not reference_wav:
             raise ValueError(
@@ -214,7 +219,7 @@ class Synthesizer(object):
         speaker_id = None
         if self.tts_speakers_file or hasattr(self.tts_model.speaker_manager, "name_to_id"):
             if speaker_name and isinstance(speaker_name, str):
-                if self.tts_config.use_d_vector_file:
+                if get_from_config_or_model_args(self.tts_config, "use_d_vector_file"):
                     # get the average speaker embedding from the saved d_vectors.
                     speaker_embedding = self.tts_model.speaker_manager.get_mean_embedding(
                         speaker_name, num_samples=None, randomize=False
@@ -267,48 +272,61 @@ class Synthesizer(object):
         if not reference_wav:
             for sen in sens:
                 # synthesize voice
-                outputs = synthesis(
-                    model=self.tts_model,
-                    text=sen,
-                    CONFIG=self.tts_config,
-                    use_cuda=self.use_cuda,
-                    speaker_id=speaker_id,
-                    style_wav=style_wav,
-                    style_text=style_text,
-                    use_griffin_lim=use_gl,
-                    d_vector=speaker_embedding,
-                    language_id=language_id,
-                )
-                waveform = outputs["wav"]
-                mel_postnet_spec = outputs["outputs"]["model_outputs"][0].detach().cpu().numpy()
-                if not use_gl:
-                    # denormalize tts output based on tts audio config
-                    mel_postnet_spec = self.tts_model.ap.denormalize(mel_postnet_spec.T).T
-                    device_type = "cuda" if self.use_cuda else "cpu"
-                    # renormalize spectrogram based on vocoder config
-                    vocoder_input = self.vocoder_ap.normalize(mel_postnet_spec.T)
-                    # compute scale factor for possible sample rate mismatch
-                    scale_factor = [
-                        1,
-                        self.vocoder_config["audio"]["sample_rate"] / self.tts_model.ap.sample_rate,
-                    ]
-                    if scale_factor[1] != 1:
-                        print(" > interpolating tts model output.")
-                        vocoder_input = interpolate_vocoder_input(scale_factor, vocoder_input)
-                    else:
-                        vocoder_input = torch.tensor(vocoder_input).unsqueeze(0)  # pylint: disable=not-callable
-                    # run vocoder model
-                    # [1, T, C]
-                    waveform = self.vocoder_model.inference(vocoder_input.to(device_type))
-                if self.use_cuda and not use_gl:
-                    waveform = waveform.cpu()
-                if not use_gl:
-                    waveform = waveform.numpy()
-                waveform = waveform.squeeze()
+                if hasattr(self.tts_model, "synthesize"):
+                    outputs = self.tts_model.synthesize(
+                        text=sen,
+                        speaker_id=speaker_id,
+                        language_id=language_id,
+                        d_vector=speaker_embedding,
+                        ref_waveform=style_wav,
+                        **kwargs,
+                    )
+                    waveform = outputs["wav"][0]
+                    outputss.append(outputs)
+                else:
+                    outputs = synthesis(
+                        model=self.tts_model,
+                        text=sen,
+                        CONFIG=self.tts_config,
+                        use_cuda=self.use_cuda,
+                        speaker_id=speaker_id,
+                        style_wav=style_wav,
+                        style_text=style_text,
+                        use_griffin_lim=use_gl,
+                        d_vector=speaker_embedding,
+                        language_id=language_id,
+                    )
+                    waveform = outputs["wav"]
+                    outputss.append(outputs)
+                    mel_postnet_spec = outputs["outputs"]["model_outputs"][0].detach().cpu().numpy()
+                    if not use_gl:
+                        # denormalize tts output based on tts audio config
+                        mel_postnet_spec = self.tts_model.ap.denormalize(mel_postnet_spec.T).T
+                        device_type = "cuda" if self.use_cuda else "cpu"
+                        # renormalize spectrogram based on vocoder config
+                        vocoder_input = self.vocoder_ap.normalize(mel_postnet_spec.T)
+                        # compute scale factor for possible sample rate mismatch
+                        scale_factor = [
+                            1,
+                            self.vocoder_config["audio"]["sample_rate"] / self.tts_model.ap.sample_rate,
+                        ]
+                        if scale_factor[1] != 1:
+                            print(" > interpolating tts model output.")
+                            vocoder_input = interpolate_vocoder_input(scale_factor, vocoder_input)
+                        else:
+                            vocoder_input = torch.tensor(vocoder_input).unsqueeze(0)  # pylint: disable=not-callable
+                        # run vocoder model
+                        # [1, T, C]
+                        waveform = self.vocoder_model.inference(vocoder_input.to(device_type))
+                    if self.use_cuda and not use_gl:
+                        waveform = waveform.cpu()
+                    if not use_gl:
+                        waveform = waveform.numpy()
+                    waveform = waveform.squeeze()
 
-                # trim silence
-                if "do_trim_silence" in self.tts_config.audio and self.tts_config.audio["do_trim_silence"]:
-                    waveform = trim_silence(waveform, self.tts_model.ap)
+                    # trim silence
+                    if self.tts_config.audio["do_trim_silence"] is True:
+                        waveform = trim_silence(waveform, self.tts_model.ap)
 
                 wavs += list(waveform)
                 wavs += [0] * 10000
@@ -376,4 +394,4 @@ class Synthesizer(object):
         audio_time = len(wavs) / self.tts_config.audio["sample_rate"]
         print(f" > Processing time: {process_time}")
         print(f" > Real-time factor: {process_time / audio_time}")
-        return wavs
+        return wavs, outputss
