@@ -1310,10 +1310,10 @@ class Vits(BaseTTS):
             - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
         outputs = {}
-        sid, g, lid, _ = self._set_cond_input(aux_input)
+        sid, spk_emb, lid = self._set_cond_input(aux_input)
         # speaker embedding
         if self.args.use_speaker_embedding and sid is not None:
-            g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+            spk_emb = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
 
         # language embedding
         lang_emb = None
@@ -1330,14 +1330,14 @@ class Vits(BaseTTS):
         )
 
         # duration predictor and duration loss
-        outputs = self.forward_duration_predictor(outputs, aligner_hard, o_en, x_mask, g, lang_emb, x_lengths)
+        outputs = self.forward_duration_predictor(outputs, aligner_hard, o_en, x_mask, spk_emb, lang_emb, x_lengths)
 
         # pitch predictor pass
         o_pitch = None
         avg_pitch = None
         if self.args.use_pitch:
             o_pitch_emb, o_pitch, avg_pitch = self._forward_pitch_predictor(
-                o_en=o_en, x_mask=x_mask, pitch=pitch, dr=aligner_durations.int(), g=g, x_lengths=x_lengths
+                o_en=o_en, x_mask=x_mask, pitch=pitch, dr=aligner_durations.int(), g=spk_emb, x_lengths=x_lengths
             )
 
         # energy predictor pass
@@ -1345,12 +1345,12 @@ class Vits(BaseTTS):
         avg_energy = None
         if self.args.use_energy_predictor:
             o_energy_emb, o_energy, avg_energy = self._forward_energy_predictor(
-                o_en=o_en, x_mask=x_mask, energy=energy, dr=aligner_durations.int(), g=g, x_lengths=x_lengths
+                o_en=o_en, x_mask=x_mask, energy=energy, dr=aligner_durations.int(), g=spk_emb, x_lengths=x_lengths
             )
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_en, m_p, logs_p = self.context_encoder(o_en, x_lengths, spk_emb=g, cond=context_cond)
+        o_en, m_p, logs_p = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, cond=context_cond)
 
         # # add embeddings
         # if self.args.use_pitch:
@@ -1368,11 +1368,15 @@ class Vits(BaseTTS):
             m_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, m_p])
             logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, logs_p])
 
+        ###### --> FLOW
+
         # posterior encoder
-        z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=g)
+        z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=spk_emb)
 
         # flow layers
-        z_p = self.flow(z, y_mask, g=g)
+        z_p = self.flow(z, y_mask, g=spk_emb)
+
+        ###### --> VOCODER
 
         # select a random feature segment for the waveform decoder
         z_slice, slice_ids = rand_segments(z, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
@@ -1380,7 +1384,7 @@ class Vits(BaseTTS):
         # interpolate z if needed
         z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
 
-        o = self.waveform_decoder(z_slice, g=g)
+        o = self.waveform_decoder(z_slice, g=spk_emb)
 
         wav_seg = segment(
             waveform,
@@ -1461,12 +1465,12 @@ class Vits(BaseTTS):
             - m_p: :math:`[B, C, T_dec]`
             - logs_p: :math:`[B, C, T_dec]`
         """
-        sid, g, lid, durations = self._set_cond_input(aux_input)
+        sid, spk_emb, lid = self._set_cond_input(aux_input)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
         if self.args.use_speaker_embedding and sid is not None:
-            g = self.emb_g(sid).unsqueeze(-1)
+            spk_emb = self.emb_g(sid).unsqueeze(-1)
 
         # language embedding
         lang_emb = None
@@ -1479,7 +1483,7 @@ class Vits(BaseTTS):
             dur_log = self.duration_predictor(
                 o_en,
                 x_mask,
-                g=g if self.args.condition_dp_on_speaker else None,
+                g=spk_emb if self.args.condition_dp_on_speaker else None,
                 reverse=True,
                 noise_scale=self.inference_noise_scale_dp,
                 lang_emb=lang_emb,
@@ -1489,7 +1493,7 @@ class Vits(BaseTTS):
             #     o_en, x_mask, g=g if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
             # )
             dur_log = self.duration_predictor(
-                o_en, g, x_lengths
+                o_en, spk_emb, x_lengths
             )
 
         dur = (torch.exp(dur_log) -1) * x_mask * self.length_scale
@@ -1500,18 +1504,18 @@ class Vits(BaseTTS):
         o_pitch = None
         if self.args.use_pitch:
             o_pitch_emb, o_pitch = self._forward_pitch_predictor(
-                o_en=o_en, x_mask=x_mask, g=g, pitch_transform=pitch_transform, x_lengths=x_lengths
+                o_en=o_en, x_mask=x_mask, g=spk_emb, pitch_transform=pitch_transform, x_lengths=x_lengths
             )
         # energy predictor pass
         o_energy = None
         if self.args.use_energy_predictor:
             o_energy_emb, o_energy = self._forward_energy_predictor(
-                o_en=o_en, x_mask=x_mask, g=g, energy_transform=energy_transform, x_lengths=x_lengths
+                o_en=o_en, x_mask=x_mask, g=spk_emb, energy_transform=energy_transform, x_lengths=x_lengths
             )
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context, m_p, logs_p = self.context_encoder(o_en, x_lengths, spk_emb=g, cond=context_cond)
+        o_context, m_p, logs_p = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, cond=context_cond)
 
         # if self.args.use_pitch:
         #     o_en = o_en + o_pitch_emb
@@ -1525,14 +1529,14 @@ class Vits(BaseTTS):
         #     dur_log = self.duration_predictor(
         #         o_en,
         #         x_mask,
-        #         g=g if self.args.condition_dp_on_speaker else None,
+        #         g=spk_emb if self.args.condition_dp_on_speaker else None,
         #         reverse=True,
         #         noise_scale=self.inference_noise_scale_dp,
         #         lang_emb=lang_emb,
         #     )
         # else:
         #     dur_log = self.duration_predictor(
-        #         o_en, x_mask, g=g if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
+        #         o_en, x_mask, g=spk_emb if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
         #     )
 
         # dur = (torch.exp(dur_log) -1) * x_mask * self.length_scale
@@ -1549,12 +1553,12 @@ class Vits(BaseTTS):
         logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
-        z = self.flow(z_p, y_mask, g=g, reverse=True)
+        z = self.flow(z_p, y_mask, g=spk_emb, reverse=True)
 
         # upsampling if needed
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
 
-        o = self.waveform_decoder((z * y_mask)[:, :, : self.max_inference_len], g=g)
+        o = self.waveform_decoder((z * y_mask)[:, :, : self.max_inference_len], g=spk_emb)
 
         outputs = {
             "model_outputs": o,
