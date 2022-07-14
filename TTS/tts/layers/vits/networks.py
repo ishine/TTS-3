@@ -74,6 +74,7 @@ class TextEncoder(nn.Module):
             layer_norm_type="2",
             rel_attn_window_size=4,
         )
+        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
     def forward(self, x, x_lengths, lang_emb=None):
         """
@@ -92,23 +93,23 @@ class TextEncoder(nn.Module):
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x_emb.size(2)), 1).to(x_emb.dtype)  # [b, 1, t]
 
         o_en = self.encoder(x_emb * x_mask, x_mask)
-        # stats = self.proj(o_en) * x_mask
+        stats = self.proj(o_en) * x_mask
 
-        # m, logs = torch.split(stats, self.out_channels, dim=1)
-        # return x_emb, o_en, m, logs, x_mask
-        return x_emb, o_en * x_mask, x_mask
+        m, logs = torch.split(stats, self.out_channels, dim=1)
+        return x_emb, o_en, m, logs, x_mask
 
 class ContextEncoder(nn.Module):
-    def __init__(self, in_channels, out_channels, cond_channels=0, spk_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
+    def __init__(self, in_channels, cond_channels=0, spk_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
         super().__init__()
 
-        self.out_channels = out_channels
         in_lstm_channels = spk_emb_channels + in_channels
         hidden_lstm_channels = int((spk_emb_channels + in_channels) / 2)
 
         if cond_channels > 0:
             in_lstm_channels = cond_channels + in_channels + spk_emb_channels
             hidden_lstm_channels = in_lstm_channels // 2
+
+        self.hidden_lstm_channels = hidden_lstm_channels
 
         self.lstm = torch.nn.LSTM(
             input_size=in_lstm_channels,
@@ -126,7 +127,6 @@ class ContextEncoder(nn.Module):
 
         self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0")
         self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0_reverse")
-        self.proj = nn.Conv1d(in_lstm_channels, out_channels * 2, 1)
 
     def forward(self, x, x_len, spk_emb=None, cond=None):
         spk_emb = spk_emb.expand(-1, -1, x.shape[2])
@@ -140,9 +140,7 @@ class ContextEncoder(nn.Module):
         context, _ = self.lstm(unfolded_out_lens_packed)
         context, _ = nn.utils.rnn.pad_packed_sequence(context, batch_first=True)
         context = context.transpose(1, 2)
-        context_proj = self.proj(context)
-        m, logs = torch.split(context_proj, self.out_channels, dim=1)
-        return context, m, logs
+        return context
 
 class ResidualCouplingBlock(nn.Module):
     def __init__(

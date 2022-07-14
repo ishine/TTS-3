@@ -63,6 +63,7 @@ class WN(torch.nn.Module):
         if c_in_channels > 0:
             cond_layer = torch.nn.Conv1d(c_in_channels, 2 * hidden_channels * num_layers, 1)
             self.cond_layer = torch.nn.utils.weight_norm(cond_layer, name="weight")
+
         # intermediate layers
         for i in range(num_layers):
             dilation = dilation_rate**i
