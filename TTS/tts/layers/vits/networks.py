@@ -38,6 +38,7 @@ class TextEncoder(nn.Module):
         kernel_size: int,
         dropout_p: float,
         language_emb_dim: int = None,
+        emo_emb_dim: int = None,
     ):
         """Text Encoder for VITS model.
 
@@ -62,9 +63,12 @@ class TextEncoder(nn.Module):
         if language_emb_dim:
             hidden_channels += language_emb_dim
 
+        if emo_emb_dim:
+            hidden_channels += emo_emb_dim
+
         self.encoder = RelativePositionTransformer(
             in_channels=hidden_channels,
-            out_channels=hidden_channels,
+            out_channels=self.out_channels,
             hidden_channels=hidden_channels,
             hidden_channels_ffn=hidden_channels_ffn,
             num_heads=num_heads,
@@ -74,9 +78,9 @@ class TextEncoder(nn.Module):
             layer_norm_type="2",
             rel_attn_window_size=4,
         )
-        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
+        self.proj = nn.Conv1d(self.out_channels, self.out_channels * 2, 1)
 
-    def forward(self, x, x_lengths, lang_emb=None):
+    def forward(self, x, x_lengths, lang_emb=None, emo_emb=None):
         """
         Shapes:
             - x: :math:`[B, T]`
@@ -89,6 +93,9 @@ class TextEncoder(nn.Module):
         if lang_emb is not None:
             x_emb = torch.cat((x_emb, lang_emb.transpose(2, 1).expand(x_emb.size(0), x_emb.size(1), -1)), dim=-1)
 
+        if emo_emb is not None:
+            x_emb = torch.cat((x_emb, emo_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
+
         x_emb = torch.transpose(x_emb, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x_emb.size(2)), 1).to(x_emb.dtype)  # [b, 1, t]
 
@@ -96,10 +103,10 @@ class TextEncoder(nn.Module):
         stats = self.proj(o_en) * x_mask
 
         m, logs = torch.split(stats, self.out_channels, dim=1)
-        return x_emb, o_en, m, logs, x_mask
+        return o_en, m, logs, x_mask
 
 class ContextEncoder(nn.Module):
-    def __init__(self, in_channels, cond_channels=0, spk_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
+    def __init__(self, in_channels, cond_channels=0, spk_emb_channels=0, emo_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
         super().__init__()
 
         in_lstm_channels = spk_emb_channels + in_channels
@@ -108,6 +115,9 @@ class ContextEncoder(nn.Module):
         if cond_channels > 0:
             in_lstm_channels = cond_channels + in_channels + spk_emb_channels
             hidden_lstm_channels = in_lstm_channels // 2
+
+        if emo_emb_channels > 0:
+            in_lstm_channels += emo_emb_channels
 
         self.hidden_lstm_channels = hidden_lstm_channels
 
@@ -128,9 +138,12 @@ class ContextEncoder(nn.Module):
         self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0")
         self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0_reverse")
 
-    def forward(self, x, x_len, spk_emb=None, cond=None):
+    def forward(self, x, x_len, spk_emb=None, emo_emb=None, cond=None):
         spk_emb = spk_emb.expand(-1, -1, x.shape[2])
         context_w_spk_emb = torch.cat((x, spk_emb), 1)
+        if emo_emb is not None:
+            emo_emb = emo_emb.expand(-1, -1, x.shape[2])
+            context_w_spk_emb = torch.cat((context_w_spk_emb, emo_emb), 1)
         if cond is not None:
             context_w_spk_emb = torch.cat((context_w_spk_emb, cond), 1)
         unfolded_out_lens_packed = nn.utils.rnn.pack_padded_sequence(
