@@ -27,6 +27,7 @@ from TTS.tts.layers.glow_tts.duration_predictor import DurationPredictor
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
 from TTS.tts.layers.vits.networks import ContextEncoder, PosteriorEncoder, ResidualCouplingBlocks, TextEncoder
 from TTS.tts.layers.vits.stochastic_duration_predictor import StochasticDurationPredictor
+from TTS.tts.utils.emotions import EmotionManager
 from TTS.tts.models.base_tts import BaseTTS
 from TTS.tts.utils.helpers import (
     average_over_durations,
@@ -35,7 +36,7 @@ from TTS.tts.utils.helpers import (
     rand_segments,
     segment,
     sequence_mask,
-    compute_attn_prior
+    compute_attn_prior,
 )
 from TTS.tts.utils.languages import LanguageManager
 from TTS.tts.utils.speakers import SpeakerManager
@@ -669,6 +670,9 @@ class VitsArgs(Coqpit):
     speaker_embedding_channels: int = 256
     use_d_vector_file: bool = False
     d_vector_dim: int = 0
+    emotion_vector_file: str = None
+    use_emotion_vector_file: bool = False
+    emotion_vector_dim: int = 0
     detach_dp_input: bool = True
     use_language_embedding: bool = False
     embedded_language_dim: int = 4
@@ -854,12 +858,14 @@ class Vits(BaseTTS):
         tokenizer: "TTSTokenizer" = None,
         speaker_manager: SpeakerManager = None,
         language_manager: LanguageManager = None,
+        emotion_manager: "EmotionManager" = None,
     ):
 
         super().__init__(config, ap, tokenizer, speaker_manager, language_manager)
-
+        self.emotion_manager = emotion_manager
         self.init_multispeaker(config)
         self.init_multilingual(config)
+        self.init_emotion()
         self.init_upsampling()
 
         self.length_scale = self.args.length_scale
@@ -869,6 +875,11 @@ class Vits(BaseTTS):
         self.noise_scale_dp = self.args.noise_scale_dp
         self.max_inference_len = self.args.max_inference_len
         self.spec_segment_size = self.args.spec_segment_size
+        self.binarize_alignment = False
+
+        # embedding layer used only with the alignment network.
+        self.emb_aligner = nn.Embedding(self.args.num_chars, self.args.hidden_channels)
+        nn.init.normal_(self.emb_aligner.weight, 0.0, self.args.hidden_channels**-0.5)
 
         self.text_encoder = TextEncoder(
             self.args.num_chars,
@@ -880,6 +891,7 @@ class Vits(BaseTTS):
             self.args.kernel_size_text_encoder,
             self.args.dropout_p_text_encoder,
             language_emb_dim=self.embedded_language_dim,
+            emo_emb_dim=self.embedded_emotion_dim,
         )
 
         self.text_encoder_proj = nn.Conv1d(self.args.hidden_channels, self.args.hidden_channels * 2, 1)
@@ -891,14 +903,9 @@ class Vits(BaseTTS):
 
         context_cond_channels = 0
         if self.args.use_pitch:
-            # self.pitch_predictor = DurationPredictor(
-            #     self.args.hidden_channels,
-            #     self.args.pitch_predictor_hidden_channels,
-            #     self.args.pitch_predictor_kernel_size,
-            #     self.args.pitch_predictor_dropout_p,
-            #     cond_channels=self.embedded_speaker_dim,
-            # )
-            self.pitch_predictor = DurationPredictorLSTM(self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=2)
+            self.pitch_predictor = DurationPredictorLSTM(
+                self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=2
+            )
             self.pitch_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
@@ -908,14 +915,9 @@ class Vits(BaseTTS):
             context_cond_channels += self.args.hidden_channels
 
         if self.args.use_energy_predictor:
-            # self.energy_predictor = DurationPredictor(
-            #     self.args.hidden_channels,
-            #     self.args.energy_predictor_hidden_channels,
-            #     self.args.energy_predictor_kernel_size,
-            #     self.args.energy_predictor_dropout_p,
-            #     cond_channels=self.embedded_speaker_dim,
-            # )
-            self.energy_predictor = DurationPredictorLSTM(self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=2)
+            self.energy_predictor = DurationPredictorLSTM(
+                self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=2
+            )
             self.energy_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
@@ -931,6 +933,7 @@ class Vits(BaseTTS):
                 in_channels=self.args.hidden_channels,
                 cond_channels=context_cond_channels,
                 spk_emb_channels=self.embedded_speaker_dim,
+                emo_emb_channels=self.embedded_emotion_dim,
                 num_lstm_layers=1,
                 lstm_norm="spectral",
             )
@@ -941,7 +944,7 @@ class Vits(BaseTTS):
             kernel_size=self.args.kernel_size_flow,
             dilation_rate=self.args.dilation_rate_flow,
             num_layers=self.args.num_layers_flow,
-            cond_channels=self.context_encoder.hidden_lstm_channels * 2
+            cond_channels=self.context_encoder.hidden_lstm_channels * 2,
         )
 
         self.posterior_encoder = PosteriorEncoder(
@@ -951,7 +954,7 @@ class Vits(BaseTTS):
             kernel_size=self.args.kernel_size_posterior_encoder,
             dilation_rate=self.args.dilation_rate_posterior_encoder,
             num_layers=self.args.num_layers_posterior_encoder,
-            cond_channels=self.context_encoder.hidden_lstm_channels * 2
+            cond_channels=self.context_encoder.hidden_lstm_channels * 2,
         )
 
         if self.args.use_sdp:
@@ -965,15 +968,9 @@ class Vits(BaseTTS):
                 language_emb_dim=self.embedded_language_dim,
             )
         else:
-            # self.duration_predictor = DurationPredictor(
-            #     self.args.hidden_channels,
-            #     256,
-            #     3,
-            #     self.args.dropout_p_duration_predictor,
-            #     cond_channels=self.embedded_speaker_dim,
-            #     language_emb_dim=self.embedded_language_dim,
-            # )
-            self.duration_predictor = DurationPredictorLSTM(self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=4)
+            self.duration_predictor = DurationPredictorLSTM(
+                self.args.hidden_channels, self.embedded_speaker_dim, reduction_factor=4
+            )
 
         self.waveform_decoder = HifiganGenerator(
             self.args.hidden_channels,
@@ -1076,6 +1073,23 @@ class Vits(BaseTTS):
         else:
             self.embedded_language_dim = 0
 
+    def init_emotion(self):
+        # pylint: disable=attribute-defined-outside-init
+        self.embedded_emotion_dim = 0
+        self.num_emotions = 0
+
+        if self.emotion_manager:
+            self.num_emotions = self.emotion_manager.num_emotions
+
+        # if self.args.use_emotion_embedding:
+        #     if self.num_emotions > 0:
+        #         print(" > initialization of emotion-embedding layers.")
+        #         self.emb_emotion = nn.Embedding(self.num_emotions, self.args.emotion_embedding_dim)
+        #         self.embedded_emotion_dim += self.args.emotion_embedding_dim
+
+        if self.args.use_emotion_vector_file:
+            self.embedded_emotion_dim += self.args.emotion_vector_dim
+
     def init_upsampling(self):
         """
         Initialize upsampling modules of a model.
@@ -1152,25 +1166,29 @@ class Vits(BaseTTS):
     @staticmethod
     def _set_cond_input(aux_input: Dict):
         """Set the speaker conditioning input based on the multi-speaker mode."""
-        sid, g, lid, durations = None, None, None, None
+        sid, g, lid, emo_emb = None, None, None, None
+
         if "speaker_ids" in aux_input and aux_input["speaker_ids"] is not None:
             sid = aux_input["speaker_ids"]
             if sid.ndim == 0:
                 sid = sid.unsqueeze_(0)
+
         if "d_vectors" in aux_input and aux_input["d_vectors"] is not None:
             g = F.normalize(aux_input["d_vectors"]).unsqueeze(-1)
             if g.ndim == 2:
                 g = g.unsqueeze_(0)
+
+        if "emotion_vectors" in aux_input and aux_input["emotion_vectors"] is not None:
+            emo_emb = F.normalize(aux_input["emotion_vectors"]).unsqueeze(-1)
+            if emo_emb.ndim == 2:
+                emo_emb = emo_emb.unsqueeze_(0)
 
         if "language_ids" in aux_input and aux_input["language_ids"] is not None:
             lid = aux_input["language_ids"]
             if lid.ndim == 0:
                 lid = lid.unsqueeze_(0)
 
-        if "durations" in aux_input and aux_input["durations"] is not None:
-            durations = aux_input["durations"]
-
-        return sid, g, lid, durations
+        return sid, g, lid, emo_emb
 
     def _set_speaker_input(self, aux_input: Dict):
         d_vectors = aux_input.get("d_vectors", None)
@@ -1205,9 +1223,9 @@ class Vits(BaseTTS):
             #     lang_emb=lang_emb.detach() if self.args.detach_dp_input and lang_emb is not None else lang_emb,
             # )
             log_durations = self.duration_predictor(
-                txt_enc = x.detach() if self.args.detach_dp_input else x,
-                spk_emb = g.detach() if self.args.detach_dp_input and g is not None else g,
-                lens = x_lengths,
+                txt_enc=x.detach() if self.args.detach_dp_input else x,
+                spk_emb=g.detach() if self.args.detach_dp_input and g is not None else g,
+                lens=x_lengths,
             )
             # compute duration loss
             attn_log_durations = torch.log(attn_durations + 1) * x_mask
@@ -1264,10 +1282,10 @@ class Vits(BaseTTS):
         """
         # o_pitch = self.pitch_predictor(o_en, x_mask, g=g)
         o_pitch = self.pitch_predictor(
-                txt_enc = o_en,
-                spk_emb = g.detach(),
-                lens = x_lengths,
-            )
+            txt_enc=o_en,
+            spk_emb=g.detach(),
+            lens=x_lengths,
+        )
         if pitch_transform is not None:
             o_pitch = pitch_transform(o_pitch, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if pitch is not None:
@@ -1289,10 +1307,10 @@ class Vits(BaseTTS):
     ) -> torch.FloatTensor:
         # o_energy = self.energy_predictor(o_en, x_mask, g=g)
         o_energy = self.energy_predictor(
-                txt_enc = o_en,
-                spk_emb = g.detach(),
-                lens = x_lengths,
-            )
+            txt_enc=o_en,
+            spk_emb=g.detach(),
+            lens=x_lengths,
+        )
         if energy_transform is not None:
             o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if energy is not None:
@@ -1342,7 +1360,7 @@ class Vits(BaseTTS):
             aligner_soft.squeeze(1).transpose(1, 2).contiguous(), attn_mask.squeeze(1).contiguous()
         )
         aligner_durations = torch.sum(aligner_hard, -1)
-        aligner_soft = aligner_soft.transpose(2, 3) * attn_mask # [B, 1, T_max2, T_max] -> [B, 1, T_max, T_max2]
+        aligner_soft = aligner_soft.transpose(2, 3) * attn_mask  # [B, 1, T_max2, T_max] -> [B, 1, T_max, T_max2]
         aligner_hard = aligner_hard[:, None]  # [B, T_max, T_max2] -> [B, 1, T_max, T_max2]
         return aligner_durations, aligner_soft, aligner_logprob, aligner_hard
 
@@ -1409,6 +1427,7 @@ class Vits(BaseTTS):
             - y_lengths: :math:`[B]`
             - waveform: :math:`[B, 1, T_wav]`
             - d_vectors: :math:`[B, C, 1]`
+            - emotion_vectors: :math:`[B, C, 1]`
             - speaker_ids: :math:`[B]`
             - language_ids: :math:`[B]`
 
@@ -1426,7 +1445,7 @@ class Vits(BaseTTS):
             - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
         outputs = {}
-        sid, spk_emb, lid = self._set_cond_input(aux_input)
+        sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
 
         ##### --> EMBEDDINGS
 
@@ -1441,13 +1460,14 @@ class Vits(BaseTTS):
 
         ##### --> TEXT ENCODING
 
-        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
+        o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
 
         ##### --> ALIGNER
-
+        x_emb_aligner = self.emb_aligner(x) * math.sqrt(self.args.hidden_channels)
+        x_emb_aligner = x_emb_aligner.transpose(1, 2)  # [B, T, C] --> [B, C, T]
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         aligner_durations, aligner_soft, aligner_logprob, aligner_hard = self._forward_aligner(
-            x=x_emb, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
+            x=x_emb_aligner, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
         )
 
         # duration predictor and duration loss
@@ -1476,7 +1496,7 @@ class Vits(BaseTTS):
         # context encoder pass
         # TODO: predict context in output length
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        context_emb = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, cond=context_cond)
+        context_emb = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
 
         ##### --> EXPAND
 
@@ -1509,7 +1529,7 @@ class Vits(BaseTTS):
         #     pad_short=True,
         # )
 
-         # interpolate z if needed
+        # interpolate z if needed
         z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
         # context_emb_seg, _, _, _ = self.upsampling_z(context_emb_seg, slice_ids=slice_ids)
 
@@ -1595,7 +1615,7 @@ class Vits(BaseTTS):
             - m_p: :math:`[B, C, T_dec]`
             - logs_p: :math:`[B, C, T_dec]`
         """
-        sid, spk_emb, lid = self._set_cond_input(aux_input)
+        sid, spk_emb, lid, emo_emb= self._set_cond_input(aux_input)
         x_lengths = self._set_x_lengths(x, aux_input)
 
         # speaker embedding
@@ -1607,7 +1627,7 @@ class Vits(BaseTTS):
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
-        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
+        o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
 
         if self.args.use_sdp:
             dur_log = self.duration_predictor(
@@ -1622,11 +1642,9 @@ class Vits(BaseTTS):
             # dur_log = self.duration_predictor(
             #     o_en, x_mask, g=g if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
             # )
-            dur_log = self.duration_predictor(
-                o_en, spk_emb, x_lengths
-            )
+            dur_log = self.duration_predictor(o_en, spk_emb, x_lengths)
 
-        dur = (torch.exp(dur_log) -1) * x_mask * self.length_scale
+        dur = (torch.exp(dur_log) - 1) * x_mask * self.length_scale
         dur[dur < 1] = 1.0
         dur = torch.round(dur)
 
@@ -1645,7 +1663,7 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, cond=context_cond)
+        o_context = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
 
         # if self.args.use_pitch:
         #     o_en = o_en + o_pitch_emb
@@ -1779,9 +1797,10 @@ class Vits(BaseTTS):
             tokens = batch["tokens"]
             token_lenghts = batch["token_lens"]
             spec = batch["spec"]
-            energy=batch["energy"]
-            pitch=batch["pitch"]
+            energy = batch["energy"]
+            pitch = batch["pitch"]
             d_vectors = batch["d_vectors"]
+            emotion_vectors = batch["emotion_vectors"]
             speaker_ids = batch["speaker_ids"]
             language_ids = batch["language_ids"]
             waveform = batch["waveform"]
@@ -1791,14 +1810,19 @@ class Vits(BaseTTS):
             outputs = self.forward(
                 x=tokens,
                 x_lengths=token_lenghts,
-                y = spec,
+                y=spec,
                 y_lengths=spec_lens,
                 pitch=pitch,
                 energy=energy,
                 waveform=waveform,
                 attn_priors=attn_priors,
                 binarize_alignment=self.binarize_alignment,
-                aux_input={"d_vectors": d_vectors, "speaker_ids": speaker_ids, "language_ids": language_ids},
+                aux_input={
+                    "d_vectors": d_vectors,
+                    "speaker_ids": speaker_ids,
+                    "language_ids": language_ids,
+                    "emotion_vectors": emotion_vectors,
+                },
             )
 
             # cache tensors for the generator pass
@@ -1888,7 +1912,7 @@ class Vits(BaseTTS):
         sample_voice = y_hat[0].squeeze(0).detach().cpu().numpy()
         audios = {f"{name_prefix}/audio": sample_voice}
 
-         # plot pitch figures
+        # plot pitch figures
         if self.args.use_pitch:
             pitch_avg = abs(outputs[1]["pitch_avg_gt"][0, 0].data.cpu().numpy())
             pitch_avg_hat = abs(outputs[1]["pitch_avg"][0, 0].data.cpu().numpy())
@@ -1969,6 +1993,8 @@ class Vits(BaseTTS):
                 text, speaker_name, style_wav = sentence_info
             elif len(sentence_info) == 4:
                 text, speaker_name, style_wav, language_name = sentence_info
+            elif len(sentence_info) == 5:
+                text, speaker_name, style_wav, language_name, emotion = sentence_info
         else:
             text = sentence_info
 
@@ -1986,6 +2012,15 @@ class Vits(BaseTTS):
                 else:
                     speaker_id = self.speaker_manager.name_to_id[speaker_name]
 
+        # get emotion id/vector
+        emotion_vector = None
+        if hasattr(self, "speaker_manager"):
+            if config.use_emotion_vector_file:
+                if emotion is None:
+                    emotion_vector = self.emotion_manager.get_random_embeddings()
+                else:
+                    emotion_vector = self.emotion_manager.get_mean_embedding(emotion, num_samples=None, randomize=False)
+
         # get language id
         if hasattr(self, "language_manager") and config.use_language_embedding and language_name is not None:
             language_id = self.language_manager.name_to_id[language_name]
@@ -1997,6 +2032,7 @@ class Vits(BaseTTS):
             "d_vector": d_vector,
             "language_id": language_id,
             "language_name": language_name,
+            "emotion_vector": emotion_vector
         }
 
     @torch.no_grad()
@@ -2041,6 +2077,7 @@ class Vits(BaseTTS):
         speaker_ids = None
         language_ids = None
         d_vectors = None
+        emo_vectors = None
 
         # get numerical speaker ids from speaker names
         if self.speaker_manager is not None and self.speaker_manager.name_to_id and self.args.use_speaker_embedding:
@@ -2056,6 +2093,12 @@ class Vits(BaseTTS):
             d_vectors = [d_vector_mapping[w]["embedding"] for w in batch["audio_unique_names"]]
             d_vectors = torch.FloatTensor(d_vectors)
 
+        # get emotion_vectors from audio file names
+        if self.emotion_manager is not None and self.emotion_manager.embeddings and self.args.use_emotion_vector_file:
+            vector_mapping = self.emotion_manager.embeddings
+            emo_vectors = [vector_mapping[w]["embedding"] for w in batch["audio_files"]]
+            emo_vectors = torch.FloatTensor(emo_vectors)
+
         # get language ids from language names
         if self.language_manager is not None and self.language_manager.name_to_id and self.args.use_language_embedding:
             language_ids = [self.language_manager.name_to_id[ln] for ln in batch["language_names"]]
@@ -2065,6 +2108,7 @@ class Vits(BaseTTS):
 
         batch["language_ids"] = language_ids
         batch["d_vectors"] = d_vectors
+        batch["emotion_vectors"] = emo_vectors
         batch["speaker_ids"] = speaker_ids
         return batch
 
@@ -2379,9 +2423,12 @@ class Vits(BaseTTS):
         if d_vector is not None:
             d_vector = embedding_to_torch(d_vector, cuda=is_cuda)
 
+        if emotion_vector is not None:
+            emotion_vector = embedding_to_torch(emotion_vector, cuda=is_cuda)
+
         # ref_waveform_len = None
         # if ref_waveform is not None:
-            # ref_waveform, ref_waveform_len = self.load_ref_waveform(ref_wav=ref_waveform, cuda=is_cuda)
+        # ref_waveform, ref_waveform_len = self.load_ref_waveform(ref_wav=ref_waveform, cuda=is_cuda)
 
         # if language_id is not None:
         #     language_id = id_to_torch(language_id, cuda=is_cuda)
@@ -2393,7 +2440,7 @@ class Vits(BaseTTS):
         self.inference_noise_scale = noise_scale
         outputs = self.inference(
             text_inputs,
-            aux_input={"d_vectors": d_vector, "speaker_ids": speaker_id},
+            aux_input={"d_vectors": d_vector, "speaker_ids": speaker_id, "emotion_vectors": emotion_vector},
             pitch_transform=pitch_transform,
         )
 
