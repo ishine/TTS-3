@@ -516,7 +516,6 @@ class VitsDataset(TTSDataset):
         }
 
 
-
 ##############################
 # MODEL DEFINITION
 ##############################
@@ -2120,20 +2119,18 @@ class Vits(BaseTTS):
         test_sentences = self.config.test_sentences
         for idx, s_info in enumerate(test_sentences):
             aux_inputs = self.get_aux_input_from_test_sentences(s_info)
-            wav, alignment, _, _ = synthesis(
-                self,
+            return_dict = self.synthesize(
                 aux_inputs["text"],
-                self.config,
-                "cuda" in str(next(self.parameters()).device),
                 speaker_id=aux_inputs["speaker_id"],
-                d_vector=aux_inputs["d_vector"],
-                style_wav=aux_inputs["style_wav"],
                 language_id=aux_inputs["language_id"],
-                use_griffin_lim=True,
-                do_trim_silence=False,
-            ).values()
-            test_audios["{}-audio".format(idx)] = wav
-            test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.transpose(1, 2), output_fig=False)
+                d_vector=aux_inputs["d_vector"],
+                ref_waveform=aux_inputs["style_wav"],
+                emotion_vector=aux_inputs["emotion_vector"],
+            )
+            wav = return_dict["wav"]
+            alignment = return_dict["alignments"]
+            test_audios["{}-audio".format(idx)] = wav.T
+            test_figures["{}-alignment".format(idx)] = plot_alignment(alignment, output_fig=False)
         return {"figures": test_figures, "audios": test_audios}
 
     def test_log(
@@ -2269,10 +2266,15 @@ class Vits(BaseTTS):
         if getattr(config, "use_weighted_sampler", False):
             for attr_name, alpha in config.weighted_sampler_attrs.items():
                 print(f" > Using weighted sampler for attribute '{attr_name}' with alpha '{alpha}'")
+<<<<<<< HEAD
                 multi_dict = config.weighted_sampler_multipliers.get(attr_name, None)
                 print(multi_dict)
                 weights, attr_names, attr_weights = get_attribute_balancer_weights(
                     attr_name=attr_name, items=data_items, multi_dict=multi_dict
+=======
+                weights, attr_names, attr_weights = get_attribute_balancer_weights(
+                    attr_name=attr_name, items=data_items
+>>>>>>> Use self.synthesize in test_run
                 )
                 weights = weights * alpha
                 print(f" > Attribute weights for '{attr_names}' \n | > {attr_weights}")
@@ -2469,15 +2471,25 @@ class Vits(BaseTTS):
         tokenizer, new_config = TTSTokenizer.init_from_config(config)
         speaker_manager = SpeakerManager.init_from_config(config, samples)
         language_manager = LanguageManager.init_from_config(config)
+        emotion_manager = EmotionManager.init_from_config(config.model_args)
 
         if config.model_args.speaker_encoder_model_path:
             speaker_manager.init_encoder(
                 config.model_args.speaker_encoder_model_path, config.model_args.speaker_encoder_config_path
             )
-        return Vits(new_config, ap, tokenizer, speaker_manager, language_manager)
+        return Vits(new_config, ap, tokenizer, speaker_manager, language_manager, emotion_manager)
 
-
-    def synthesize(self, text: str, speaker_id, language_id, d_vector, ref_waveform, pitch_transform=None, noise_scale=0.66):
+    def synthesize(
+        self,
+        text: str,
+        speaker_id,
+        language_id,
+        d_vector,
+        ref_waveform,
+        emotion_vector=None,
+        pitch_transform=None,
+        noise_scale=0.66,
+    ):
         # TODO: add language_id
         is_cuda = next(self.parameters()).is_cuda
 
@@ -2553,6 +2565,7 @@ def numpy_to_torch(np_array, dtype, cuda=False):
     if cuda:
         return tensor.cuda()
     return tensor
+
 
 ##################################
 # VITS CHARACTERS
