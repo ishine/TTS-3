@@ -947,8 +947,8 @@ class Vits(BaseTTS):
         self.binarize_alignment = False
 
         # embedding layer used only with the alignment network.
-        self.emb_aligner = nn.Embedding(self.args.num_chars, self.args.hidden_channels)
-        nn.init.normal_(self.emb_aligner.weight, 0.0, self.args.hidden_channels**-0.5)
+        # self.emb_aligner = nn.Embedding(self.args.num_chars, self.args.hidden_channels)
+        # nn.init.normal_(self.emb_aligner.weight, 0.0, self.args.hidden_channels**-0.5)
 
         self.text_encoder = TextEncoder(
             self.args.num_chars,
@@ -1529,14 +1529,14 @@ class Vits(BaseTTS):
 
         ##### --> TEXT ENCODING
 
-        o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
+        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
 
         ##### --> ALIGNER
-        x_emb_aligner = self.emb_aligner(x) * math.sqrt(self.args.hidden_channels)
-        x_emb_aligner = x_emb_aligner.transpose(1, 2)  # [B, T, C] --> [B, C, T]
+        # x_emb_aligner = self.emb_aligner(x) * math.sqrt(self.args.hidden_channels)
+        # x_emb_aligner = x_emb_aligner.transpose(1, 2)  # [B, T, C] --> [B, C, T]
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         aligner_durations, aligner_soft, aligner_logprob, aligner_hard = self._forward_aligner(
-            x=x_emb_aligner, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
+            x=x_emb, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
         )
 
         # duration predictor and duration loss
@@ -1696,7 +1696,7 @@ class Vits(BaseTTS):
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
-        o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
+        _, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
 
         if self.args.use_sdp:
             dur_log = self.duration_predictor(
