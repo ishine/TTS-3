@@ -95,6 +95,7 @@ class TextEncoder(nn.Module):
         if lang_emb is not None:
             x_enc = torch.cat((x_enc, lang_emb.expand(x_enc.size(0), -1, x_enc.size(2))), dim=1)
 
+        # TODO: emo_emb might be concat to x_emb to learn emotion based alignments.
         if emo_emb is not None:
             x_enc = torch.cat((x_enc, emo_emb.expand(x_enc.size(0), -1, x_enc.size(2))), dim=1)
 
