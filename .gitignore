@@ -168,3 +168,4 @@ internal/*
 wandb
 depot/*
 coqui_recipes/*
+output/*
