@@ -88,22 +88,23 @@ class TextEncoder(nn.Module):
         """
         assert x.shape[0] == x_lengths.shape[0]
         x_emb = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
+        x_emb = torch.transpose(x_emb, 1, 2)  # [b, h, t]
 
         # concat the lang emb in embedding chars
+        x_enc = x_emb
         if lang_emb is not None:
-            x_emb = torch.cat((x_emb, lang_emb.transpose(2, 1).expand(x_emb.size(0), x_emb.size(1), -1)), dim=-1)
+            x_enc = torch.cat((x_enc, lang_emb.expand(x_enc.size(0), -1, x_enc.size(2))), dim=1)
 
         if emo_emb is not None:
-            x_emb = torch.cat((x_emb, emo_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
+            x_enc = torch.cat((x_enc, emo_emb.expand(x_enc.size(0), -1, x_enc.size(2))), dim=1)
 
-        x_emb = torch.transpose(x_emb, 1, -1)  # [b, h, t]
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x_emb.size(2)), 1).to(x_emb.dtype)  # [b, 1, t]
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x_enc.size(2)), 1).to(x_emb.dtype)  # [b, 1, t]
 
-        o_en = self.encoder(x_emb * x_mask, x_mask)
+        o_en = self.encoder(x_enc * x_mask, x_mask)
         stats = self.proj(o_en) * x_mask
 
         m, logs = torch.split(stats, self.out_channels, dim=1)
-        return o_en, m, logs, x_mask
+        return x_emb, o_en, m, logs, x_mask
 
 class ContextEncoder(nn.Module):
     def __init__(self, in_channels, cond_channels=0, spk_emb_channels=0, emo_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
