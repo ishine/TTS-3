@@ -184,8 +184,9 @@ class VitsConfig(BaseTTSConfig):
     d_vector_dim: int = None
 
     use_weighted_sampler: bool = True  # TODO: move it to the base config
-    attrs_for_weighted_sampler: dict = field(default_factory=lambda: {"root_path": 1.0})
+    weighted_sampler_attrs: dict = field(default_factory=lambda: {"root_path": 1.0})
     weighted_sampler_multipliers: dict = field(default_factory=lambda: {})
+
 
     def __post_init__(self):
         for key, val in self.model_args.items():
