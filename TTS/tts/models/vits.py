@@ -319,7 +319,7 @@ class VitsF0Dataset(F0Dataset):
         wav, _ = load_audio(wav_file, sample_rate=sample_rate)
         f0 = compute_f0(
             x=wav.numpy()[0],
-            sample_rate=audio_config.sample_rate,
+            sample_rate=sample_rate,
             hop_length=audio_config.hop_length,
             pitch_fmax=audio_config.pitch_fmax,
         )
@@ -778,7 +778,7 @@ class VitsArgs(Coqpit):
 #     n_channels_int = n_channels[0]
 #     in_act = input_a + input_b
 #     t_act = torch.tanh(in_act[:, :n_channels_int, :])
-#     s_act = torch.sigmoid(in_act[:, n_channels_int:, :])
+#     s_act = torch.sigmoid(in_act[:, n_channels_int:, :])x
 #     acts = t_act * s_act
 #     return acts
 
