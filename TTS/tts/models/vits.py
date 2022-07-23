@@ -2267,6 +2267,7 @@ class Vits(BaseTTS):
             for attr_name, alpha in config.weighted_sampler_attrs.items():
                 print(f" > Using weighted sampler for attribute '{attr_name}' with alpha '{alpha}'")
 <<<<<<< HEAD
+<<<<<<< HEAD
                 multi_dict = config.weighted_sampler_multipliers.get(attr_name, None)
                 print(multi_dict)
                 weights, attr_names, attr_weights = get_attribute_balancer_weights(
@@ -2275,6 +2276,12 @@ class Vits(BaseTTS):
                 weights, attr_names, attr_weights = get_attribute_balancer_weights(
                     attr_name=attr_name, items=data_items
 >>>>>>> Use self.synthesize in test_run
+=======
+                multi_dict = config.weighted_sampler_multipliers.get(attr_name, None)
+                print(multi_dict)
+                weights, attr_names, attr_weights = get_attribute_balancer_weights(
+                    attr_name=attr_name, items=data_items, multi_dict=multi_dict
+>>>>>>> Add attribute weigtening
                 )
                 weights = weights * alpha
                 print(f" > Attribute weights for '{attr_names}' \n | > {attr_weights}")
