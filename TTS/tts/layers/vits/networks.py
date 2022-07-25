@@ -39,6 +39,7 @@ class TextEncoder(nn.Module):
         dropout_p: float,
         language_emb_dim: int = None,
         emo_emb_dim: int = None,
+        padding_idx: int = None,
     ):
         """Text Encoder for VITS model.
 
@@ -56,7 +57,7 @@ class TextEncoder(nn.Module):
         self.out_channels = out_channels
         self.hidden_channels = hidden_channels
 
-        self.emb = nn.Embedding(n_vocab, hidden_channels)
+        self.emb = nn.Embedding(n_vocab, hidden_channels, padding_idx=padding_idx)
 
         nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
 
