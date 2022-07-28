@@ -178,6 +178,7 @@ class Synthesizer(object):
         self,
         text: str = "",
         speaker_name: str = "",
+        emotion_name: str = "",
         language_name: str = "",
         speaker_wav=None,
         style_wav=None,
@@ -267,6 +268,11 @@ class Synthesizer(object):
         if speaker_wav is not None:
             speaker_embedding = self.tts_model.speaker_manager.compute_embedding_from_clip(speaker_wav)
 
+        emotion_embedding = None
+        if emotion_name is not None:
+            emotion_embedding = self.tts_model.emotion_manager.get_mean_embedding(emotion_name, num_samples=1)
+            emotion_embedding = np.array(emotion_embedding)[None, :]  # [1 x embedding_dim]
+
         use_gl = self.vocoder_model is None
 
         if not reference_wav:
@@ -276,8 +282,10 @@ class Synthesizer(object):
                     outputs = self.tts_model.synthesize(
                         text=sen,
                         speaker_id=speaker_id,
+                        emotion_id=emotion_name,
                         language_id=language_id,
                         d_vector=speaker_embedding,
+                        emotion_vector=emotion_embedding,
                         ref_waveform=style_wav,
                         **kwargs,
                     )
