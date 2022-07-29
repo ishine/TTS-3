@@ -933,6 +933,7 @@ class Vits(BaseTTS):
         self.init_emotion()
         self.init_upsampling()
 
+        self.target_cps = 16
         self.length_scale = self.args.length_scale
         self.noise_scale = self.args.noise_scale
         self.inference_noise_scale = self.args.inference_noise_scale
@@ -1771,8 +1772,17 @@ class Vits(BaseTTS):
             dur_log = self.duration_predictor(o_en, spk_emb=spk_emb, emo_emb=emo_emb, lens=x_lengths)
 
         dur = (torch.exp(dur_log) - 1) * x_mask * self.length_scale
-        dur[dur < 1] = 1.0
+
+        if self.target_cps:
+            model_output_in_sec = (self.config.audio.hop_length * dur.sum()) / self.args.encoder_sample_rate
+            num_input_chars = x_lengths[0]
+            num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum()
+            num_input_chars -= blank_mask.sum()
+            dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec))
+            model_output_in_sec2 = (self.config.audio.hop_length * dur.sum()) / self.args.encoder_sample_rate
+
         dur = torch.round(dur)
+        dur[dur < 1] = 1
 
         # pitch predictor pass
         o_pitch = None
@@ -1785,6 +1795,7 @@ class Vits(BaseTTS):
                 pitch_transform=pitch_transform,
                 x_lengths=x_lengths,
             )
+
         # energy predictor pass
         o_energy = None
         if self.args.use_energy_predictor:
@@ -2628,6 +2639,7 @@ class Vits(BaseTTS):
         is_cuda = next(self.parameters()).is_cuda
 
         # convert text to sequence of token IDs
+        text_len = len(text)
         text_inputs = np.asarray(
             self.tokenizer.text_to_ids(text, language=language_id),
             dtype=np.int32,

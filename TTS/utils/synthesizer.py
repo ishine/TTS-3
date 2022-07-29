@@ -270,7 +270,8 @@ class Synthesizer(object):
 
         emotion_embedding = None
         if emotion_name is not None:
-            emotion_embedding = self.tts_model.emotion_manager.get_mean_embedding(emotion_name, num_samples=1)
+            # emotion_embedding = self.tts_model.emotion_manager.get_mean_embedding(emotion_name, num_samples=1)
+            emotion_embedding = self.tts_model.emotion_manager.get_mean_embedding(emotion_name)
             emotion_embedding = np.array(emotion_embedding)[None, :]  # [1 x embedding_dim]
 
         use_gl = self.vocoder_model is None
