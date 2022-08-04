@@ -290,6 +290,7 @@ class Synthesizer(object):
                         ref_waveform=style_wav,
                         **kwargs,
                     )
+                    outputs["sentence"] = sen
                     waveform = outputs["wav"][0]
                     outputss.append(outputs)
                 else:
