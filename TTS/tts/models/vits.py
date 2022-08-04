@@ -2192,6 +2192,57 @@ class Vits(BaseTTS):
             "emotion_vector": emotion_vector,
         }
 
+    def plot_outputs(self, text, wav, alignment, outputs):
+        figures = {}
+        # plot pitch and spectrogram
+        if self.args.encoder_sample_rate:
+            try:
+                wav = torchaudio.functional.resample(torch.from_numpy(wav[None, :]),
+                    orig_freq=self.config.audio["sample_rate"], new_freq=self.args.encoder_sample_rate
+                ).squeeze(1)
+            except:
+                wav = torchaudio.functional.resample(torch.from_numpy(wav[None, :]).cuda(),
+                    orig_freq=self.config.audio["sample_rate"], new_freq=self.args.encoder_sample_rate
+                ).cpu().squeeze(1)
+        else:
+            wav = torch.from_numpy(wav[None, :])
+
+        spec = wav_to_mel(
+            y=wav,
+            n_fft=self.config.audio.fft_size,
+            sample_rate=self.config.audio.sample_rate,
+            num_mels=self.config.audio.num_mels,
+            hop_length=self.config.audio.hop_length,
+            win_length=self.config.audio.win_length,
+            fmin=self.config.audio.mel_fmin,
+            fmax=self.config.audio.mel_fmax,
+            center=False,
+        )[0].transpose(0, 1)
+
+        pitch, voiced_mask, _ = pyin(
+            wav.numpy()[0], self.config.audio.pitch_fmin, self.config.audio.pitch_fmax, self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+            frame_length=self.config.audio.win_length * 2, win_length=self.config.audio.win_length,
+            hop_length=self.config.audio.hop_length)
+        pitch[~voiced_mask] = 0.0
+
+        input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(text, language="en"))
+        input_text = input_text.replace("<BLNK>", "_")
+
+        durations = outputs["durations"]
+
+        pitch_avg = average_over_durations(
+            torch.from_numpy(pitch)[None, None, :], durations.squeeze(0).cpu()
+        )  # [1, 1, n_frames]
+
+        pred_pitch = outputs["pitch"].squeeze().cpu()
+
+        figures["alignment"] = plot_alignment(alignment.transpose(1, 2), output_fig=False)
+        figures["spectrogram"] = plot_spectrogram(spec)
+        figures["pitch_from_audio"] = plot_pitch(pitch, spec)
+        figures["pitch_predicted"] = plot_pitch(pred_pitch, spec)
+        figures["pitch_avg_from_audio"] = plot_avg_pitch(pitch_avg.squeeze(), input_text)
+        return figures
+
     @torch.no_grad()
     def test_run(self, assets) -> Tuple[Dict, Dict]:
         """Generic test run for `tts` models used by `Trainer`.
