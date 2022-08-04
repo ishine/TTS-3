@@ -721,10 +721,6 @@ class VitsGeneratorLoss(nn.Module):
         log_duration_pred,
         loss_duration,
         aligner_logprob,
-        pitch_output,
-        pitch_target,
-        energy_output,
-        energy_target,
         alignment_hard,
         alignment_soft,
         binary_loss_weight,
@@ -768,17 +764,17 @@ class VitsGeneratorLoss(nn.Module):
             loss = loss + loss_se
             return_dict["loss_spk_encoder"] = loss_se
 
-        if hasattr(self, "pitch_loss") and self.pitch_loss_alpha > 0:
-            pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), z_len)
-            loss = loss + self.pitch_loss_alpha * pitch_loss
-            return_dict["loss_pitch"] = self.pitch_loss_alpha * pitch_loss
+        # if hasattr(self, "pitch_loss") and self.pitch_loss_alpha > 0:
+        #     pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), z_len)
+        #     loss = loss + self.pitch_loss_alpha * pitch_loss
+        #     return_dict["loss_pitch"] = self.pitch_loss_alpha * pitch_loss
 
-        if hasattr(self, "energy_loss") and self.energy_loss_alpha > 0:
-            energy_loss = self.energy_loss(
-                energy_output.transpose(1, 2), energy_target.transpose(1, 2), z_len
-            )
-            loss = loss + self.energy_loss_alpha * energy_loss
-            return_dict["loss_energy"] = self.energy_loss_alpha * energy_loss
+        # if hasattr(self, "energy_loss") and self.energy_loss_alpha > 0:
+        #     energy_loss = self.energy_loss(
+        #         energy_output.transpose(1, 2), energy_target.transpose(1, 2), z_len
+        #     )
+        #     loss = loss + self.energy_loss_alpha * energy_loss
+        #     return_dict["loss_energy"] = self.energy_loss_alpha * energy_loss
 
         if self.binary_alignment_loss_alpha > 0 and alignment_hard is not None:
             binary_alignment_loss = self._binary_alignment_loss(alignment_hard, alignment_soft)
