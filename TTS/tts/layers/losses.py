@@ -769,13 +769,13 @@ class VitsGeneratorLoss(nn.Module):
             return_dict["loss_spk_encoder"] = loss_se
 
         if hasattr(self, "pitch_loss") and self.pitch_loss_alpha > 0:
-            pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), token_len)
+            pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), z_len)
             loss = loss + self.pitch_loss_alpha * pitch_loss
             return_dict["loss_pitch"] = self.pitch_loss_alpha * pitch_loss
 
         if hasattr(self, "energy_loss") and self.energy_loss_alpha > 0:
             energy_loss = self.energy_loss(
-                energy_output.transpose(1, 2), energy_target.transpose(1, 2), token_len
+                energy_output.transpose(1, 2), energy_target.transpose(1, 2), z_len
             )
             loss = loss + self.energy_loss_alpha * energy_loss
             return_dict["loss_energy"] = self.energy_loss_alpha * energy_loss

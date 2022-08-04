@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torchaudio
 from coqpit import Coqpit
 from librosa.filters import mel as librosa_mel_fn
+from librosa import pyin
 from torch import nn
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
@@ -173,6 +174,9 @@ def wav_to_energy(y, n_fft, hop_length, win_length, center=False):
     spec = wav_to_spec(y, n_fft, hop_length, win_length, center=center)
     return torch.norm(spec, dim=1, keepdim=True)
 
+def mel_to_energy(mel):
+    avg_energy = torch.mean(mel, dim=1, keepdim=True)
+    return avg_energy
 
 def name_mel_basis(spec, n_fft, fmax):
     n_fft_len = f"{n_fft}_{fmax}_{spec.dtype}_{spec.device}"
@@ -260,6 +264,7 @@ class VitsAudioConfig(Coqpit):
     mel_fmin: int = 0
     mel_fmax: int = None
     pitch_fmax: float = 640.0
+    pitch_fmin: float = 80.0
 
 
 ##############################
@@ -315,13 +320,13 @@ class VitsF0Dataset(F0Dataset):
 
     @staticmethod
     def _compute_and_save_pitch(audio_config, wav_file, pitch_file=None, sample_rate=None):
-        wav, _ = load_audio(wav_file, sample_rate=sample_rate)
-        f0 = compute_f0(
-            x=wav.numpy()[0],
-            sample_rate=sample_rate,
-            hop_length=audio_config.hop_length,
-            pitch_fmax=audio_config.pitch_fmax,
-        )
+        wav, current_sample_rate = load_audio(wav_file, sample_rate=sample_rate)
+        # compute f0 using librosa
+        f0, voiced_mask, _ = pyin(
+            wav.numpy()[0], audio_config.pitch_fmin, audio_config.pitch_fmax, current_sample_rate,
+            frame_length=audio_config.win_length * 2, win_length=audio_config.win_length,
+            hop_length=audio_config.hop_length)
+        f0[~voiced_mask] = 0.0
         # skip the last F0 value to align with the spectrogram
         if wav.shape[1] % audio_config.hop_length != 0:
             f0 = f0[:-1]
@@ -987,11 +992,11 @@ class Vits(BaseTTS):
             )
             self.pitch_emb = nn.Conv1d(
                 1,
-                128,
+                self.args.hidden_channels,
                 kernel_size=self.args.pitch_embedding_kernel_size,
                 padding=int((self.args.pitch_embedding_kernel_size - 1) / 2),
             )
-            context_cond_channels += 128
+            context_cond_channels += self.args.hidden_channels
             self.pitch_scaler = torch.nn.BatchNorm1d(1, affine=False, track_running_stats=True, momentum=None)
             self.pitch_scaler.requires_grad_(False)
 
@@ -1353,7 +1358,6 @@ class Vits(BaseTTS):
         o_en: torch.FloatTensor,
         x_mask: torch.IntTensor,
         pitch: torch.FloatTensor = None,
-        dr: torch.IntTensor = None,
         g: torch.FloatTensor = None,
         emo_emb: torch.FloatTensor = None,
         pitch_transform: Callable = None,
@@ -1388,9 +1392,8 @@ class Vits(BaseTTS):
         if pitch_transform is not None:
             o_pitch = pitch_transform(o_pitch, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if pitch is not None:
-            avg_pitch = average_over_durations(pitch, dr)
-            o_pitch_emb = self.pitch_emb(avg_pitch)
-            return o_pitch_emb, o_pitch, avg_pitch
+            o_pitch_emb = self.pitch_emb(pitch)
+            return o_pitch_emb, o_pitch
         o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
@@ -1399,7 +1402,6 @@ class Vits(BaseTTS):
         o_en: torch.FloatTensor,
         x_mask: torch.IntTensor,
         energy: torch.FloatTensor = None,
-        dr: torch.IntTensor = None,
         g: torch.FloatTensor = None,
         emo_emb: torch.FloatTensor = None,
         energy_transform: Callable = None,
@@ -1415,9 +1417,8 @@ class Vits(BaseTTS):
         if energy_transform is not None:
             o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if energy is not None:
-            avg_energy = average_over_durations(energy, dr)
-            o_energy_emb = self.energy_emb(avg_energy)
-            return o_energy_emb, o_energy, avg_energy
+            o_energy_emb = self.energy_emb(energy)
+            return o_energy_emb, o_energy
         o_energy_emb = self.energy_emb(o_energy)
         return o_energy_emb, o_energy
 
@@ -1583,51 +1584,45 @@ class Vits(BaseTTS):
         # duration predictor and duration loss
         outputs = self.forward_duration_predictor(outputs, aligner_hard, o_en, x_mask, spk_emb, lang_emb, emo_emb, x_lengths)
 
-        ##### --> Pitch & Energy Predictors
-
-        # pitch predictor pass
-        o_pitch = None
-        avg_pitch = None
-        if self.args.use_pitch:
-            masked_dur = aligner_durations.int()
-            masked_dur[:, 1:-1] = masked_dur[:, 1:-1] + masked_dur[:, 2:]
-            masked_dur = masked_dur.masked_fill(blank_mask, 0.0)
-            o_pitch_emb, o_pitch, avg_pitch = self._forward_pitch_predictor(
-                o_en=o_en, x_mask=x_mask, pitch=pitch, dr=masked_dur, g=spk_emb, emo_emb=emo_emb, x_lengths=x_lengths
-            )
-
-        # energy predictor pass
-        o_energy = None
-        avg_energy = None
-        if self.args.use_energy_predictor:
-            masked_dur = aligner_durations.int()
-            masked_dur[:, 1:-1] = masked_dur[:, 1:-1] + masked_dur[:, 2:]
-            masked_dur = masked_dur.masked_fill(blank_mask, 0.0)
-            o_energy_emb, o_energy, avg_energy = self._forward_energy_predictor(
-                o_en=o_en, x_mask=x_mask, energy=energy, dr=masked_dur, g=spk_emb, emo_emb=emo_emb, x_lengths=x_lengths
-            )
-
-        ##### ---> CONTEXT ENCODING
-
-        # context encoder pass
-        # TODO: predict context in output length
-        context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        # context_cond = torch.cat(
-        #     (context_cond, spk_emb.expand(-1, -1, o_energy_emb.shape[2])), dim=1
-        # )  # [B, C * 2, T_en]
-        context_emb = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
-
         ##### --> EXPAND
 
         # expand prior
         if binarize_alignment:
             m_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, m_p])
             logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, logs_p])
-            context_emb = torch.einsum("klmn, kjm -> kjn", [aligner_hard, context_emb])
+            o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_hard, o_en])
         else:
             m_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, m_p])
             logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, logs_p])
-            context_emb = torch.einsum("klmn, kjm -> kjn", [aligner_soft, context_emb])
+            o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_soft, o_en])
+
+        ##### --> Pitch & Energy Predictors
+
+        # pitch predictor pass
+        o_pitch = None
+        avg_pitch = None
+        if self.args.use_pitch:
+            # remove extra frame if needed
+            if energy.size(2) != pitch.size(2):
+                pitch = pitch[:, :, :energy.size(2)]
+            o_pitch_emb, o_pitch = self._forward_pitch_predictor(
+                o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
+            )
+
+
+        # energy predictor pass
+        o_energy = None
+        avg_energy = None
+        if self.args.use_energy_predictor:
+            o_energy_emb, o_energy = self._forward_energy_predictor(
+                o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
+            )
+
+        ##### ---> CONTEXT ENCODING
+
+        # context encoder pass
+        context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_de]
+        context_emb = self.context_encoder(o_en_ex, y_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
 
         ###### --> FLOW
 
@@ -1686,10 +1681,8 @@ class Vits(BaseTTS):
                 "z_p": z_p,
                 "m_q": m_q,
                 "logs_q": logs_q,
-                "energy_avg": o_energy,
-                "pitch_avg": o_pitch,
-                "energy_avg_gt": avg_energy,
-                "pitch_avg_gt": avg_pitch,
+                "energy_hat": o_energy,
+                "pitch_hat": o_pitch,
                 "waveform_seg": wav_seg,
                 "gt_spk_emb": gt_spk_emb,
                 "syn_spk_emb": syn_spk_emb,
@@ -1780,35 +1773,43 @@ class Vits(BaseTTS):
         dur = torch.round(dur)
         dur[dur < 1] = 1
 
+        y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
+        y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
+
+        attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
+        attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
+
+        m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
+        logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
+        o_en_ex = torch.matmul(attn.transpose(1, 2), o_en.transpose(1, 2)).transpose(1, 2)
+
         # pitch predictor pass
         o_pitch = None
         if self.args.use_pitch:
             o_pitch_emb, o_pitch = self._forward_pitch_predictor(
-                o_en=o_en,
-                x_mask=x_mask,
+                o_en=o_en_ex,
+                x_mask=y_mask,
                 g=spk_emb,
                 emo_emb=emo_emb,
                 pitch_transform=pitch_transform,
-                x_lengths=x_lengths,
+                x_lengths=y_lengths,
             )
 
         # energy predictor pass
         o_energy = None
         if self.args.use_energy_predictor:
             o_energy_emb, o_energy = self._forward_energy_predictor(
-                o_en=o_en,
-                x_mask=x_mask,
+                o_en=o_en_ex,
+                x_mask=y_mask,
                 g=spk_emb,
                 emo_emb=emo_emb,
                 energy_transform=energy_transform,
-                x_lengths=x_lengths,
+                x_lengths=y_lengths,
             )
 
         # context encoder pass
-        # context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        # o_context = torch.cat((context_cond, spk_emb.expand(-1, -1, o_energy_emb.shape[2])), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en, x_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
+        o_context = self.context_encoder(o_en_ex, y_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
 
         # if self.args.use_pitch:
         #     o_en = o_en + o_pitch_emb
@@ -1836,15 +1837,6 @@ class Vits(BaseTTS):
         # dur[dur < 1] = 1.0
         # dur = torch.round(dur)
 
-        y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
-        y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
-
-        attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
-        attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
-
-        m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
-        logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
-        o_context = torch.matmul(attn.transpose(1, 2), o_context.transpose(1, 2)).transpose(1, 2)
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
         z = self.flow(z_p, y_mask, g=o_context * y_mask, reverse=True)
@@ -2038,10 +2030,10 @@ class Vits(BaseTTS):
                     feats_disc_real=feats_disc_real,
                     log_duration_pred=self.model_outputs_cache["log_duration_pred"].float(),
                     loss_duration=self.model_outputs_cache["loss_duration"],
-                    pitch_output=self.model_outputs_cache["pitch_avg"] if self.args.use_pitch else None,
-                    pitch_target=self.model_outputs_cache["pitch_avg_gt"] if self.args.use_pitch else None,
-                    energy_output=self.model_outputs_cache["energy_avg"] if self.args.use_energy_predictor else None,
-                    energy_target=self.model_outputs_cache["energy_avg_gt"] if self.args.use_energy_predictor else None,
+                    pitch_output=self.model_outputs_cache["pitch_hat"] if self.args.use_pitch else None,
+                    pitch_target=batch["pitch"] if self.args.use_pitch else None,
+                    energy_output=self.model_outputs_cache["energy_hat"] if self.args.use_energy_predictor else None,
+                    energy_target=batch["energy"] if self.args.use_energy_predictor else None,
                     aligner_logprob=self.model_outputs_cache["aligner_logprob"].float(),
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
@@ -2071,27 +2063,27 @@ class Vits(BaseTTS):
         sample_voice = y_hat[0].squeeze(0).detach().cpu().numpy()
         audios = {f"{name_prefix}/audio": sample_voice}
 
-        # plot pitch figures
-        if self.args.use_pitch:
-            pitch_avg = abs(outputs[1]["pitch_avg_gt"][0, 0].data.cpu().numpy())
-            pitch_avg_hat = abs(outputs[1]["pitch_avg"][0, 0].data.cpu().numpy())
-            chars = self.tokenizer.decode(batch["tokens"][0].data.cpu().numpy())
-            pitch_figures = {
-                "pitch_ground_truth": plot_avg_pitch(pitch_avg, chars, output_fig=False),
-                "pitch_avg_predicted": plot_avg_pitch(pitch_avg_hat, chars, output_fig=False),
-            }
-            figures.update(pitch_figures)
+        # # plot pitch figures
+        # if self.args.use_pitch:
+        #     pitch_avg = abs(outputs[1]["pitch_avg_gt"][0, 0].data.cpu().numpy())
+        #     pitch_avg_hat = abs(outputs[1]["pitch_avg"][0, 0].data.cpu().numpy())
+        #     chars = self.tokenizer.decode(batch["tokens"][0].data.cpu().numpy())
+        #     pitch_figures = {
+        #         "pitch_ground_truth": plot_avg_pitch(pitch_avg, chars, output_fig=False),
+        #         "pitch_avg_predicted": plot_avg_pitch(pitch_avg_hat, chars, output_fig=False),
+        #     }
+        #     figures.update(pitch_figures)
 
-        # plot energy figures
-        if self.args.use_energy_predictor:
-            energy_avg = abs(outputs[1]["energy_avg_gt"][0, 0].data.cpu().numpy())
-            energy_avg_hat = abs(outputs[1]["energy_avg"][0, 0].data.cpu().numpy())
-            chars = self.tokenizer.decode(batch["tokens"][0].data.cpu().numpy())
-            energy_figures = {
-                "energy_ground_truth": plot_avg_pitch(energy_avg, chars, output_fig=False),
-                "energy_avg_predicted": plot_avg_pitch(energy_avg_hat, chars, output_fig=False),
-            }
-            figures.update(energy_figures)
+        # # plot energy figures
+        # if self.args.use_energy_predictor:
+        #     energy_avg = abs(outputs[1]["energy_avg_gt"][0, 0].data.cpu().numpy())
+        #     energy_avg_hat = abs(outputs[1]["energy_avg"][0, 0].data.cpu().numpy())
+        #     chars = self.tokenizer.decode(batch["tokens"][0].data.cpu().numpy())
+        #     energy_figures = {
+        #         "energy_ground_truth": plot_avg_pitch(energy_avg, chars, output_fig=False),
+        #         "energy_avg_predicted": plot_avg_pitch(energy_avg_hat, chars, output_fig=False),
+        #     }
+        #     figures.update(energy_figures)
 
         attn_hard = outputs[1]["aligner_hard"]
         attn_hard = attn_hard[0].data.cpu().numpy().T
@@ -2222,8 +2214,18 @@ class Vits(BaseTTS):
             # plot outputs
             wav = return_dict["wav"]
             alignment = return_dict["alignments"]
+
+            # plot pitch and spectrogram
+            if self.args.encoder_sample_rate:
+                try:
+                    wav = self.audio_resampler(torch.from_numpy(wav[None, :])).squeeze(1)
+                except:
+                    wav = self.audio_resampler(torch.from_numpy(wav[None, :]).cuda()).cpu().squeeze(1)
+            else:
+                wav = torch.from_numpy(wav[None, :])
+
             spec = wav_to_mel(
-                y=torch.from_numpy(wav[None, :]),
+                y=wav,
                 n_fft=self.config.audio.fft_size,
                 sample_rate=self.config.audio.sample_rate,
                 num_mels=self.config.audio.num_mels,
@@ -2233,25 +2235,30 @@ class Vits(BaseTTS):
                 fmax=self.config.audio.mel_fmax,
                 center=False,
             )[0].transpose(0, 1)
-            pitch = compute_f0(
-                x=wav[0],
-                sample_rate=self.config.audio.sample_rate,
-                hop_length=self.config.audio.hop_length,
-                pitch_fmax=self.config.audio.pitch_fmax,
-            )
+
+            pitch, voiced_mask, _ = pyin(
+                wav.numpy()[0], self.config.audio.pitch_fmin, self.config.audio.pitch_fmax, self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+                frame_length=self.config.audio.win_length * 2, win_length=self.config.audio.win_length,
+                hop_length=self.config.audio.hop_length)
+            pitch[~voiced_mask] = 0.0
+
             input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(aux_inputs["text"], language="en"))
             input_text = input_text.replace("<BLNK>", "_")
-            durations = return_dict["outputs"]["masked_durations"] * (
-                self.config.audio.sample_rate / self.args.encoder_sample_rate
-            )
+
+            durations = return_dict["outputs"]["durations"]
+
             pitch_avg = average_over_durations(
                 torch.from_numpy(pitch)[None, None, :], durations.squeeze(0).cpu()
             )  # [1, 1, n_frames]
+
+            pred_pitch = return_dict["outputs"]["pitch"].squeeze().cpu()
+
             test_audios["{}-audio".format(idx)] = wav.T
             test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.transpose(1, 2), output_fig=False)
             test_figures["{}-spectrogram".format(idx)] = plot_spectrogram(spec)
-            test_figures["{}-pitch".format(idx)] = plot_pitch(pitch, spec)
-            test_figures["{}-pitch_avg".format(idx)] = plot_avg_pitch(pitch_avg.squeeze(), input_text)
+            test_figures["{}-pitch_from_audio".format(idx)] = plot_pitch(pitch, spec)
+            test_figures["{}-pitch_predicted".format(idx)] = plot_pitch(pred_pitch, spec)
+            test_figures["{}-pitch_avg_from_audio".format(idx)] = plot_avg_pitch(pitch_avg.squeeze(), input_text)
         return {"figures": test_figures, "audios": test_audios}
 
     def test_log(
@@ -2371,17 +2378,25 @@ class Vits(BaseTTS):
         # compute energy
         batch["energy"] = None
         if self.args.use_energy_predictor:
-            batch["energy"] = wav_to_energy(  # [B, 1, T_max2]
+            energy_mel_spec = wav_to_mel(
                 wav,
+                n_fft=ac.fft_size,
+                num_mels=ac.num_mels,
+                sample_rate=ac.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
                 hop_length=ac.hop_length,
                 win_length=ac.win_length,
-                n_fft=ac.fft_size,
-                center=False,
+                fmin=ac.mel_fmin,
+                fmax=ac.mel_fmax,
+                center=False
             )
+            batch["energy"] = mel_to_energy(energy_mel_spec)
             batch["energy"] = self.energy_scaler(batch["energy"])
 
         if self.args.use_pitch:
-            batch["pitch"] = self.pitch_scaler(batch["pitch"])
+            zero_idxs = batch["pitch"] == 0.0
+            pitch_norm = self.pitch_scaler(batch["pitch"])
+            pitch_norm[zero_idxs] = 0.0
+            batch["pitch"] = pitch_norm[: ,: , :batch["energy"].shape[-1]]
         return batch
 
     def get_sampler(self, config: Coqpit, dataset: TTSDataset, num_gpus=1, is_eval=False):
