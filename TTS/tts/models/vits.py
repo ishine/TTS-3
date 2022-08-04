@@ -13,6 +13,7 @@ import torchaudio
 from coqpit import Coqpit
 from librosa.filters import mel as librosa_mel_fn
 from librosa import pyin
+import parselmouth
 from torch import nn
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
@@ -170,12 +171,13 @@ def wav_to_spec(y, n_fft, hop_length, win_length, center=False):
     return spec
 
 
-def wav_to_energy(y, n_fft, hop_length, win_length, center=False):
-    spec = wav_to_spec(y, n_fft, hop_length, win_length, center=center)
-    return torch.norm(spec, dim=1, keepdim=True)
+def wav_to_energy(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fmax, center=False):
+    mel = wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fmax, center=center)
+    return mel_to_energy(mel)
 
 def mel_to_energy(mel):
     avg_energy = torch.mean(mel, dim=1, keepdim=True)
+    avg_energy = (avg_energy + 20.0) / 20.0
     return avg_energy
 
 def name_mel_basis(spec, n_fft, fmax):
@@ -320,16 +322,30 @@ class VitsF0Dataset(F0Dataset):
 
     @staticmethod
     def _compute_and_save_pitch(audio_config, wav_file, pitch_file=None, sample_rate=None):
-        wav, current_sample_rate = load_audio(wav_file, sample_rate=sample_rate)
-        # compute f0 using librosa
-        f0, voiced_mask, _ = pyin(
-            wav.numpy()[0], audio_config.pitch_fmin, audio_config.pitch_fmax, current_sample_rate,
-            frame_length=audio_config.win_length * 2, win_length=audio_config.win_length,
-            hop_length=audio_config.hop_length)
-        f0[~voiced_mask] = 0.0
-        # skip the last F0 value to align with the spectrogram
-        if wav.shape[1] % audio_config.hop_length != 0:
-            f0 = f0[:-1]
+        # wav, current_sample_rate = load_audio(wav_file, sample_rate=sample_rate)
+        # # compute f0 using librosa
+        # f0, voiced_mask, _ = pyin(
+        #     wav.numpy()[0], audio_config.pitch_fmin, audio_config.pitch_fmax, current_sample_rate,
+        #     frame_length=audio_config.win_length * 2, win_length=audio_config.win_length,
+        #     hop_length=audio_config.hop_length)
+        # f0[~voiced_mask] = 0.0
+        # # skip the last F0 value to align with the spectrogram
+        # if wav.shape[1] % audio_config.hop_length != 0:
+        #     f0 = f0[:-1]
+        # if pitch_file:
+        #     np.save(pitch_file, f0)
+
+        snd = parselmouth.Sound(wav_file)
+        # resample if needed
+        if sample_rate:
+            snd = snd.resample(sample_rate)
+        # compute pitch
+        f0 = snd.to_pitch().selected_array['frequency']
+
+        # interpolate to match the spectrogram shape
+        spec_size = int(snd.values.shape[-1] / audio_config.hop_length)
+        f0 = torch.nn.functional.interpolate(torch.tensor(f0).unsqueeze(0).unsqueeze(0), scale_factor=(spec_size/len(f0),)).squeeze().numpy()
+
         if pitch_file:
             np.save(pitch_file, f0)
         return f0
@@ -986,7 +1002,7 @@ class Vits(BaseTTS):
         if self.args.use_pitch:
             self.pitch_predictor = DurationPredictorLSTM(
                 in_channels=self.args.hidden_channels,
-                bottleneck_channels=32,  # TODO: make this configurable
+                bottleneck_channels=16,  # TODO: make this configurable
                 spk_emb_channels=self.embedded_speaker_dim,
                 emo_emb_channels=self.embedded_emotion_dim,
             )
@@ -1004,7 +1020,7 @@ class Vits(BaseTTS):
         if self.args.use_energy_predictor:
             self.energy_predictor = DurationPredictorLSTM(
                 in_channels=self.args.hidden_channels,
-                bottleneck_channels=32,
+                bottleneck_channels=16,
                 spk_emb_channels=self.embedded_speaker_dim,
                 emo_emb_channels=self.embedded_emotion_dim,
             )
@@ -1014,8 +1030,8 @@ class Vits(BaseTTS):
                 kernel_size=self.args.energy_embedding_kernel_size,
                 padding=int((self.args.energy_embedding_kernel_size - 1) / 2),
             )
-            self.energy_scaler = torch.nn.BatchNorm1d(1, affine=False, track_running_stats=True, momentum=None)
-            self.energy_scaler.requires_grad_(False)
+            # self.energy_scaler = torch.nn.BatchNorm1d(1, affine=False, track_running_stats=True, momentum=None)
+            # self.energy_scaler.requires_grad_(False)
             context_cond_channels += 128
 
         # --> CONTEXT ENCODER
@@ -1228,9 +1244,9 @@ class Vits(BaseTTS):
             print(" > Text Encoder was reinit.")
 
     def on_epoch_end(self, trainer):
-        if self.args.use_energy_predictor:
-            # stop updating mean and var
-            self.energy_scaler.eval()
+        # if self.args.use_energy_predictor:
+        #     # stop updating mean and var
+        #     self.energy_scaler.eval()
         if self.args.use_pitch:
             # stop updating mean and var
             self.pitch_scaler.eval()
@@ -1389,12 +1405,18 @@ class Vits(BaseTTS):
             emo_emb=emo_emb.detach(),
             lens=x_lengths,
         )
-        if pitch_transform is not None:
-            o_pitch = pitch_transform(o_pitch, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
+
         if pitch is not None:
+            # Training
             o_pitch_emb = self.pitch_emb(pitch)
-            return o_pitch_emb, o_pitch
-        o_pitch_emb = self.pitch_emb(o_pitch)
+            loss_pitch = torch.nn.functional.mse_loss(o_pitch * x_mask, pitch * x_mask, reduction="sum")
+            loss_pitch = loss_pitch / x_mask.sum()
+            return o_pitch_emb, o_pitch, loss_pitch
+        else:
+            # Inference
+            if pitch_transform is not None:
+                o_pitch = pitch_transform(o_pitch, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
+            o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
     def _forward_energy_predictor(
@@ -1407,20 +1429,30 @@ class Vits(BaseTTS):
         energy_transform: Callable = None,
         x_lengths: torch.IntTensor = None,
     ) -> torch.FloatTensor:
-        # o_energy = self.energy_predictor(o_en, x_mask, g=g)
         o_energy = self.energy_predictor(
             txt_enc=o_en,
             spk_emb=g.detach(),
             emo_emb=emo_emb.detach(),
             lens=x_lengths,
         )
-        if energy_transform is not None:
-            o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
         if energy is not None:
+            # Training
+            gt_avg_energy = energy
+            gt_avg_energy = gt_avg_energy * 2 - 1  # scale to ~ [-1, 1]
+            gt_avg_energy = gt_avg_energy * 1.4  # scale to ~ 1 std
             o_energy_emb = self.energy_emb(energy)
+            loss_energy = torch.nn.functional.mse_loss(o_energy * x_mask, gt_avg_energy * x_mask, reduction="sum")
+            loss_energy = loss_energy / x_mask.sum()
+            return o_energy_emb, o_energy, loss_energy
+        else:
+            # Inference
+            # denormalize predicted energy
+            o_energy = o_energy / 1.4
+            o_energy = (o_energy + 1) / 2
+            if energy_transform is not None:
+                o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
+            o_energy_emb = self.energy_emb(o_energy)
             return o_energy_emb, o_energy
-        o_energy_emb = self.energy_emb(o_energy)
-        return o_energy_emb, o_energy
 
     def _forward_aligner(
         self,
@@ -1605,7 +1637,7 @@ class Vits(BaseTTS):
             # remove extra frame if needed
             if energy.size(2) != pitch.size(2):
                 pitch = pitch[:, :, :energy.size(2)]
-            o_pitch_emb, o_pitch = self._forward_pitch_predictor(
+            o_pitch_emb, o_pitch, loss_pitch = self._forward_pitch_predictor(
                 o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
             )
 
@@ -1614,7 +1646,7 @@ class Vits(BaseTTS):
         o_energy = None
         avg_energy = None
         if self.args.use_energy_predictor:
-            o_energy_emb, o_energy = self._forward_energy_predictor(
+            o_energy_emb, o_energy, loss_energy = self._forward_energy_predictor(
                 o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
             )
 
@@ -1683,6 +1715,8 @@ class Vits(BaseTTS):
                 "logs_q": logs_q,
                 "energy_hat": o_energy,
                 "pitch_hat": o_pitch,
+                "loss_pitch": loss_pitch,
+                "loss_energy": loss_energy,
                 "waveform_seg": wav_seg,
                 "gt_spk_emb": gt_spk_emb,
                 "syn_spk_emb": syn_spk_emb,
@@ -2030,10 +2064,6 @@ class Vits(BaseTTS):
                     feats_disc_real=feats_disc_real,
                     log_duration_pred=self.model_outputs_cache["log_duration_pred"].float(),
                     loss_duration=self.model_outputs_cache["loss_duration"],
-                    pitch_output=self.model_outputs_cache["pitch_hat"] if self.args.use_pitch else None,
-                    pitch_target=batch["pitch"] if self.args.use_pitch else None,
-                    energy_output=self.model_outputs_cache["energy_hat"] if self.args.use_energy_predictor else None,
-                    energy_target=batch["energy"] if self.args.use_energy_predictor else None,
                     aligner_logprob=self.model_outputs_cache["aligner_logprob"].float(),
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
@@ -2042,6 +2072,11 @@ class Vits(BaseTTS):
                     alignment_soft=self.model_outputs_cache["aligner_soft"],
                     binary_loss_weight=self.binary_loss_weight,
                 )
+
+            loss_dict["loss"] = self.model_outputs_cache["loss_pitch"] * self.config.pitch_loss_alpha + loss_dict["loss"]
+            loss_dict["loss"] = self.model_outputs_cache["loss_energy"] * self.config.energy_loss_alpha + loss_dict["loss"]
+            loss_dict["loss_pitch"] = self.model_outputs_cache["loss_pitch"] * self.config.pitch_loss_alpha
+            loss_dict["loss_energy"] = self.model_outputs_cache["loss_energy"] * self.config.energy_loss_alpha
 
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
             loss_dict["avg_spec_length"] = batch["spec_lens"].float().mean()
@@ -2213,10 +2248,18 @@ class Vits(BaseTTS):
             center=False,
         )[0].transpose(0, 1)
 
+        y = torch.nn.functional.pad(
+            wav.unsqueeze(1),
+            (int((self.config.audio.fft_size - self.config.audio.hop_length) / 2), int((self.config.audio.fft_size - self.config.audio.hop_length) / 2)),
+            mode="reflect",
+        )
+        y = y.squeeze().numpy()
+
         pitch, voiced_mask, _ = pyin(
-            wav.numpy()[0], self.config.audio.pitch_fmin, self.config.audio.pitch_fmax, self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+            y, self.config.audio.pitch_fmin, self.config.audio.pitch_fmax, self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
             frame_length=self.config.audio.win_length * 2, win_length=self.config.audio.win_length,
             hop_length=self.config.audio.hop_length)
+
         pitch[~voiced_mask] = 0.0
 
         input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(text, language="en"))
@@ -2265,6 +2308,7 @@ class Vits(BaseTTS):
             # plot outputs
             wav = return_dict["wav"]
             alignment = return_dict["alignments"]
+            test_audios["{}-audio".format(idx)] = wav.T
 
             # plot pitch and spectrogram
             if self.args.encoder_sample_rate:
@@ -2304,7 +2348,6 @@ class Vits(BaseTTS):
 
             pred_pitch = return_dict["outputs"]["pitch"].squeeze().cpu()
 
-            test_audios["{}-audio".format(idx)] = wav.T
             test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.transpose(1, 2), output_fig=False)
             test_figures["{}-spectrogram".format(idx)] = plot_spectrogram(spec)
             test_figures["{}-pitch_from_audio".format(idx)] = plot_pitch(pitch, spec)
@@ -2441,7 +2484,7 @@ class Vits(BaseTTS):
                 center=False
             )
             batch["energy"] = mel_to_energy(energy_mel_spec)
-            batch["energy"] = self.energy_scaler(batch["energy"])
+            # batch["energy"] = self.energy_scaler(batch["energy"])
 
         if self.args.use_pitch:
             zero_idxs = batch["pitch"] == 0.0
@@ -2644,8 +2687,8 @@ class Vits(BaseTTS):
     def set_inference(self):
         self.pitch_mean = self.pitch_scaler.running_mean.clone()
         self.pitch_std = torch.sqrt(self.pitch_scaler.running_var.clone())
-        self.energy_mean = self.energy_scaler.running_mean.clone()
-        self.energy_std = torch.sqrt(self.energy_scaler.running_var.clone())
+        # self.energy_mean = self.energy_scaler.running_mean.clone()
+        # self.energy_std = torch.sqrt(self.energy_scaler.running_var.clone())
 
     @staticmethod
     def init_from_config(config: "VitsConfig", samples: Union[List[List], List[Dict]] = None, verbose=True):
