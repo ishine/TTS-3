@@ -322,32 +322,31 @@ class VitsF0Dataset(F0Dataset):
 
     @staticmethod
     def _compute_and_save_pitch(audio_config, wav_file, pitch_file=None, sample_rate=None):
-        # wav, current_sample_rate = load_audio(wav_file, sample_rate=sample_rate)
-        # # compute f0 using librosa
-        # f0, voiced_mask, _ = pyin(
-        #     wav.numpy()[0], audio_config.pitch_fmin, audio_config.pitch_fmax, current_sample_rate,
-        #     frame_length=audio_config.win_length * 2, win_length=audio_config.win_length,
-        #     hop_length=audio_config.hop_length)
-        # f0[~voiced_mask] = 0.0
-        # # skip the last F0 value to align with the spectrogram
-        # if wav.shape[1] % audio_config.hop_length != 0:
-        #     f0 = f0[:-1]
-        # if pitch_file:
-        #     np.save(pitch_file, f0)
-
-        snd = parselmouth.Sound(wav_file)
-        # resample if needed
-        if sample_rate:
-            snd = snd.resample(sample_rate)
-        # compute pitch
-        f0 = snd.to_pitch().selected_array['frequency']
-
-        # interpolate to match the spectrogram shape
-        spec_size = int(snd.values.shape[-1] / audio_config.hop_length)
-        f0 = torch.nn.functional.interpolate(torch.tensor(f0).unsqueeze(0).unsqueeze(0), scale_factor=(spec_size/len(f0),)).squeeze().numpy()
-
+        wav, current_sample_rate = load_audio(wav_file, sample_rate=sample_rate)
+        # compute f0 using librosa
+        f0, voiced_mask, _ = pyin(
+            wav.numpy()[0], audio_config.pitch_fmin, audio_config.pitch_fmax, current_sample_rate,
+            frame_length=audio_config.win_length * 2, win_length=audio_config.win_length,
+            hop_length=audio_config.hop_length)
+        f0[~voiced_mask] = 0.0
+        # skip the last F0 value to align with the spectrogram
+        if wav.shape[1] % audio_config.hop_length != 0:
+            f0 = f0[:-1]
         if pitch_file:
             np.save(pitch_file, f0)
+
+        # snd = parselmouth.Sound(wav_file)
+        # # resample if needed
+        # if sample_rate:
+        #     snd = snd.resample(sample_rate)
+        # # compute pitch
+        # f0 = snd.to_pitch().selected_array['frequency']
+
+        # # interpolate to match the spectrogram shape
+        # spec_size = int(snd.values.shape[-1] / audio_config.hop_length)
+        # f0 = torch.nn.functional.interpolate(torch.tensor(f0).unsqueeze(0).unsqueeze(0), scale_factor=(spec_size/len(f0),)).squeeze().numpy()
+        # if pitch_file:
+        #     np.save(pitch_file, f0)
         return f0
 
     def compute_or_load(self, wav_file):
@@ -1426,6 +1425,7 @@ class Vits(BaseTTS):
     def _forward_energy_predictor(
         self,
         o_en: torch.FloatTensor,
+
         x_mask: torch.IntTensor,
         energy: torch.FloatTensor = None,
         g: torch.FloatTensor = None,
