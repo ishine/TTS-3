@@ -691,10 +691,16 @@ class VitsArgs(Coqpit):
         freeze_encoder (bool):
             Freeze the encoder weigths during training. Defaults to False.
 
-        freeze_DP (bool):
+        freeze_duration_predictor (bool):
             Freeze the duration predictor weigths during training. Defaults to False.
 
-        freeze_PE (bool):
+        feezer_pitch_predictor (bool):
+            Freeze the pitch predictor weigths during training. Defaults to False.
+
+        freeze_energy_predictor (bool):
+            Freeze the energy predictor weigths during training. Defaults to False.
+
+        freeze_posterior_encoder (bool):
             Freeze the posterior encoder weigths during training. Defaults to False.
 
         freeze_flow_encoder (bool):
@@ -768,8 +774,10 @@ class VitsArgs(Coqpit):
     speaker_encoder_model_path: str = ""
     condition_dp_on_speaker: bool = True
     freeze_encoder: bool = False
-    freeze_DP: bool = False
-    freeze_PE: bool = False
+    freeze_duration_predictor: bool = False
+    freeze_pitch_predictor: bool = False
+    freeze_energy_predictor: bool = False
+    freeze_posterior_encoder: bool = False
     freeze_flow_decoder: bool = False
     freeze_waveform_decoder: bool = False
     encoder_sample_rate: int = None
@@ -1220,6 +1228,16 @@ class Vits(BaseTTS):
         if self.args.use_speaker_encoder_as_loss:
             self.speaker_manager.encoder = self.speaker_manager.encoder.to(self.device)
 
+    def on_train_step_start(self, trainer):
+        """Schedule binary loss weight."""
+        if self.config.binary_alignment_loss_warmup_epochs > 0:
+            self.binary_loss_weight = (
+                min(trainer.epochs_done / self.config.binary_alignment_loss_warmup_epochs, 1.0) * 1.0
+            )
+        else:
+            self.binary_loss_weight = 1.0
+        self.binarize_alignment = trainer.total_steps_done > self.config.binarization_start_steps
+
     def on_init_end(self, trainer):  # pylint: disable=W0613
         """Reinit layes if needed"""
         if self.args.reinit_DP:
@@ -1263,19 +1281,33 @@ class Vits(BaseTTS):
                 for param in self.emb_l.parameters():
                     param.requires_grad = False
 
-        if self.args.freeze_PE:
+        if self.args.freeze_posterior_encoder:
+            print(" > Freezing posterior encoder...")
             for param in self.posterior_encoder.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_DP:
+        if self.args.freeze_duration_predictor:
+            print(" > Freezing duration predictor...")
             for param in self.duration_predictor.parameters():
                 param.requires_grad = False
 
+        if self.args.freeze_energy_predictor:
+            print(" > Freezing energy predictor...")
+            for param in self.energy_predictor.parameters():
+                param.requires_grad = False
+
+        if self.args.freeze_pitch_predictor:
+            print(" > Freezing pitch predictor...")
+            for param in self.pitch_predictor.parameters():
+                param.requires_grad = False
+
         if self.args.freeze_flow_decoder:
+            print(" > Freezing flow decoder...")
             for param in self.flow.parameters():
                 param.requires_grad = False
 
         if self.args.freeze_waveform_decoder:
+            print(" > Freezing waveform decoder...")
             for param in self.waveform_decoder.parameters():
                 param.requires_grad = False
 
