@@ -691,10 +691,16 @@ class VitsArgs(Coqpit):
         freeze_encoder (bool):
             Freeze the encoder weigths during training. Defaults to False.
 
-        freeze_DP (bool):
+        freeze_duration_predictor (bool):
             Freeze the duration predictor weigths during training. Defaults to False.
 
-        freeze_PE (bool):
+        feezer_pitch_predictor (bool):
+            Freeze the pitch predictor weigths during training. Defaults to False.
+
+        freeze_energy_predictor (bool):
+            Freeze the energy predictor weigths during training. Defaults to False.
+
+        freeze_posterior_encoder (bool):
             Freeze the posterior encoder weigths during training. Defaults to False.
 
         freeze_flow_encoder (bool):
@@ -768,8 +774,10 @@ class VitsArgs(Coqpit):
     speaker_encoder_model_path: str = ""
     condition_dp_on_speaker: bool = True
     freeze_encoder: bool = False
-    freeze_DP: bool = False
-    freeze_PE: bool = False
+    freeze_duration_predictor: bool = False
+    freeze_pitch_predictor: bool = False
+    freeze_energy_predictor: bool = False
+    freeze_posterior_encoder: bool = False
     freeze_flow_decoder: bool = False
     freeze_waveform_decoder: bool = False
     encoder_sample_rate: int = None
@@ -1214,6 +1222,10 @@ class Vits(BaseTTS):
                 orig_freq=self.config.audio["sample_rate"], new_freq=self.args.encoder_sample_rate
             )  # pylint: disable=W0201
 
+    def on_epoch_start(self, trainer):
+        """Freeze layers at the beginning of an epoch"""
+        self._freeze_layers()
+
     def on_train_step_start(self, trainer):
         """Schedule binary loss weight."""
         if self.config.binary_alignment_loss_warmup_epochs > 0:
@@ -1267,19 +1279,33 @@ class Vits(BaseTTS):
                 for param in self.emb_l.parameters():
                     param.requires_grad = False
 
-        if self.args.freeze_PE:
+        if self.args.freeze_posterior_encoder:
+            print(" > Freezing posterior encoder...")
             for param in self.posterior_encoder.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_DP:
+        if self.args.freeze_duration_predictor:
+            print(" > Freezing duration predictor...")
             for param in self.duration_predictor.parameters():
                 param.requires_grad = False
 
+        if self.args.freeze_energy_predictor:
+            print(" > Freezing energy predictor...")
+            for param in self.energy_predictor.parameters():
+                param.requires_grad = False
+
+        if self.args.freeze_pitch_predictor:
+            print(" > Freezing pitch predictor...")
+            for param in self.pitch_predictor.parameters():
+                param.requires_grad = False
+
         if self.args.freeze_flow_decoder:
+            print(" > Freezing flow decoder...")
             for param in self.flow.parameters():
                 param.requires_grad = False
 
         if self.args.freeze_waveform_decoder:
+            print(" > Freezing waveform decoder...")
             for param in self.waveform_decoder.parameters():
                 param.requires_grad = False
 
@@ -1970,8 +1996,6 @@ class Vits(BaseTTS):
         Returns:
             Tuple[Dict, Dict]: Model ouputs and computed losses.
         """
-
-        self._freeze_layers()
 
         spec_lens = batch["spec_lens"]
 
