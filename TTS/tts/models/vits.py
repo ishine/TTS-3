@@ -175,10 +175,12 @@ def wav_to_energy(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin,
     mel = wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fmax, center=center)
     return mel_to_energy(mel)
 
+
 def mel_to_energy(mel):
     avg_energy = torch.mean(mel, dim=1, keepdim=True)
     avg_energy = (avg_energy + 20.0) / 20.0
     return avg_energy
+
 
 def name_mel_basis(spec, n_fft, fmax):
     n_fft_len = f"{n_fft}_{fmax}_{spec.dtype}_{spec.device}"
@@ -325,9 +327,14 @@ class VitsF0Dataset(F0Dataset):
         wav, current_sample_rate = load_audio(wav_file, sample_rate=sample_rate)
         # compute f0 using librosa
         f0, voiced_mask, _ = pyin(
-            wav.numpy()[0], audio_config.pitch_fmin, audio_config.pitch_fmax, current_sample_rate,
-            frame_length=audio_config.win_length * 2, win_length=audio_config.win_length,
-            hop_length=audio_config.hop_length)
+            wav.numpy()[0],
+            audio_config.pitch_fmin,
+            audio_config.pitch_fmax,
+            current_sample_rate,
+            frame_length=audio_config.win_length * 2,
+            win_length=audio_config.win_length,
+            hop_length=audio_config.hop_length,
+        )
         f0[~voiced_mask] = 0.0
         # skip the last F0 value to align with the spectrogram
         if wav.shape[1] % audio_config.hop_length != 0:
@@ -535,6 +542,459 @@ class VitsDataset(TTSDataset):
 ##############################
 # MODEL DEFINITION
 ##############################
+
+
+def get_mask_from_lengths(lengths: torch.Tensor) -> torch.Tensor:
+    batch_size = lengths.shape[0]
+    max_len = torch.max(lengths).item()
+    ids = torch.arange(0, max_len, device=lengths.device).unsqueeze(0).expand(batch_size, -1)
+    mask = ids >= lengths.unsqueeze(1).expand(-1, max_len)
+    return mask
+
+
+def stride_lens(lens: torch.Tensor, stride: int = 2) -> torch.Tensor:
+    return torch.ceil(lens / stride).int()
+
+
+class StyleEmbedAttention(nn.Module):
+    def __init__(self, query_dim: int, key_dim: int, num_units: int, num_heads: int):
+        super().__init__()
+        self.num_units = num_units
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+
+        self.W_query = nn.Linear(in_features=query_dim, out_features=num_units, bias=False)
+        self.W_key = nn.Linear(in_features=key_dim, out_features=num_units, bias=False)
+        self.W_value = nn.Linear(in_features=key_dim, out_features=num_units, bias=False)
+
+    def forward(self, query: torch.Tensor, key_soft: torch.Tensor) -> torch.Tensor:
+        """
+        input:
+            query --- [N, T_q, query_dim]
+            key_soft --- [N, T_k, key_dim]
+        output:
+            out --- [N, T_q, num_units]
+        """
+        values = self.W_value(key_soft)
+        split_size = self.num_units // self.num_heads
+        values = torch.stack(torch.split(values, split_size, dim=2), dim=0)
+
+        out_soft = scores_soft = None
+        querys = self.W_query(query)  # [N, T_q, num_units]
+        keys = self.W_key(key_soft)  # [N, T_k, num_units]
+
+        # [h, N, T_q, num_units/h]
+        querys = torch.stack(torch.split(querys, split_size, dim=2), dim=0)
+        # [h, N, T_k, num_units/h]
+        keys = torch.stack(torch.split(keys, split_size, dim=2), dim=0)
+        # [h, N, T_k, num_units/h]
+
+        # score = softmax(QK^T / (d_k ** 0.5))
+        scores_soft = torch.matmul(querys, keys.transpose(2, 3))  # [h, N, T_q, T_k]
+        scores_soft = scores_soft / (self.key_dim**0.5)
+        scores_soft = F.softmax(scores_soft, dim=3)
+
+        # out = score * V
+        # [h, N, T_q, num_units/h]
+        out_soft = torch.matmul(scores_soft, values)
+        out_soft = torch.cat(torch.split(out_soft, 1, dim=0), dim=3).squeeze(0)  # [N, T_q, num_units]
+
+        return out_soft  # , scores_soft
+
+
+class STL(nn.Module):
+    """Style Token Layer"""
+
+    def __init__(self, hidden_channels: int, num_heads: int = 1, num_tokens: int = 32):
+        super(STL, self).__init__()
+
+        num_heads = 1
+        self.embed = nn.Parameter(torch.FloatTensor(num_tokens, hidden_channels // num_heads))
+        d_q = hidden_channels // 2
+        d_k = hidden_channels // num_heads
+        self.attention = StyleEmbedAttention(query_dim=d_q, key_dim=d_k, num_units=hidden_channels, num_heads=num_heads)
+
+        torch.nn.init.normal_(self.embed, mean=0, std=0.5)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        N = x.size(0)
+        query = x.unsqueeze(1)  # [N, 1, E//2]
+
+        keys_soft = torch.tanh(self.embed).unsqueeze(0).expand(N, -1, -1)  # [N, token_num, E // num_heads]
+
+        # Weighted sum
+        emotion_embed_soft = self.attention(query, keys_soft)
+
+        return emotion_embed_soft
+
+
+class AddCoords(nn.Module):
+    """
+    https://arxiv.org/pdf/1807.03247.pdf
+    https://github.com/mkocabas/CoordConv-pytorch
+    """
+
+    def __init__(self, rank: int, with_r: bool = False):
+        super().__init__()
+        self.rank = rank
+        self.with_r = with_r
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.rank == 1:
+            batch_size_shape, channel_in_shape, dim_x = x.shape
+            xx_range = torch.arange(dim_x, dtype=torch.int32)
+            xx_channel = xx_range[None, None, :]
+
+            xx_channel = xx_channel.float() / (dim_x - 1)
+            xx_channel = xx_channel * 2 - 1
+            xx_channel = xx_channel.repeat(batch_size_shape, 1, 1)
+
+            xx_channel = xx_channel.to(x.device)
+            out = torch.cat([x, xx_channel], dim=1)
+
+            if self.with_r:
+                rr = torch.sqrt(torch.pow(xx_channel - 0.5, 2))
+                out = torch.cat([out, rr], dim=1)
+
+        elif self.rank == 2:
+            batch_size_shape, channel_in_shape, dim_y, dim_x = x.shape
+            xx_ones = torch.ones([1, 1, 1, dim_x], dtype=torch.int32)
+            yy_ones = torch.ones([1, 1, 1, dim_y], dtype=torch.int32)
+
+            xx_range = torch.arange(dim_y, dtype=torch.int32)
+            yy_range = torch.arange(dim_x, dtype=torch.int32)
+            xx_range = xx_range[None, None, :, None]
+            yy_range = yy_range[None, None, :, None]
+
+            xx_channel = torch.matmul(xx_range, xx_ones)
+            yy_channel = torch.matmul(yy_range, yy_ones)
+
+            # transpose y
+            yy_channel = yy_channel.permute(0, 1, 3, 2)
+
+            xx_channel = xx_channel.float() / (dim_y - 1)
+            yy_channel = yy_channel.float() / (dim_x - 1)
+
+            xx_channel = xx_channel * 2 - 1
+            yy_channel = yy_channel * 2 - 1
+
+            xx_channel = xx_channel.repeat(batch_size_shape, 1, 1, 1)
+            yy_channel = yy_channel.repeat(batch_size_shape, 1, 1, 1)
+
+            xx_channel = xx_channel.to(x.device)
+            yy_channel = yy_channel.to(x.device)
+
+            out = torch.cat([x, xx_channel, yy_channel], dim=1)
+
+            if self.with_r:
+                rr = torch.sqrt(torch.pow(xx_channel - 0.5, 2) + torch.pow(yy_channel - 0.5, 2))
+                out = torch.cat([out, rr], dim=1)
+
+        elif self.rank == 3:
+            batch_size_shape, channel_in_shape, dim_z, dim_y, dim_x = x.shape
+            xx_ones = torch.ones([1, 1, 1, 1, dim_x], dtype=torch.int32)
+            yy_ones = torch.ones([1, 1, 1, 1, dim_y], dtype=torch.int32)
+            zz_ones = torch.ones([1, 1, 1, 1, dim_z], dtype=torch.int32)
+
+            xy_range = torch.arange(dim_y, dtype=torch.int32)
+            xy_range = xy_range[None, None, None, :, None]
+
+            yz_range = torch.arange(dim_z, dtype=torch.int32)
+            yz_range = yz_range[None, None, None, :, None]
+
+            zx_range = torch.arange(dim_x, dtype=torch.int32)
+            zx_range = zx_range[None, None, None, :, None]
+
+            xy_channel = torch.matmul(xy_range, xx_ones)
+            xx_channel = torch.cat([xy_channel + i for i in range(dim_z)], dim=2)
+
+            yz_channel = torch.matmul(yz_range, yy_ones)
+            yz_channel = yz_channel.permute(0, 1, 3, 4, 2)
+            yy_channel = torch.cat([yz_channel + i for i in range(dim_x)], dim=4)
+
+            zx_channel = torch.matmul(zx_range, zz_ones)
+            zx_channel = zx_channel.permute(0, 1, 4, 2, 3)
+            zz_channel = torch.cat([zx_channel + i for i in range(dim_y)], dim=3)
+
+            xx_channel = xx_channel.to(x.device)
+            yy_channel = yy_channel.to(x.device)
+            zz_channel = zz_channel.to(x.device)
+            out = torch.cat([x, xx_channel, yy_channel, zz_channel], dim=1)
+
+            if self.with_r:
+                rr = torch.sqrt(
+                    torch.pow(xx_channel - 0.5, 2) + torch.pow(yy_channel - 0.5, 2) + torch.pow(zz_channel - 0.5, 2)
+                )
+                out = torch.cat([out, rr], dim=1)
+        else:
+            raise NotImplementedError
+
+        return out
+
+
+class CoordConv1d(torch.nn.modules.conv.Conv1d):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
+        groups: int = 1,
+        bias: bool = True,
+        with_r: bool = False,
+    ):
+        super().__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias,
+        )
+        self.rank = 1
+        self.addcoords = AddCoords(self.rank, with_r)
+        self.conv = nn.Conv1d(
+            in_channels + self.rank + int(with_r),
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.addcoords(x)
+        x = self.conv(x)
+        return x
+
+
+class ReferenceEncoder(nn.Module):
+    def __init__(
+        self,
+        num_mels: int,
+        kernel_size: int = 3,
+        hidden_channels: List[int] = [32, 32, 64, 64, 128, 128],
+        strides: int = [1, 2, 1, 2, 1],
+        gpu_channels: int = 32,
+    ):
+        super().__init__()
+
+        K = len(hidden_channels)
+        filters = [num_mels] + hidden_channels
+        strides = [1] + strides
+        # Use CoordConv at the first layer to better preserve positional information: https://arxiv.org/pdf/1811.02122.pdf
+        convs = [
+            CoordConv1d(
+                in_channels=filters[0],
+                out_channels=filters[0 + 1],
+                kernel_size=kernel_size,
+                stride=strides[0],
+                padding=kernel_size // 2,
+                with_r=True,
+            )
+        ]
+        convs2 = [
+            nn.Conv1d(
+                in_channels=filters[i],
+                out_channels=filters[i + 1],
+                kernel_size=kernel_size,
+                stride=strides[i],
+                padding=kernel_size // 2,
+            )
+            for i in range(1, K)
+        ]
+        convs.extend(convs2)
+        self.convs = nn.ModuleList(convs)
+
+        self.norms = nn.ModuleList([nn.InstanceNorm1d(num_features=hidden_channels[i], affine=True) for i in range(K)])
+
+        self.gru = nn.GRU(
+            input_size=hidden_channels[-1],
+            hidden_size=gpu_channels,
+            batch_first=True,
+        )
+
+    def forward(self, x: torch.Tensor, mel_lens: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        inputs --- [N,  n_mels, timesteps]
+        outputs --- [N, E//2]
+        """
+
+        mel_masks = get_mask_from_lengths(mel_lens).unsqueeze(1)
+        x = x.masked_fill(mel_masks, 0)
+        for conv, norm in zip(self.convs, self.norms):
+            x = conv(x)
+            x = F.leaky_relu(x, 0.3)  # [N, 128, Ty//2^K, n_mels//2^K]
+            x = norm(x)
+
+        for _ in range(2):
+            mel_lens = stride_lens(mel_lens)
+
+        mel_masks = get_mask_from_lengths(mel_lens)
+
+        x = x.masked_fill(mel_masks.unsqueeze(1), 0)
+        x = x.permute((0, 2, 1))
+        x = torch.nn.utils.rnn.pack_padded_sequence(x, mel_lens.cpu().int(), batch_first=True, enforce_sorted=False)
+
+        self.gru.flatten_parameters()
+        x, memory = self.gru(x)  # memory --- [N, Ty, E//2], out --- [1, N, E//2]
+        x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
+
+        return x, memory, mel_masks
+
+    def calculate_channels(self, L: int, kernel_size: int, stride: int, pad: int, n_convs: int) -> int:
+        for _ in range(n_convs):
+            L = (L - kernel_size + 2 * pad) // stride + 1
+        return L
+
+
+class UtteranceLevelProsodyEncoder(nn.Module):
+    def __init__(
+        self,
+        hidden_channels: int = 256,
+        gru_channels: int = 32,
+        p_dropout: float = 0.2,
+        bottleneck_channels: int = 256,
+        num_stl_heads: int = 1,
+        num_stl_tokens: int = 32,
+        reference_encoder_num_mels: int = 80,
+        reference_encoder_hidden_channels: List[int] = [32, 32, 64, 64, 128, 128],
+        reference_encoder_strides: int = [1, 2, 1, 2, 1],
+        reference_encoder_kernel_size: int = 3,
+        reference_encoder_gpu_channels: int = 32,
+    ):
+        super().__init__()
+        self.encoder = ReferenceEncoder(
+            num_mels=reference_encoder_num_mels,
+            kernel_size=reference_encoder_kernel_size,
+            hidden_channels=reference_encoder_hidden_channels,
+            strides=reference_encoder_strides,
+            gpu_channels=reference_encoder_gpu_channels,
+        )
+        self.encoder_prj = nn.Linear(gru_channels, hidden_channels // 2)
+        self.stl = STL(hidden_channels=hidden_channels, num_heads=num_stl_heads, num_tokens=num_stl_tokens)
+        self.encoder_bottleneck = nn.Linear(hidden_channels, bottleneck_channels)
+        self.dropout = nn.Dropout(p_dropout)
+
+    def forward(self, mels: torch.Tensor, mel_lens: torch.Tensor) -> torch.Tensor:
+        """
+        mels --- [N, Ty/r, n_mels*r], r=1
+        out --- [N, seq_len, E]
+        """
+        _, embedded_prosody, _ = self.encoder(mels, mel_lens)
+
+        # Bottleneck
+        embedded_prosody = self.encoder_prj(embedded_prosody)
+
+        # Style Token
+        out = self.encoder_bottleneck(self.stl(embedded_prosody))
+        out = self.dropout(out)
+
+        out = out.view((-1, 1, out.shape[3]))
+        return out
+
+
+class BSConv1d(nn.Module):
+    """https://arxiv.org/pdf/2003.13549.pdf"""
+
+    def __init__(self, channels_in: int, channels_out: int, kernel_size: int, padding: int):
+        super().__init__()
+        self.pointwise = nn.Conv1d(channels_in, channels_out, kernel_size=1)
+        self.depthwise = nn.Conv1d(
+            channels_out,
+            channels_out,
+            kernel_size=kernel_size,
+            padding=padding,
+            groups=channels_out,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = self.pointwise(x)
+        x2 = self.depthwise(x1)
+        return x2
+
+
+class ConvTransposed(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 1,
+        padding: int = 0,
+    ):
+        super().__init__()
+        self.conv = BSConv1d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.contiguous().transpose(1, 2)
+        x = self.conv(x)
+        x = x.contiguous().transpose(1, 2)
+        return x
+
+
+class PhonemeProsodyPredictor(nn.Module):
+    """Non-parallel Prosody Predictor inspired by Du et al., 2021"""
+
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, kernel_size: int, p_dropout: float):
+        super().__init__()
+        kernel_size = kernel_size
+        dropout = p_dropout
+        self.layers = nn.ModuleList(
+            [
+                ConvTransposed(
+                    in_channels,
+                    hidden_channels,
+                    kernel_size=kernel_size,
+                    padding=(kernel_size - 1) // 2,
+                ),
+                nn.LeakyReLU(0.3),
+                nn.LayerNorm(hidden_channels),  # TODO: consider instance norm as in StyleTTS
+                nn.Dropout(dropout),
+                ConvTransposed(
+                    hidden_channels,
+                    hidden_channels,
+                    kernel_size=kernel_size,
+                    padding=(kernel_size - 1) // 2,
+                ),
+                nn.LeakyReLU(0.3),
+                nn.LayerNorm(hidden_channels),  # TODO: consider instance norm as in StyleTTS
+                nn.Dropout(dropout),
+            ]
+        )
+        self.predictor_bottleneck = nn.Linear(hidden_channels, out_channels)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        x -- [B, src_len, d_model]
+        mask -- [B, src_len, 1]
+        outputs -- [B, src_len, 2 * d_model]
+        """
+        for layer in self.layers:
+            x = layer(x)
+        x = x.masked_fill(mask, 0.0)
+        x = self.predictor_bottleneck(x)
+        return x
+
+
+def positional_encoding(d_model: int, length: int, device: torch.device) -> torch.Tensor:
+    pe = torch.zeros(length, d_model, device=device)
+    position = torch.arange(0, length, dtype=torch.float, device=device).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, d_model, 2, device=device).float() * -(math.log(10000.0) / d_model))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    pe = pe.unsqueeze(0)
+    return pe
 
 
 @dataclass
@@ -797,124 +1257,199 @@ class VitsArgs(Coqpit):
     use_context_encoder: bool = False
 
 
-# @torch.jit.script
-# def fused_add_tanh_sigmoid_multiply(input_a, input_b, n_channels):
-#     n_channels_int = n_channels[0]
-#     in_act = input_a + input_b
-#     t_act = torch.tanh(in_act[:, :n_channels_int, :])
-#     s_act = torch.sigmoid(in_act[:, n_channels_int:, :])x
-#     acts = t_act * s_act
-#     return acts
+class RelativeMultiHeadAttention(nn.Module):
+    """
+    Multi-head attention with relative positional encoding.
+    This concept was proposed in the "Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context"
+    Args:
+        d_model (int): The dimension of model
+        num_heads (int): The number of attention heads.
+    Inputs: query, key, value, pos_embedding, mask
+        - **query** (batch, time, dim): Tensor containing query vector
+        - **key** (batch, time, dim): Tensor containing key vector
+        - **value** (batch, time, dim): Tensor containing value vector
+        - **pos_embedding** (batch, time, dim): Positional embedding tensor
+        - **mask** (batch, 1, time2) or (batch, time1, time2): Tensor containing indices to be masked
+    Returns:
+        - **outputs**: Tensor produces by relative multi head attention module.
+    """
+
+    def __init__(
+        self,
+        d_model: int = 512,
+        num_heads: int = 16,
+    ):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model % num_heads should be zero."
+        self.d_model = d_model
+        self.d_head = int(d_model / num_heads)
+        self.num_heads = num_heads
+        self.sqrt_dim = math.sqrt(d_model)
+
+        self.query_proj = nn.Linear(d_model, d_model)
+        self.key_proj = nn.Linear(d_model, d_model, bias=False)
+        self.value_proj = nn.Linear(d_model, d_model, bias=False)
+        self.pos_proj = nn.Linear(d_model, d_model, bias=False)
+
+        self.u_bias = nn.Parameter(torch.Tensor(self.num_heads, self.d_head))
+        self.v_bias = nn.Parameter(torch.Tensor(self.num_heads, self.d_head))
+        torch.nn.init.xavier_uniform_(self.u_bias)
+        torch.nn.init.xavier_uniform_(self.v_bias)
+        self.out_proj = nn.Linear(d_model, d_model)
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        pos_embedding: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch_size = query.shape[0]
+        query = self.query_proj(query).view(batch_size, -1, self.num_heads, self.d_head)
+        key = self.key_proj(key).view(batch_size, -1, self.num_heads, self.d_head).permute(0, 2, 1, 3)
+        value = self.value_proj(value).view(batch_size, -1, self.num_heads, self.d_head).permute(0, 2, 1, 3)
+        pos_embedding = self.pos_proj(pos_embedding).view(batch_size, -1, self.num_heads, self.d_head)
+        u_bias = self.u_bias.expand_as(query)
+        v_bias = self.v_bias.expand_as(query)
+        a = (query + u_bias).transpose(1, 2)
+        content_score = a @ key.transpose(2, 3)
+        b = (query + v_bias).transpose(1, 2)
+        pos_score = b @ pos_embedding.permute(0, 2, 3, 1)
+        pos_score = self._relative_shift(pos_score)
+
+        score = content_score + pos_score
+        score = score * (1.0 / self.sqrt_dim)
+
+        score.masked_fill_(mask, -1e9)
+
+        attn = F.softmax(score, -1)
+
+        context = (attn @ value).transpose(1, 2)
+        context = context.contiguous().view(batch_size, -1, self.d_model)
+
+        return self.out_proj(context), attn
+
+    def _relative_shift(self, pos_score: torch.Tensor) -> torch.Tensor:
+        batch_size, num_heads, seq_length1, seq_length2 = pos_score.size()
+        zeros = torch.zeros((batch_size, num_heads, seq_length1, 1), device=pos_score.device)
+        padded_pos_score = torch.cat([zeros, pos_score], dim=-1)
+        padded_pos_score = padded_pos_score.view(batch_size, num_heads, seq_length2 + 1, seq_length1)
+        pos_score = padded_pos_score[:, :, 1:].view_as(pos_score)
+        return pos_score
 
 
-# class WN(torch.nn.Module):
-#     """Wavenet layers with weight norm and no input conditioning.
+class ConformerMultiHeadedSelfAttention(nn.Module):
+    """
+    Conformer employ multi-headed self-attention (MHSA) while integrating an important technique from Transformer-XL,
+    the relative sinusoidal positional encoding scheme. The relative positional encoding allows the self-attention
+    module to generalize better on different input length and the resulting encoder is more robust to the variance of
+    the utterance length. Conformer use prenorm residual units with dropout which helps training
+    and regularizing deeper models.
+    Args:
+        d_model (int): The dimension of model
+        num_heads (int): The number of attention heads.
+        dropout_p (float): probability of dropout
+    Inputs: inputs, mask
+        - **inputs** (batch, time, dim): Tensor containing input vector
+        - **mask** (batch, 1, time2) or (batch, time1, time2): Tensor containing indices to be masked
+    Returns:
+        - **outputs** (batch, time, dim): Tensor produces by relative multi headed self attention module.
+    """
 
-#          |-----------------------------------------------------------------------------|
-#          |                                    |-> tanh    -|                           |
-#     res -|- conv1d(dilation) -> dropout -> + -|            * -> conv1d1x1 -> split -|- + -> res
-#     g -------------------------------------|  |-> sigmoid -|                        |
-#     o ----------------------------------------------------------------------------- + --------- o
+    def __init__(self, d_model: int, num_heads: int, dropout_p: float):
+        super().__init__()
+        self.attention = RelativeMultiHeadAttention(d_model=d_model, num_heads=num_heads)
+        self.dropout = nn.Dropout(p=dropout_p)
 
-#     Args:
-#         in_channels (int): number of input channels.
-#         hidden_channes (int): number of hidden channels.
-#         kernel_size (int): filter kernel size for the first conv layer.
-#         dilation_rate (int): dilations rate to increase dilation per layer.
-#             If it is 2, dilations are 1, 2, 4, 8 for the next 4 layers.
-#         num_layers (int): number of wavenet layers.
-#         c_in_channels (int): number of channels of conditioning input.
-#         dropout_p (float): dropout rate.
-#         weight_norm (bool): enable/disable weight norm for convolution layers.
-#     """
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        mask: torch.Tensor,
+        encoding: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch_size, seq_length, _ = key.size()
+        encoding = encoding[:, : key.shape[1]]
+        encoding = encoding.repeat(batch_size, 1, 1)
+        outputs, attn = self.attention(query, key, value, pos_embedding=encoding, mask=mask)
+        outputs = self.dropout(outputs)
+        return outputs, attn
 
-#     def __init__(
-#         self,
-#         in_channels,
-#         hidden_channels,
-#         kernel_size,
-#         dilation_rate,
-#         num_layers,
-#         c_in_channels=0,
-#         dropout_p=0,
-#         weight_norm=True,
-#     ):
-#         super().__init__()
-#         assert kernel_size % 2 == 1
-#         assert hidden_channels % 2 == 0
-#         self.in_channels = in_channels
-#         self.hidden_channels = hidden_channels
-#         self.kernel_size = kernel_size
-#         self.dilation_rate = dilation_rate
-#         self.num_layers = num_layers
-#         self.c_in_channels = c_in_channels
-#         self.dropout_p = dropout_p
 
-#         self.in_layers = torch.nn.ModuleList()
-#         self.res_skip_layers = torch.nn.ModuleList()
-#         self.dropout = nn.Dropout(dropout_p)
-#         # prenet for projecting inputs
-#         pre_layer = torch.nn.Conv1d(in_channels+c_in_channels, hidden_channels, 1)
-#         self.pre_layer  = torch.nn.utils.weight_norm(pre_layer, name='weight')
-#         # init conditioning layer
-#         if c_in_channels > 0:
-#             cond_layer = torch.nn.Conv1d(c_in_channels, 2 * hidden_channels * num_layers, 1)
-#             self.cond_layer = torch.nn.utils.weight_norm(cond_layer, name="weight")
-#         # intermediate layers
-#         for i in range(num_layers):
-#             dilation = dilation_rate**i
-#             padding = int((kernel_size * dilation - dilation) / 2)
-#             in_layer = torch.nn.Conv1d(
-#                 hidden_channels, 2 * hidden_channels, kernel_size, dilation=dilation, padding=padding
-#             )
-#             in_layer = torch.nn.utils.weight_norm(in_layer, name="weight")
-#             self.in_layers.append(in_layer)
+class PhonemeLevelProsodyEncoder(nn.Module):
+    def __init__(
+        self,
+        hidden_channels: int,
+        bottleneck_channels: int = 16,
+        gru_channels: int = 32,
+        num_heads: int = 2,
+        p_dropout: float = 0.1,
+        reference_encoder_num_mels: int = 80,
+        reference_encoder_hidden_channels: List[int] = [32, 32, 64, 64, 128, 128],
+        reference_encoder_strides: int = [1, 2, 1, 2, 1],
+        reference_encoder_kernel_size: int = 3,
+        reference_encoder_gpu_channels: int = 32,
+    ):
+        super().__init__()
 
-#             if i < num_layers - 1:
-#                 res_skip_channels = 2 * hidden_channels
-#             else:
-#                 res_skip_channels = hidden_channels
+        self.E = hidden_channels
+        self.d_q = self.d_k = hidden_channels
+        bottleneck_size = bottleneck_channels
+        ref_enc_gru_size = gru_channels
 
-#             res_skip_layer = torch.nn.Conv1d(hidden_channels, res_skip_channels, 1)
-#             res_skip_layer = torch.nn.utils.weight_norm(res_skip_layer, name="weight")
-#             self.res_skip_layers.append(res_skip_layer)
-#         # setup weight norm
-#         if not weight_norm:
-#             self.remove_weight_norm()
+        self.encoder = ReferenceEncoder(
+            num_mels=reference_encoder_num_mels,
+            kernel_size=reference_encoder_kernel_size,
+            hidden_channels=reference_encoder_hidden_channels,
+            strides=reference_encoder_strides,
+            gpu_channels=reference_encoder_gpu_channels,
+        )
+        self.encoder_prj = nn.Linear(ref_enc_gru_size, hidden_channels)
+        self.attention = ConformerMultiHeadedSelfAttention(
+            d_model=hidden_channels,
+            num_heads=num_heads,
+            dropout_p=p_dropout,
+        )
+        self.encoder_bottleneck = nn.Linear(hidden_channels, bottleneck_size)
 
-#     def forward(self, x, x_mask=None, g=None, **kwargs):  # pylint: disable=unused-argument
-#         x = torch.cat((x, g), 1)  # append context to z as well
-#         x = self.start(x)
-#         output = torch.zeros_like(x)
-#         n_channels_tensor = torch.IntTensor([self.hidden_channels])
-#         x_mask = 1.0 if x_mask is None else x_mask
-#         if g is not None:
-#             g = self.cond_layer(g)
-#         for i in range(self.num_layers):
-#             x_in = self.in_layers[i](x)
-#             x_in = self.dropout(x_in)
-#             if g is not None:
-#                 cond_offset = i * 2 * self.hidden_channels
-#                 g_l = g[:, cond_offset : cond_offset + 2 * self.hidden_channels, :]
-#             else:
-#                 g_l = torch.zeros_like(x_in)
-#             acts = fused_add_tanh_sigmoid_multiply(x_in, g_l, n_channels_tensor)
-#             res_skip_acts = self.res_skip_layers[i](acts)
-#             if i < self.num_layers - 1:
-#                 x = (x + res_skip_acts[:, : self.hidden_channels, :]) * x_mask
-#                 output = output + res_skip_acts[:, self.hidden_channels :, :]
-#             else:
-#                 output = output + res_skip_acts
-#         return output * x_mask
+    def forward(
+        self,
+        x: torch.Tensor,
+        src_mask: torch.Tensor,
+        mels: torch.Tensor,
+        mel_lens: torch.Tensor,
+        encoding: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        x --- [N, seq_len, encoder_embedding_dim]
+        mels --- [N, Ty/r, n_mels*r], r=1
+        out --- [N, seq_len, bottleneck_size]
+        attn --- [N, seq_len, ref_len], Ty/r = ref_len
+        """
+        embedded_prosody, _, mel_masks = self.encoder(mels, mel_lens)
 
-#     def remove_weight_norm(self):
-#         if self.c_in_channels != 0:
-#             torch.nn.utils.remove_weight_norm(self.cond_layer)
-#         for l in self.in_layers:
-#             torch.nn.utils.remove_weight_norm(l)
-#         for l in self.res_skip_layers:
-#             torch.nn.utils.remove_weight_norm(l)
+        # Bottleneck
+        embedded_prosody = self.encoder_prj(embedded_prosody)
 
+        attn_mask = mel_masks.view((mel_masks.shape[0], 1, 1, -1))
+        x, _ = self.attention(
+            query=x,
+            key=embedded_prosody,
+            value=embedded_prosody,
+            mask=attn_mask,
+            encoding=encoding,
+        )
+        x = self.encoder_bottleneck(x)
+        x = x.masked_fill(src_mask, 0.0)
+        return x
+
+
+def concat_embeddings(context, speaker_embedding, emotion_embedding):
+    spk_emb_bottle_ex = speaker_embedding.expand(-1, -1, context.shape[2])  # [B, C, T]
+    emo_emb_ex = emotion_embedding.expand(-1, -1, context.shape[2])  # [B, C, T]
+    return torch.cat((context, spk_emb_bottle_ex, emo_emb_ex), 1)  # [B, C, T]
 
 class Vits(BaseTTS):
     """VITS TTS model
@@ -986,7 +1521,6 @@ class Vits(BaseTTS):
             self.args.kernel_size_text_encoder,
             self.args.dropout_p_text_encoder,
             language_emb_dim=self.embedded_language_dim,
-            emo_emb_dim=self.embedded_emotion_dim,
             padding_idx=self.tokenizer.characters.pad_id,
         )
 
@@ -994,14 +1528,14 @@ class Vits(BaseTTS):
 
         # --> ALIGNMENT NETWORK
         in_key_channels = self.args.hidden_channels
-        if self.embedded_speaker_dim > 0 :
-            self.aligner_spk_bottleneck = BottleneckLayerLayer(in_channels=self.embedded_speaker_dim, bottleneck_channels=32, norm="weight_norm")
+        if self.embedded_speaker_dim > 0:
+            self.aligner_spk_bottleneck = BottleneckLayerLayer(
+                in_channels=self.embedded_speaker_dim, bottleneck_channels=32, norm="weight_norm"
+            )
             in_key_channels += 32
-        if self.embedded_emotion_dim > 0 :
+        if self.embedded_emotion_dim > 0:
             in_key_channels += self.embedded_emotion_dim
-        self.aligner = AlignmentNetwork(
-            in_query_channels=self.args.out_channels, in_key_channels=in_key_channels
-        )
+        self.aligner = AlignmentNetwork(in_query_channels=self.args.out_channels, in_key_channels=in_key_channels)
         self.binary_loss_weight = 0.0
 
         # --> PITCH PREDICTOR
@@ -1040,6 +1574,80 @@ class Vits(BaseTTS):
             # self.energy_scaler = torch.nn.BatchNorm1d(1, affine=False, track_running_stats=True, momentum=None)
             # self.energy_scaler.requires_grad_(False)
             context_cond_channels += 128
+
+         ## -- BOTTLENECK ADAPTOPRS -- ##
+
+        in_channels_with_emb = self.args.hidden_channels
+        if self.embedded_speaker_dim > 0:
+            self.adaptors_spk_bottleneck = BottleneckLayerLayer(
+                in_channels=self.embedded_speaker_dim, bottleneck_channels=32, norm="weight_norm"
+            )
+            in_channels_with_emb += 32
+        if self.embedded_emotion_dim > 0:
+            in_channels_with_emb += self.embedded_emotion_dim
+
+        ## -- UTTRANCE ENCODER & PREDICTOR -- ##
+
+        self.utterance_prosody_encoder = UtteranceLevelProsodyEncoder(
+            hidden_channels = self.args.hidden_channels,
+            gru_channels = 32,
+            p_dropout = 0.2,
+            bottleneck_channels = 96,
+            num_stl_heads = 1,
+            num_stl_tokens = 32,
+            reference_encoder_num_mels = 513,
+            reference_encoder_hidden_channels = [32, 32, 64, 64, 128, 128],
+            reference_encoder_strides = [1, 2, 1, 2, 1],
+            reference_encoder_kernel_size = 3,
+            reference_encoder_gpu_channels = 32,
+        )
+        self.utterance_prosody_predictor = PhonemeProsodyPredictor(
+            in_channels=in_channels_with_emb,
+            hidden_channels=self.args.hidden_channels,
+            out_channels=96,  # TODO: config these
+            kernel_size=3,
+            p_dropout=0.1,
+        )
+        self.u_bottle_out = nn.Linear(
+            96,
+            self.args.hidden_channels,
+        )
+        # TODO: change this with IntanceNorm as in StyleTTS
+        self.u_norm = nn.LayerNorm(
+            96,
+            elementwise_affine=False,
+        )
+
+        ## -- PHONEME ENCODER & PREDICTOR -- ##
+
+        self.phoneme_prosody_encoder = PhonemeLevelProsodyEncoder(
+            self.args.hidden_channels,
+            bottleneck_channels = 16,
+            gru_channels = 32,
+            num_heads = 2,
+            p_dropout = 0.1,
+            reference_encoder_num_mels = 513,
+            reference_encoder_hidden_channels = [32, 32, 64, 64, 128, 128],
+            reference_encoder_strides = [1, 2, 1, 2, 1],
+            reference_encoder_kernel_size = 3,
+            reference_encoder_gpu_channels = 32,
+        )
+        self.phoneme_prosody_predictor = PhonemeProsodyPredictor(
+            in_channels=in_channels_with_emb,
+            hidden_channels=self.args.hidden_channels,
+            out_channels=16,
+            kernel_size=5,
+            p_dropout=0.1,
+        )
+        self.p_bottle_out = nn.Linear(
+            16,
+            self.args.hidden_channels,
+        )
+        # TODO: change this with IntanceNorm as in StyleTTS
+        self.p_norm = nn.LayerNorm(
+            16,
+            elementwise_affine=False,
+        )
 
         # --> CONTEXT ENCODER
         if self.args.use_context_encoder:
@@ -1089,7 +1697,7 @@ class Vits(BaseTTS):
                 self.args.hidden_channels,
                 bottleneck_channels=48,
                 spk_emb_channels=self.embedded_speaker_dim,
-                emo_emb_channels=self.embedded_emotion_dim
+                emo_emb_channels=self.embedded_emotion_dim,
             )
 
         # --> VOCODER
@@ -1453,7 +2061,6 @@ class Vits(BaseTTS):
     def _forward_energy_predictor(
         self,
         o_en: torch.FloatTensor,
-
         x_mask: torch.IntTensor,
         energy: torch.FloatTensor = None,
         g: torch.FloatTensor = None,
@@ -1559,17 +2166,23 @@ class Vits(BaseTTS):
             o_en_ex = self.pos_encoder(o_en_ex, y_mask)
         return y_mask, o_en_ex, attn.transpose(1, 2)
 
+    def average_utterance_prosody(self, u_prosody_pred: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+        u_prosody_pred = u_prosody_pred.sum(1, keepdim=True) / lengths.view(-1, 1, 1)
+        return u_prosody_pred
+
     def forward(  # pylint: disable=dangerous-default-value
         self,
         x: torch.tensor,
         x_lengths: torch.tensor,
         y: torch.tensor,
         y_lengths: torch.tensor,
+        mel: torch.tensor,
         pitch: torch.tensor,
         energy: torch.tensor,
         waveform: torch.tensor,
         attn_priors: torch.tensor,
         binarize_alignment: bool,
+        use_encoder: bool = True,
         aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None},
     ) -> Dict:
         """Forward pass of the model.
@@ -1631,6 +2244,7 @@ class Vits(BaseTTS):
         ##### --> TEXT ENCODING
 
         x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
+        x_filler_mask = ~(x_mask.bool())
 
         ##### --> ALIGNER
         # x_emb_aligner = self.emb_aligner(x) * math.sqrt(self.args.hidden_channels)
@@ -1646,7 +2260,60 @@ class Vits(BaseTTS):
         )
 
         # duration predictor and duration loss
-        outputs = self.forward_duration_predictor(outputs, aligner_hard, o_en, x_mask, spk_emb, lang_emb, emo_emb, x_lengths)
+        outputs = self.forward_duration_predictor(
+            outputs, aligner_hard, o_en, x_mask, spk_emb, lang_emb, emo_emb, x_lengths
+        )
+
+        ##### --> Bottleneck Embeddings
+
+        spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
+        o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
+
+        ##### --> Utterance Prosody encoder
+        u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
+        u_prosody_pred = self.u_norm(
+            self.average_utterance_prosody(
+                u_prosody_pred=self.utterance_prosody_predictor(x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)),
+                lengths=x_lengths,
+            )
+        )
+
+        if use_encoder:
+            o_en = o_en + self.u_bottle_out(u_prosody_ref).transpose(1, 2)
+        else:
+            o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
+
+        # compute loss
+        u_prosody_loss = 0.5 * torch.nn.functional.mse_loss(u_prosody_ref.detach(), u_prosody_pred)
+
+
+        ##### --> Phoneme prosody encoder
+
+        o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
+
+        pos_encoding = positional_encoding(
+            self.args.hidden_channels,
+            max(x_emb.shape[2], max(y_lengths)),
+            device=x_emb.device,
+        )
+
+        p_prosody_ref = self.p_norm(
+            self.phoneme_prosody_encoder(
+                x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
+            )
+        )
+        p_prosody_pred = self.p_norm(self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)))
+
+        if use_encoder:
+            o_en = o_en + self.p_bottle_out(p_prosody_ref).transpose(1, 2)
+        else:
+            o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+
+        # compute loss
+        p_prosody_loss = 0.5 * torch.nn.functional.mse_loss(
+            p_prosody_ref.masked_select(x_mask.bool().transpose(1, 2)),
+            p_prosody_pred.masked_select(x_mask.bool().transpose(1, 2)),
+        )
 
         ##### --> EXPAND
 
@@ -1668,11 +2335,10 @@ class Vits(BaseTTS):
         if self.args.use_pitch:
             # remove extra frame if needed
             if energy.size(2) != pitch.size(2):
-                pitch = pitch[:, :, :energy.size(2)]
+                pitch = pitch[:, :, : energy.size(2)]
             o_pitch_emb, o_pitch, loss_pitch = self._forward_pitch_predictor(
                 o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
             )
-
 
         # energy predictor pass
         o_energy = None
@@ -1749,6 +2415,8 @@ class Vits(BaseTTS):
                 "pitch_hat": o_pitch,
                 "loss_pitch": loss_pitch,
                 "loss_energy": loss_energy,
+                "u_prosody_loss": u_prosody_loss,
+                "p_prosody_loss": p_prosody_loss,
                 "waveform_seg": wav_seg,
                 "gt_spk_emb": gt_spk_emb,
                 "syn_spk_emb": syn_spk_emb,
@@ -1809,7 +2477,12 @@ class Vits(BaseTTS):
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
 
+        ### --> TEXT ENCODER
+
         _, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
+        x_filler_mask = ~(x_mask.bool())
+
+        ### --> DURATION PREDICTOR
 
         if self.args.use_sdp:
             dur_log = self.duration_predictor(
@@ -1821,10 +2494,9 @@ class Vits(BaseTTS):
                 lang_emb=lang_emb,
             )
         else:
-            # dur_log = self.duration_predictor(
-            #     o_en, x_mask, g=g if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
-            # )
             dur_log = self.duration_predictor(o_en, spk_emb=spk_emb, emo_emb=emo_emb, lens=x_lengths)
+
+        ### --> DURATION FORMATTING
 
         dur = (torch.exp(dur_log) - 1) * x_mask * self.length_scale
 
@@ -1842,12 +2514,54 @@ class Vits(BaseTTS):
         y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
         y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
 
+        ##### --> Bottleneck Embeddings
+
+        spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
+        o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
+
+        ##### --> Utterance Prosody encoder
+        # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
+        u_prosody_pred = self.u_norm(
+            self.average_utterance_prosody(
+                u_prosody_pred=self.utterance_prosody_predictor(x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)),
+                lengths=x_lengths,
+            )
+        )
+
+        o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
+
+        ##### --> Phoneme prosody encoder
+
+        o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
+
+        pos_encoding = positional_encoding(
+            self.args.hidden_channels,
+            max(o_en.shape[2], max(y_lengths)),
+            device=o_en.device,
+        )
+
+        # p_prosody_ref = self.p_norm(
+        #     self.phoneme_prosody_encoder(
+        #         x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
+        #     )
+        # )
+        p_prosody_pred = self.p_norm(self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)))
+
+        o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+
+
+        ### --> ATTENTION MAP
+
         attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
         attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
+
+        ### --> EXPAND
 
         m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
         logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
         o_en_ex = torch.matmul(attn.transpose(1, 2), o_en.transpose(1, 2)).transpose(1, 2)
+
+        ### --> PITCH & ENERGY PREDICTORS
 
         # pitch predictor pass
         o_pitch = None
@@ -1873,39 +2587,18 @@ class Vits(BaseTTS):
                 x_lengths=y_lengths,
             )
 
+        ### --> CONTEXT ENCODER
+
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
         o_context = self.context_encoder(o_en_ex, y_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
 
-        # if self.args.use_pitch:
-        #     o_en = o_en + o_pitch_emb
-        # if self.args.use_energy_predictor:
-        #     o_en = o_en + o_energy_emb
-
-        # stats = self.text_encoder_proj(o_en) * x_mask
-        # m_p, logs_p = torch.split(stats, self.args.hidden_channels, dim=1)
-
-        # if self.args.use_sdp:
-        #     dur_log = self.duration_predictor(
-        #         o_en,
-        #         x_mask,
-        #         g=spk_emb if self.args.condition_dp_on_speaker else None,
-        #         reverse=True,
-        #         noise_scale=self.inference_noise_scale_dp,
-        #         lang_emb=lang_emb,
-        #     )
-        # else:
-        #     dur_log = self.duration_predictor(
-        #         o_en, x_mask, g=spk_emb if self.args.condition_dp_on_speaker else None, lang_emb=lang_emb
-        #     )
-
-        # dur = (torch.exp(dur_log) -1) * x_mask * self.length_scale
-        # dur[dur < 1] = 1.0
-        # dur = torch.round(dur)
-
+        ### --> FLOW DECODER
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
         z = self.flow(z_p, y_mask, g=o_context * y_mask, reverse=True)
+
+        ### --> VOCODER
 
         # upsampling if needed
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
@@ -2025,6 +2718,7 @@ class Vits(BaseTTS):
                 waveform=waveform,
                 attn_priors=attn_priors,
                 binarize_alignment=self.binarize_alignment,
+                mel=batch["mel"],
                 aux_input={
                     "d_vectors": d_vectors,
                     "speaker_ids": speaker_ids,
@@ -2105,11 +2799,27 @@ class Vits(BaseTTS):
                     binary_loss_weight=self.binary_loss_weight,
                 )
 
-            loss_dict["loss"] = self.model_outputs_cache["loss_pitch"] * self.config.pitch_loss_alpha + loss_dict["loss"]
-            loss_dict["loss"] = self.model_outputs_cache["loss_energy"] * self.config.energy_loss_alpha + loss_dict["loss"]
+            # add pitch and energy losses
+            loss_dict["loss"] = (
+                self.model_outputs_cache["loss_pitch"] * self.config.pitch_loss_alpha + loss_dict["loss"]
+            )
+            loss_dict["loss"] = (
+                self.model_outputs_cache["loss_energy"] * self.config.energy_loss_alpha + loss_dict["loss"]
+            )
             loss_dict["loss_pitch"] = self.model_outputs_cache["loss_pitch"] * self.config.pitch_loss_alpha
             loss_dict["loss_energy"] = self.model_outputs_cache["loss_energy"] * self.config.energy_loss_alpha
 
+            # add prosody losses
+            loss_dict["loss"] = (
+                self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha + loss_dict["loss"]
+            )
+            loss_dict["loss"] = (
+                self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha + loss_dict["loss"]
+            )
+            loss_dict["loss_u_prosody"] = self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha
+            loss_dict["loss_p_prosody"] = self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha
+
+            # compute useful training stats
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
             loss_dict["avg_spec_length"] = batch["spec_lens"].float().mean()
             loss_dict["avg_text_batch_occupancy"] = (
@@ -2258,13 +2968,21 @@ class Vits(BaseTTS):
         # plot pitch and spectrogram
         if self.args.encoder_sample_rate:
             try:
-                wav = torchaudio.functional.resample(torch.from_numpy(wav[None, :]),
-                    orig_freq=self.config.audio["sample_rate"], new_freq=self.args.encoder_sample_rate
+                wav = torchaudio.functional.resample(
+                    torch.from_numpy(wav[None, :]),
+                    orig_freq=self.config.audio["sample_rate"],
+                    new_freq=self.args.encoder_sample_rate,
                 ).squeeze(1)
             except:
-                wav = torchaudio.functional.resample(torch.from_numpy(wav[None, :]).cuda(),
-                    orig_freq=self.config.audio["sample_rate"], new_freq=self.args.encoder_sample_rate
-                ).cpu().squeeze(1)
+                wav = (
+                    torchaudio.functional.resample(
+                        torch.from_numpy(wav[None, :]).cuda(),
+                        orig_freq=self.config.audio["sample_rate"],
+                        new_freq=self.args.encoder_sample_rate,
+                    )
+                    .cpu()
+                    .squeeze(1)
+                )
         else:
             wav = torch.from_numpy(wav[None, :])
 
@@ -2282,15 +3000,23 @@ class Vits(BaseTTS):
 
         y = torch.nn.functional.pad(
             wav.unsqueeze(1),
-            (int((self.config.audio.fft_size - self.config.audio.hop_length) / 2), int((self.config.audio.fft_size - self.config.audio.hop_length) / 2)),
+            (
+                int((self.config.audio.fft_size - self.config.audio.hop_length) / 2),
+                int((self.config.audio.fft_size - self.config.audio.hop_length) / 2),
+            ),
             mode="reflect",
         )
         y = y.squeeze().numpy()
 
         pitch, voiced_mask, _ = pyin(
-            y, self.config.audio.pitch_fmin, self.config.audio.pitch_fmax, self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
-            frame_length=self.config.audio.win_length * 2, win_length=self.config.audio.win_length,
-            hop_length=self.config.audio.hop_length)
+            y,
+            self.config.audio.pitch_fmin,
+            self.config.audio.pitch_fmax,
+            self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+            frame_length=self.config.audio.win_length * 2,
+            win_length=self.config.audio.win_length,
+            hop_length=self.config.audio.hop_length,
+        )
 
         pitch[~voiced_mask] = 0.0
 
@@ -2364,9 +3090,14 @@ class Vits(BaseTTS):
             )[0].transpose(0, 1)
 
             pitch, voiced_mask, _ = pyin(
-                wav.numpy()[0], self.config.audio.pitch_fmin, self.config.audio.pitch_fmax, self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
-                frame_length=self.config.audio.win_length * 2, win_length=self.config.audio.win_length,
-                hop_length=self.config.audio.hop_length)
+                wav.numpy()[0],
+                self.config.audio.pitch_fmin,
+                self.config.audio.pitch_fmax,
+                self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+                frame_length=self.config.audio.win_length * 2,
+                win_length=self.config.audio.win_length,
+                hop_length=self.config.audio.hop_length,
+            )
             pitch[~voiced_mask] = 0.0
 
             input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(aux_inputs["text"], language="en"))
@@ -2513,7 +3244,7 @@ class Vits(BaseTTS):
                 win_length=ac.win_length,
                 fmin=ac.mel_fmin,
                 fmax=ac.mel_fmax,
-                center=False
+                center=False,
             )
             batch["energy"] = mel_to_energy(energy_mel_spec)
             # batch["energy"] = self.energy_scaler(batch["energy"])
@@ -2522,7 +3253,7 @@ class Vits(BaseTTS):
             zero_idxs = batch["pitch"] == 0.0
             pitch_norm = self.pitch_scaler(batch["pitch"])
             pitch_norm[zero_idxs] = 0.0
-            batch["pitch"] = pitch_norm[: ,: , :batch["energy"].shape[-1]]
+            batch["pitch"] = pitch_norm[:, :, : batch["energy"].shape[-1]]
         return batch
 
     def get_sampler(self, config: Coqpit, dataset: TTSDataset, num_gpus=1, is_eval=False):
