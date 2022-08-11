@@ -133,6 +133,8 @@ class VitsConfig(BaseTTSConfig):
     pitch_loss_alpha: float = 1.0
     energy_loss_alpha: float = 1.0
     char_dur_loss_alpha: float=0.01
+    u_prosody_loss_alpha: float= 1.0
+    p_prosody_loss_alpha: float= 1.0
     speaker_encoder_loss_alpha: float = 1.0
     aligner_loss_alpha: float = 1.0
     binary_alignment_loss_alpha: float = 1.0
