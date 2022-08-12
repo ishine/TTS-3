@@ -104,8 +104,17 @@ class TextEncoder(nn.Module):
         m, logs = torch.split(stats, self.out_channels, dim=1)
         return x_emb, o_en, m, logs, x_mask
 
+
 class ContextEncoder(nn.Module):
-    def __init__(self, in_channels, cond_channels=0, spk_emb_channels=0, emo_emb_channels=0, num_lstm_layers=1, lstm_norm="spectral"):
+    def __init__(
+        self,
+        in_channels,
+        cond_channels=0,
+        spk_emb_channels=0,
+        emo_emb_channels=0,
+        num_lstm_layers=1,
+        lstm_norm="spectral",
+    ):
         super().__init__()
 
         in_lstm_channels = spk_emb_channels + in_channels
@@ -146,13 +155,14 @@ class ContextEncoder(nn.Module):
         if cond is not None:
             context_w_spk_emb = torch.cat((context_w_spk_emb, cond), 1)
         unfolded_out_lens_packed = nn.utils.rnn.pack_padded_sequence(
-            context_w_spk_emb.transpose(1, 2), x_len.to('cpu'), batch_first=True, enforce_sorted=False
+            context_w_spk_emb.transpose(1, 2), x_len.to("cpu"), batch_first=True, enforce_sorted=False
         )
         self.lstm.flatten_parameters()
         context, _ = self.lstm(unfolded_out_lens_packed)
         context, _ = nn.utils.rnn.pad_packed_sequence(context, batch_first=True)
         context = context.transpose(1, 2)
         return context
+
 
 class ResidualCouplingBlock(nn.Module):
     def __init__(

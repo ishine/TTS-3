@@ -466,7 +466,14 @@ def esd(root_path, meta_files, ignored_speakers=None):
             for split in meta_files:
                 wav_file = os.path.join(root_path, speaker_id, emotion_id, split, file_id + ".wav")
                 if os.path.exists(wav_file):
-                    items.append({"text": text, "audio_file": wav_file, "speaker_name": "ESD_" + speaker_id, "root_path": root_path})
+                    items.append(
+                        {
+                            "text": text,
+                            "audio_file": wav_file,
+                            "speaker_name": "ESD_" + speaker_id,
+                            "root_path": root_path,
+                        }
+                    )
 
     return items
 
