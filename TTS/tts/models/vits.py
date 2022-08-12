@@ -1,6 +1,5 @@
 import math
 import os
-import numpy as np
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from pathlib import Path
@@ -11,48 +10,42 @@ import torch
 import torch.distributed as dist
 import torchaudio
 from coqpit import Coqpit
-from librosa.filters import mel as librosa_mel_fn
 from librosa import pyin
-import parselmouth
+from librosa.filters import mel as librosa_mel_fn
 from torch import nn
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
-from trainer.trainer_utils import get_optimizer, get_scheduler
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
+from trainer.trainer_utils import get_optimizer, get_scheduler
 
+from TTS.utils.samplers import BucketBatchSampler
 from TTS.tts.configs.shared_configs import CharactersConfig
 from TTS.tts.datasets.dataset import F0Dataset, TTSDataset, _parse_sample
+from TTS.tts.layers.generic.aligner import AlignmentNetwork
 from TTS.tts.layers.generic.duration_predictor_lstm import BottleneckLayerLayer, DurationPredictorLSTM
-from TTS.tts.layers.glow_tts.duration_predictor import DurationPredictor
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
 from TTS.tts.layers.vits.networks import ContextEncoder, PosteriorEncoder, ResidualCouplingBlocks, TextEncoder
 from TTS.tts.layers.vits.stochastic_duration_predictor import StochasticDurationPredictor
-from TTS.tts.utils.emotions import EmotionManager
 from TTS.tts.models.base_tts import BaseTTS
+from TTS.tts.utils.emotions import EmotionManager
 from TTS.tts.utils.helpers import (
     average_over_durations,
+    compute_attn_prior,
     generate_path,
     maximum_path,
     rand_segments,
     segment,
     sequence_mask,
-    compute_attn_prior,
 )
 from TTS.tts.utils.languages import LanguageManager
 from TTS.tts.utils.speakers import SpeakerManager
-from TTS.tts.utils.synthesis import synthesis
 from TTS.tts.utils.text.characters import BaseCharacters, _characters, _pad, _phonemes, _punctuations
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
-from TTS.tts.utils.visual import plot_alignment
-from TTS.utils.io import load_fsspec
-from TTS.utils.samplers import BucketBatchSampler
-from TTS.tts.layers.generic.aligner import AlignmentNetwork
 from TTS.tts.utils.visual import plot_alignment, plot_avg_pitch, plot_pitch, plot_spectrogram
 from TTS.vocoder.models.hifigan_generator import HifiganGenerator
 from TTS.vocoder.utils.generic_utils import plot_results
-from TTS.utils.audio.numpy_transforms import compute_f0
 
 ##############################
 # IO / Feature extraction
@@ -1451,6 +1444,7 @@ def concat_embeddings(context, speaker_embedding, emotion_embedding):
     emo_emb_ex = emotion_embedding.expand(-1, -1, context.shape[2])  # [B, C, T]
     return torch.cat((context, spk_emb_bottle_ex, emo_emb_ex), 1)  # [B, C, T]
 
+
 class Vits(BaseTTS):
     """VITS TTS model
 
@@ -1575,7 +1569,7 @@ class Vits(BaseTTS):
             # self.energy_scaler.requires_grad_(False)
             context_cond_channels += 128
 
-         ## -- BOTTLENECK ADAPTOPRS -- ##
+        ## -- BOTTLENECK ADAPTOPRS -- ##
 
         in_channels_with_emb = self.args.hidden_channels
         if self.embedded_speaker_dim > 0:
@@ -1589,17 +1583,17 @@ class Vits(BaseTTS):
         ## -- UTTRANCE ENCODER & PREDICTOR -- ##
 
         self.utterance_prosody_encoder = UtteranceLevelProsodyEncoder(
-            hidden_channels = self.args.hidden_channels,
-            gru_channels = 32,
-            p_dropout = 0.2,
-            bottleneck_channels = 96,
-            num_stl_heads = 1,
-            num_stl_tokens = 32,
-            reference_encoder_num_mels = 513,
-            reference_encoder_hidden_channels = [32, 32, 64, 64, 128, 128],
-            reference_encoder_strides = [1, 2, 1, 2, 1],
-            reference_encoder_kernel_size = 3,
-            reference_encoder_gpu_channels = 32,
+            hidden_channels=self.args.hidden_channels,
+            gru_channels=32,
+            p_dropout=0.2,
+            bottleneck_channels=96,
+            num_stl_heads=1,
+            num_stl_tokens=32,
+            reference_encoder_num_mels=513,
+            reference_encoder_hidden_channels=[32, 32, 64, 64, 128, 128],
+            reference_encoder_strides=[1, 2, 1, 2, 1],
+            reference_encoder_kernel_size=3,
+            reference_encoder_gpu_channels=32,
         )
         self.utterance_prosody_predictor = PhonemeProsodyPredictor(
             in_channels=in_channels_with_emb,
@@ -1622,15 +1616,15 @@ class Vits(BaseTTS):
 
         self.phoneme_prosody_encoder = PhonemeLevelProsodyEncoder(
             self.args.hidden_channels,
-            bottleneck_channels = 16,
-            gru_channels = 32,
-            num_heads = 2,
-            p_dropout = 0.1,
-            reference_encoder_num_mels = 513,
-            reference_encoder_hidden_channels = [32, 32, 64, 64, 128, 128],
-            reference_encoder_strides = [1, 2, 1, 2, 1],
-            reference_encoder_kernel_size = 3,
-            reference_encoder_gpu_channels = 32,
+            bottleneck_channels=16,
+            gru_channels=32,
+            num_heads=2,
+            p_dropout=0.1,
+            reference_encoder_num_mels=513,
+            reference_encoder_hidden_channels=[32, 32, 64, 64, 128, 128],
+            reference_encoder_strides=[1, 2, 1, 2, 1],
+            reference_encoder_kernel_size=3,
+            reference_encoder_gpu_channels=32,
         )
         self.phoneme_prosody_predictor = PhonemeProsodyPredictor(
             in_channels=in_channels_with_emb,
@@ -2270,10 +2264,14 @@ class Vits(BaseTTS):
         o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
 
         ##### --> Utterance Prosody encoder
-        u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
+        u_prosody_ref = self.u_norm(
+            self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths)
+        )  # TODO: use mel like the original imp
         u_prosody_pred = self.u_norm(
             self.average_utterance_prosody(
-                u_prosody_pred=self.utterance_prosody_predictor(x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)),
+                u_prosody_pred=self.utterance_prosody_predictor(
+                    x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
+                ),
                 lengths=x_lengths,
             )
         )
@@ -2285,7 +2283,6 @@ class Vits(BaseTTS):
 
         # compute loss
         u_prosody_loss = 0.5 * torch.nn.functional.mse_loss(u_prosody_ref.detach(), u_prosody_pred)
-
 
         ##### --> Phoneme prosody encoder
 
@@ -2299,10 +2296,16 @@ class Vits(BaseTTS):
 
         p_prosody_ref = self.p_norm(
             self.phoneme_prosody_encoder(
-                x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
+                x=o_en.transpose(1, 2),
+                src_mask=x_filler_mask.transpose(1, 2),
+                mels=y,
+                mel_lens=y_lengths,
+                encoding=pos_encoding,
             )
         )
-        p_prosody_pred = self.p_norm(self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)))
+        p_prosody_pred = self.p_norm(
+            self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
+        )
 
         if use_encoder:
             o_en = o_en + self.p_bottle_out(p_prosody_ref).transpose(1, 2)
@@ -2523,7 +2526,9 @@ class Vits(BaseTTS):
         # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
         u_prosody_pred = self.u_norm(
             self.average_utterance_prosody(
-                u_prosody_pred=self.utterance_prosody_predictor(x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)),
+                u_prosody_pred=self.utterance_prosody_predictor(
+                    x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
+                ),
                 lengths=x_lengths,
             )
         )
@@ -2545,10 +2550,11 @@ class Vits(BaseTTS):
         #         x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
         #     )
         # )
-        p_prosody_pred = self.p_norm(self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)))
+        p_prosody_pred = self.p_norm(
+            self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
+        )
 
         o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
-
 
         ### --> ATTENTION MAP
 
@@ -3285,11 +3291,19 @@ class Vits(BaseTTS):
         # input_audio_lenghts = [os.path.getsize(x["audio_file"]) for x in data_items]
 
         if weights is not None:
+<<<<<<< HEAD
             w_sampler = WeightedRandomSampler(weights, len(weights))
             batch_sampler = BucketBatchSampler(
                 w_sampler,
                 data=data_items,
                 batch_size=config.eval_batch_size if is_eval else config.batch_size,
+=======
+            sampler = WeightedRandomSampler(weights, len(weights))
+            sampler = BucketBatchSampler(
+                sampler,
+                data=data_items,
+                batch_size=config.batch_size,
+>>>>>>> Use BucketBatchSampler in VITS
                 sort_key=lambda x: os.path.getsize(x["audio_file"]),
                 drop_last=True,
             )
