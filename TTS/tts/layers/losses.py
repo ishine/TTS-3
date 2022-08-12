@@ -702,7 +702,9 @@ class VitsGeneratorLoss(nn.Module):
     def char_dur_loss(dur_output, decoder_output_lens, input_lens):
         dur_per_input_pred = (torch.exp(dur_output) - 1).sum(-1)
         dur_per_input_target = decoder_output_lens.float()
-        char_dur_loss = (nn.functional.l1_loss(dur_per_input_pred, dur_per_input_target, reduction="none") / input_lens.float()).mean()
+        char_dur_loss = (
+            nn.functional.l1_loss(dur_per_input_pred, dur_per_input_target, reduction="none") / input_lens.float()
+        ).mean()
         return char_dur_loss
 
     def forward(
@@ -755,7 +757,10 @@ class VitsGeneratorLoss(nn.Module):
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
         loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
-        loss_char_dur = self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len) * self.char_dur_loss_alpha
+        loss_char_dur = (
+            self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len)
+            * self.char_dur_loss_alpha
+        )
         loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
         loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_char_dur + loss_aligner
 
@@ -785,7 +790,6 @@ class VitsGeneratorLoss(nn.Module):
                 )
             else:
                 return_dict["loss_binary_alignment"] = self.binary_alignment_loss_alpha * binary_alignment_loss
-
 
         # pass losses to the dict
         return_dict["loss_gen"] = loss_gen
@@ -822,9 +826,7 @@ class VitsDiscriminatorLoss(nn.Module):
     def forward(self, scores_disc_real, scores_disc_fake):
         loss = 0.0
         return_dict = {}
-        loss_disc, _, _ = self.discriminator_loss(
-            scores_real=scores_disc_real, scores_fake=scores_disc_fake
-        )
+        loss_disc, _, _ = self.discriminator_loss(scores_real=scores_disc_real, scores_fake=scores_disc_fake)
         return_dict["loss_disc"] = loss_disc * self.disc_loss_alpha
         loss = loss + return_dict["loss_disc"]
         return_dict["loss"] = loss

@@ -77,14 +77,30 @@ class DurationPredictorLSTM(nn.Module):
     def __init__(self, in_channels, bottleneck_channels, spk_emb_channels=None, emo_emb_channels=None, out_channels=1):
         super(DurationPredictorLSTM, self).__init__()
         self.bottleneck_layer = BottleneckLayerLayer(
-            in_channels, bottleneck_channels, norm="weightnorm", non_linearity="relu", kernel_size=3,
+            in_channels,
+            bottleneck_channels,
+            norm="weightnorm",
+            non_linearity="relu",
+            kernel_size=3,
         )
         in_lstm_channels = bottleneck_channels
         if spk_emb_channels is not None:
-            self.spk_bottleneck_layer = BottleneckLayerLayer(spk_emb_channels, bottleneck_channels, norm="weightnorm", non_linearity="relu", kernel_size=3,)
+            self.spk_bottleneck_layer = BottleneckLayerLayer(
+                spk_emb_channels,
+                bottleneck_channels,
+                norm="weightnorm",
+                non_linearity="relu",
+                kernel_size=3,
+            )
             in_lstm_channels += bottleneck_channels
         if emo_emb_channels is not None:
-            self.emo_bottleneck_layer = BottleneckLayerLayer(emo_emb_channels, bottleneck_channels, norm="weightnorm", non_linearity="relu", kernel_size=3,)
+            self.emo_bottleneck_layer = BottleneckLayerLayer(
+                emo_emb_channels,
+                bottleneck_channels,
+                norm="weightnorm",
+                non_linearity="relu",
+                kernel_size=3,
+            )
             in_lstm_channels += bottleneck_channels
         self.feat_pred_fn = ConvLSTMLinear(
             in_lstm_channels,

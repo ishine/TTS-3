@@ -132,9 +132,9 @@ class VitsConfig(BaseTTSConfig):
     dur_loss_alpha: float = 1.0
     pitch_loss_alpha: float = 1.0
     energy_loss_alpha: float = 1.0
-    char_dur_loss_alpha: float=0.01
-    u_prosody_loss_alpha: float= 1.0
-    p_prosody_loss_alpha: float= 1.0
+    char_dur_loss_alpha: float = 0.01
+    u_prosody_loss_alpha: float = 1.0
+    p_prosody_loss_alpha: float = 1.0
     speaker_encoder_loss_alpha: float = 1.0
     aligner_loss_alpha: float = 1.0
     binary_alignment_loss_alpha: float = 1.0
@@ -149,7 +149,7 @@ class VitsConfig(BaseTTSConfig):
     compute_linear_spec: bool = True
     use_attn_priors: bool = True
     attn_prior_cache_path: str = None
-    f0_cache_path: str= None
+    f0_cache_path: str = None
 
     # sampler params
     use_weighted_sampler: bool = False  # TODO: move it to the base config
@@ -188,7 +188,6 @@ class VitsConfig(BaseTTSConfig):
     use_weighted_sampler: bool = True  # TODO: move it to the base config
     weighted_sampler_attrs: dict = field(default_factory=lambda: {"root_path": 1.0})
     weighted_sampler_multipliers: dict = field(default_factory=lambda: {})
-
 
     def __post_init__(self):
         for key, val in self.model_args.items():
