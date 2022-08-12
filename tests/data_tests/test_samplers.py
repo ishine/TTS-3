@@ -3,6 +3,7 @@ import random
 import unittest
 
 import torch
+from torch.utils.data import BatchSampler
 
 from TTS.config.shared_configs import BaseDatasetConfig
 from TTS.tts.datasets import load_tts_samples
