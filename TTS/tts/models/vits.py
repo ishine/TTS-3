@@ -21,6 +21,7 @@ from trainer.torch import DistributedSampler, DistributedSamplerWrapper
 from trainer.trainer_utils import get_optimizer, get_scheduler
 
 from TTS.utils.samplers import BucketBatchSampler
+from TTS.utils.io import load_fsspec
 from TTS.tts.configs.shared_configs import CharactersConfig
 from TTS.tts.datasets.dataset import F0Dataset, TTSDataset, _parse_sample
 from TTS.tts.layers.generic.aligner import AlignmentNetwork
@@ -433,6 +434,7 @@ class VitsDataset(TTSDataset):
             "wav": wav,
             "pitch": f0,
             "wav_file": wav_filename,
+            "wav_path": item["audio_file"],
             "speaker_name": item["speaker_name"],
             "language_name": item["language"],
             "audio_unique_name": item["audio_unique_name"],
@@ -526,6 +528,7 @@ class VitsDataset(TTSDataset):
             "speaker_names": batch["speaker_name"],
             "language_names": batch["language_name"],
             "audio_files": batch["wav_file"],
+            "audio_paths": batch["wav_path"],
             "raw_text": batch["raw_text"],
             "audio_unique_names": batch["audio_unique_name"],
             "attn_priors": batch["attn_prior"] if batch["attn_prior"][0] is not None else None,
@@ -1869,7 +1872,7 @@ class Vits(BaseTTS):
             self.pitch_scaler.eval()
 
     def get_aux_input(self, aux_input: Dict):
-        sid, g, lid, _ = self._set_cond_input(aux_input)
+        sid, g, lid = self._set_cond_input(aux_input)
         return {"speaker_ids": sid, "style_wav": None, "d_vectors": g, "language_ids": lid}
 
     def _freeze_layers(self):
@@ -2499,16 +2502,18 @@ class Vits(BaseTTS):
 
         ### --> DURATION FORMATTING
 
-        dur = (torch.exp(dur_log) - 1) * x_mask * self.length_scale
+        dur = (torch.exp(dur_log) - 1) * x_mask
 
         if self.target_cps:
             model_output_in_sec = (self.config.audio.hop_length * dur.sum()) / self.args.encoder_sample_rate
             num_input_chars = x_lengths[0]
             num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum()
-            num_input_chars -= blank_mask.sum()
             dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec))
-            model_output_in_sec2 = (self.config.audio.hop_length * dur.sum()) / self.args.encoder_sample_rate
 
+        # check hack to fix fast jumps
+        # dur[dur < dur.mean()] = dur.mean()
+
+        dur = dur * self.length_scale
         dur = torch.round(dur)
         dur[dur < 1] = 1
 
@@ -2610,15 +2615,15 @@ class Vits(BaseTTS):
 
         o = self.waveform_decoder((z * y_mask)[:, :, : self.max_inference_len], g=None)
 
-        masked_dur = dur.int()
-        masked_dur[:, :, 1:-1] = masked_dur[:, :, 1:-1] + masked_dur[:, :, 2:]
-        masked_dur = masked_dur.masked_fill(blank_mask, 0.0)
+        # masked_dur = dur.int()
+        # masked_dur[:, :, 1:-1] = masked_dur[:, :, 1:-1] + masked_dur[:, :, 2:]
+        # masked_dur = masked_dur.masked_fill(blank_mask, 0.0)
 
         outputs = {
             "model_outputs": o,
             "alignments": attn.squeeze(1),
             "durations": dur,
-            "masked_durations": masked_dur,
+            # "masked_durations": masked_dur,
             "pitch": o_pitch,
             "energy": o_energy,
             "z": z,
@@ -2935,7 +2940,7 @@ class Vits(BaseTTS):
         if hasattr(self, "speaker_manager"):
             if config.use_d_vector_file:
                 if speaker_name is None:
-                    d_vector = self.speaker_manager.get_random_embedding()
+                    d_vector = self.speaker_manager.get_random_embeddings()
                 else:
                     d_vector = self.speaker_manager.get_mean_embedding(speaker_name, num_samples=None, randomize=False)
             elif config.use_speaker_embedding:
@@ -3266,22 +3271,10 @@ class Vits(BaseTTS):
         if getattr(config, "use_weighted_sampler", False):
             for attr_name, alpha in config.weighted_sampler_attrs.items():
                 print(f" > Using weighted sampler for attribute '{attr_name}' with alpha '{alpha}'")
-<<<<<<< HEAD
-<<<<<<< HEAD
                 multi_dict = config.weighted_sampler_multipliers.get(attr_name, None)
                 print(multi_dict)
                 weights, attr_names, attr_weights = get_attribute_balancer_weights(
                     attr_name=attr_name, items=data_items, multi_dict=multi_dict
-=======
-                weights, attr_names, attr_weights = get_attribute_balancer_weights(
-                    attr_name=attr_name, items=data_items
->>>>>>> Use self.synthesize in test_run
-=======
-                multi_dict = config.weighted_sampler_multipliers.get(attr_name, None)
-                print(multi_dict)
-                weights, attr_names, attr_weights = get_attribute_balancer_weights(
-                    attr_name=attr_name, items=data_items, multi_dict=multi_dict
->>>>>>> Add attribute weigtening
                 )
                 weights = weights * alpha
                 print(f" > Attribute weights for '{attr_names}' \n | > {attr_weights}")
@@ -3289,19 +3282,11 @@ class Vits(BaseTTS):
         # input_audio_lenghts = [os.path.getsize(x["audio_file"]) for x in data_items]
 
         if weights is not None:
-<<<<<<< HEAD
             w_sampler = WeightedRandomSampler(weights, len(weights))
             batch_sampler = BucketBatchSampler(
                 w_sampler,
                 data=data_items,
                 batch_size=config.eval_batch_size if is_eval else config.batch_size,
-=======
-            sampler = WeightedRandomSampler(weights, len(weights))
-            sampler = BucketBatchSampler(
-                sampler,
-                data=data_items,
-                batch_size=config.batch_size,
->>>>>>> Use BucketBatchSampler in VITS
                 sort_key=lambda x: os.path.getsize(x["audio_file"]),
                 drop_last=True,
             )
@@ -3311,9 +3296,7 @@ class Vits(BaseTTS):
         if batch_sampler is None:
             batch_sampler = DistributedSampler(dataset) if num_gpus > 1 else None
         else:  # If a sampler is already defined use this sampler and DDP sampler together
-            batch_sampler = (
-                DistributedSamplerWrapper(batch_sampler) if num_gpus > 1 else batch_sampler
-            )  # TODO: check batch_sampler with multi-gpu
+            batch_sampler = DistributedSamplerWrapper(batch_sampler) if num_gpus > 1 else batch_sampler  # TODO: check batch_sampler with multi-gpu
         return batch_sampler
 
     def get_data_loader(
@@ -3358,14 +3341,15 @@ class Vits(BaseTTS):
             dataset.preprocess_samples()
 
             # get samplers
-            sampler = self.get_sampler(config, dataset, num_gpus)
+            sampler = self.get_sampler(config, dataset, num_gpus, is_eval)
+
             if sampler is None:
                 loader = DataLoader(
                     dataset,
                     batch_size=config.eval_batch_size if is_eval else config.batch_size,
-                    shuffle=False,  # shuffle is done in the dataset.
+                    shuffle=False,
+                    drop_last=False,
                     collate_fn=dataset.collate_fn,
-                    drop_last=False,  # setting this False might cause issues in AMP training.
                     num_workers=config.num_eval_loader_workers if is_eval else config.num_loader_workers,
                     pin_memory=False,
                 )
@@ -3431,6 +3415,9 @@ class Vits(BaseTTS):
         checkpoint_path,
         eval=False,
         strict=True,
+        cache_storage='/tmp/tts_cache',
+        target_protocol='s3',
+        target_options={'anon': True},
     ):  # pylint: disable=unused-argument, redefined-builtin
         """Load the model checkpoint and setup for training or inference"""
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
@@ -3504,10 +3491,10 @@ class Vits(BaseTTS):
     def synthesize(
         self,
         text: str,
-        speaker_id,
-        language_id,
-        d_vector,
-        ref_waveform,
+        speaker_id: str,
+        language_id=None,
+        d_vector=None,
+        ref_waveform=None,
         emotion_vector=None,
         emotion_id=None,
         pitch_transform=None,
@@ -3516,27 +3503,38 @@ class Vits(BaseTTS):
         # TODO: add language_id
         is_cuda = next(self.parameters()).is_cuda
 
-        # convert text to sequence of token IDs
-        text_len = len(text)
-        text_inputs = np.asarray(
-            self.tokenizer.text_to_ids(text, language=language_id),
-            dtype=np.int32,
-        )
-
-        # pass tensors to backend
+        # Speaker embeddings
         if speaker_id is not None:
-            speaker_id = id_to_torch(speaker_id, cuda=is_cuda)
+            if self.config.use_d_vector_file:
+                d_vector = self.speaker_manager.get_mean_embedding(
+                        speaker_id, num_samples=None, randomize=False
+                    )
+                speaker_id = None
+            else:
+                speaker_id = id_to_torch(speaker_id, cuda=is_cuda)
 
         if d_vector is not None:
             d_vector = embedding_to_torch(d_vector, cuda=is_cuda)
 
+        # Emotion embeddings
+        if emotion_id is not None:
+            if self.config.use_d_vector_file:
+                emotion_vector = self.emotion_manager.get_mean_embedding(emotion_id, num_samples=None, randomize=False)
+            else:
+                emotion_id = id_to_torch(emotion_id, cuda=is_cuda)
+
         if emotion_vector is not None:
             emotion_vector = embedding_to_torch(emotion_vector, cuda=is_cuda)
 
+        # Text formatting
+        text_inputs = np.asarray(
+            self.tokenizer.text_to_ids(text, language=language_id),
+            dtype=np.int32,
+        )
         text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=is_cuda)
         text_inputs = text_inputs.unsqueeze(0)
 
-        # synthesize voice
+        # Synthesize voice
         self.inference_noise_scale = noise_scale
         outputs = self.inference(
             text_inputs,
@@ -3544,7 +3542,7 @@ class Vits(BaseTTS):
             pitch_transform=pitch_transform,
         )
 
-        # collect outputs
+        # Collect outputs
         wav = outputs["model_outputs"][0].data.cpu().numpy()
         alignments = outputs["alignments"]
         return_dict = {
