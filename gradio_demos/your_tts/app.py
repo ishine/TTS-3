@@ -24,14 +24,8 @@ torch.set_num_threads(32)
 source_path = Path(__file__).resolve()
 ROOT_PATH = source_path.parent
 
-# model_path = "/data/TTS/output/YourTTS-variant16-emotion-August-06-2022_10+25PM-409b528f/checkpoint_2550000.pth"
-# config_path = "/data/TTS/output/YourTTS-variant16-emotion-August-06-2022_10+25PM-409b528f/config.json"
-
-# model_path = "/data/TTS/output/YourTTS-variant16-emotion-August-09-2022_02+25PM-0bd810f8/checkpoint_2590000.pth"
-# config_path = "/data/TTS/output/YourTTS-variant16-emotion-August-09-2022_02+25PM-0bd810f8/config.json"
-
-model_path = "/data/TTS/output/YourTTS-variant16-emotion-August-09-2022_12+45AM-409b528f/checkpoint_2585000.pth"
-config_path = "/data/TTS/output/YourTTS-variant16-emotion-August-09-2022_12+45AM-409b528f/config.json"
+model_path = "/data/TTS/output/YourTTS-variant17-August-11-2022_11+58AM-f6aa3e4a/checkpoint_2635000.pth"
+config_path = "/data/TTS/output/YourTTS-variant17-August-11-2022_11+58AM-f6aa3e4a/config.json"
 
 language_path = None
 speakers_file = os.path.join(ROOT_PATH, 'models/speakers.json')
@@ -259,6 +253,7 @@ def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_f
     wavs = list(rms_norm(wav=np.array(wavs)))
     synthesizer.save_wav(wavs, output_path)
     print(f" > Output audio saved to - {output_path}")
+
      # compute mean basis vector attn
     fig1 = None
     if "basis_attn" in outputss[0]["outputs"] and outputss[0]["outputs"]["basis_attn"] is not None:
@@ -309,7 +304,7 @@ iface = gr.Interface(
         gr.Number(value=0.0, label="Pitch Shift (Pitch + Pitch Shift in Hz)"),
         gr.Number(value=1.0, label="Speed"),
         # gr.Number(value=0.11, label="Duration Noise Scale"),
-        gr.Number(value=0.66, label="Model Noise Scale"),
+        gr.Number(value=0.44, label="Model Noise Scale"),
     ],
     outputs=[gr.outputs.Audio(label="Output Speech."), gr.outputs.Audio(label="Original Speech."), gr.Plot(label="Basis attention weights"), gr.Plot(label="Spectrogram"), gr.outputs.Audio(label="Uploaded Speech."), gr.Plot(label="Durations"), gr.Plot(label="Pitch from audio"), gr.Plot(label="Pitch Avg from audio"), gr.Plot(label="Pitch Avg Pred")],
     allow_flagging=False,
