@@ -411,7 +411,7 @@ def save_wav(*, wav: np.ndarray, path: str, sample_rate: int = None, **kwargs) -
     """Save float waveform to a file using Scipy.
 
     Args:
-        wav (np.ndarray): Waveform with float values in range [-1, 1] to save.
+        wav (np.ndarray): Waveform with float values in range [-1, 1] to save. Shape (n_values,).
         path (str): Path to a output file.
         sr (int, optional): Sampling rate used for saving to the file. Defaults to None.
     """
