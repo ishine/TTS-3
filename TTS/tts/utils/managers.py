@@ -247,7 +247,7 @@ class EmbeddingManager(BaseIDManager):
         return self.embeddings[clip_idx]["embedding"]
 
     def get_embeddings_by_name(self, idx: str) -> List[List]:
-        """Get all embeddings of a speaker.
+        """Get all embeddings of an id.
 
         Args:
             idx (str): Target name.
