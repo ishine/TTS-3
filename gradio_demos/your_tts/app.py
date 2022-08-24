@@ -24,8 +24,17 @@ torch.set_num_threads(32)
 source_path = Path(__file__).resolve()
 ROOT_PATH = source_path.parent
 
-model_path = "/data/TTS/output/YourTTS-variant17-August-11-2022_11+58AM-f6aa3e4a/checkpoint_2635000.pth"
-config_path = "/data/TTS/output/YourTTS-variant17-August-11-2022_11+58AM-f6aa3e4a/config.json"
+# model_path = "/data/TTS/output/YourTTS-variant17-August-11-2022_11+58AM-f6aa3e4a/checkpoint_2635000.pth"
+# config_path = "/data/TTS/output/YourTTS-variant17-August-11-2022_11+58AM-f6aa3e4a/config.json"
+
+# model_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/checkpoint_2940000.pth"
+# config_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/config.json"
+
+# model_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/YourTTS_modulated/YourTTS-variant17.4c83e719498b451a9a7640e645377800/models/checkpoint_2785000.pth"
+# config_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/config.json"
+
+model_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/YourTTS_modulated/YourTTS-variant17.4c83e719498b451a9a7640e645377800/models/checkpoint_2710000.pth"
+config_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/config.json"
 
 language_path = None
 speakers_file = os.path.join(ROOT_PATH, 'models/speakers.json')
@@ -206,19 +215,7 @@ def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_f
     lang = None
     speaker_name = None
     wav_file = None
-    # dbfs = -27
 
-    # if uploaded_wav is not None:
-    #     if isinstance(uploaded_wav, list):
-    #         wav, wav_file = process_uploaded_files(uploaded_wav, dbfs)
-    #         style_wav = uploaded_wav.name
-    #     else:
-    #         wav, wav_file = process_uploaded_wav(uploaded_wav, dbfs)
-    #         style_wav = uploaded_wav.name
-    # elif speaker_wav is not None:
-    #     wav, wav_file = process_speaker_wav(speaker_wav, dbfs)
-    #     style_wav = speaker_wav.name
-    # elif speaker_id is not None:
     speaker_name = speaker_id
     # style_wav = speaker_name_to_wav(style_id)
     orig_wav = speaker_name_to_wav(speaker_name)
@@ -229,15 +226,8 @@ def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_f
         if isinstance(wav_file, list):
             for wf in wav_file:
                 input_path = os.path.join(SPEAKER_WAV_PATH, os.path.basename(wf))
-                # copyfile(wf, input_path)
-                # upload_inputs_to_s3(input_path)
-                # print(f" > Input (uploaded) audio saved to - {input_path}")
-
         else:
             input_path = os.path.join(SPEAKER_WAV_PATH, os.path.basename(wav_file))
-            # copyfile(wav_file, input_path)
-            # upload_inputs_to_s3(input_path)
-            # print(f" > Input (recorded) audio saved to - {input_path}")
 
         if isinstance(wav_file, list):
             wav_file_names = "_".join([Path(wf).stem for wf in wav_file])
@@ -317,4 +307,4 @@ iface = gr.Interface(
     enable_queue=False,
     article=article,
 )
-iface.launch(share=False, debug=False, server_port=5007, server_name="0.0.0.0",)
+iface.launch(share=False, debug=False, server_port=5010, server_name="0.0.0.0",)
