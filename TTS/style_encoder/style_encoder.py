@@ -91,18 +91,8 @@ class StyleEncoder(nn.Module):
             self.spk_classify_layer = nn.Linear(in_classifier_dim, self.num_speakers)
 
     def forward(self, inputs):
-        if self.se_type == 're':
-            out = self.re_embedding(*inputs)
-        elif self.se_type == 'gst':
-            out = self.gst_embedding(*inputs)
-        elif self.se_type == 'vae':
-            out = self.vae_forward(*inputs)
-        elif self.se_type == 'vaeflow':
-            out = self.vaeflow_forward(*inputs)
-        elif self.se_type == 'diffusion':
-            out = self.diff_forward(*inputs)
-        else:
-            raise NotImplementedError
+        fn_name = self.se_type + '_embedding'
+        out = getattr(globals()['StyleEncoder'](), fn_name)(*inputs)
         return out
 
     def inference(self, inputs, **kwargs):
