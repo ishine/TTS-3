@@ -8,32 +8,35 @@ class StyleEncoderConfig(Coqpit):
     Args:    
         # TODO Args
     """
-    # Style Encoder Type
-    se_type: str = "re"
-
+    # Style Encoder Type           
+    se_type: str = "re"                     # Possibilites: "lookup", "re", "gst", "vae", "vaeflow" or "diffusion".
+    num_styles: int = 5                     # Number of styles in dataset.
+    num_speakers: int = 4                   # Number of speaker in the dataset. 
+    
     # Inputs
-    num_mel: int = 80
+    num_mel: int = 80                       # Dimension of the reference mel-spectrogram. Except if se_type == lookup.
 
-    # Aggregation 
-    style_embedding_dim: int = 128
-    agg_type: str = "sum" # Can be concat, sum, or adain
-    agg_norm: bool = False # If agg_type == sum, you can rather than normalizing or not
-    use_proj_linear: bool = False # Whether use linear projection to decoder dim or not (specifcally useful for sum agg_style)
-    proj_dim: int = 512 # Projection dim, often the encoder output (512 is the tacotron2 default encoder output)
-    use_nonlinear_proj: bool = False # Whether use or not a linear (last_dim, last_dim) + tanh before agg in TTS encoder outputs
+    # Output 
+    style_embedding_dim: int = 128          # Output dimension of the style embedding
+    use_nonlinear_proj: bool = False        # Use a nonlinear projection (style_embedding_dim, style_embedding dim) and a tanh activation.
+    use_proj_linear: bool = False           # Use a linear projection before decoder (Useful for matching dims in agg_type = "sum")
+    proj_dim: int = 512                     # Projection dimension.
 
-    # Supervised Infos
-    use_speaker_embedding: bool = False
-    use_supervised_style: bool = False
-    use_guided_style: bool = False # Whether use guided style encoder training 
-    use_guided_speaker: bool = False # Whether use reversely guided style encoder training
+    # Supervised Training
+    use_supervised_style: bool = False      # Enables the Style Manager.
+    use_guided_style: bool = False          # Enables the Style Classification Layer.
+    use_guided_speaker: bool = False        # Enables the Speaker Classification Layer.
+
+    # Aggregation
+    agg_type: str = "sum"                   # Possibilities: "concat", "sum", or "adain".
+    agg_norm: bool = False                  # If agg_type == sum, you can rather than normalizing or not
 
     # Losses
-    start_loss_at: int = 0 # Iteration that the style loss should start propagate 
-    content_orthogonal_loss: bool = False # whether use othogonal loss between style and content embeddings
-    speaker_orthogonal_loss: bool = False # whether use othogonal loss between speaker and content embeddings
-    orthogonal_loss: bool = False  # Use orthogonal loss
-    orthogonal_loss_alpha: float = 1.0 # Use weight for orthogonal loss
+    start_loss_at: int = 0                  # Iteration that the style loss should start propagate 
+    content_orthogonal_loss: bool = False   # whether use othogonal loss between style and content embeddings
+    speaker_orthogonal_loss: bool = False   # whether use othogonal loss between speaker and content embeddings
+    orthogonal_loss: bool = False           # Use orthogonal loss
+    orthogonal_loss_alpha: float = 1.0      # Use weight for orthogonal loss
 
     # GST-SE Additional Configs
     gst_style_input_weights: dict = None
@@ -41,10 +44,10 @@ class StyleEncoderConfig(Coqpit):
     gst_num_style_tokens: int = 10
 
     # VAE-Based General Configs
-    vae_latent_dim: int = 128 # Dim of mean and logvar
-    use_cyclical_annealing: bool = True # Whether use or not annealing (recommended true), only linear implemented
-    vae_loss_alpha: float = 1.0 # Default alpha value (term of KL loss)
-    vae_cycle_period: int = 5000 # iteration period to apply a new annealing cycle
+    vae_latent_dim: int = 128               # Dim of mean and logvar
+    use_cyclical_annealing: bool = True     # Whether use or not annealing (recommended true), only linear implemented
+    vae_loss_alpha: float = 1.0             # Default alpha value (term of KL loss)
+    vae_cycle_period: int = 5000            # iteration period to apply a new annealing cycle
 
     # VAEFLOW-SE Additional Configs
     vaeflow_intern_dim: int = 300
@@ -93,7 +96,6 @@ class StyleEncoderConfig(Coqpit):
         check_argument("diff_dropout", c, restricted=False)
         check_argument("diff_loss_alpha", c, restricted=False)
 
-
-
-
-
+        # Hierarchical Dependencies
+        if (c["use_guided_style"] == True) or (c["se_type"]=="lookup"):
+            assert c["use_supervised_style"]  == True

@@ -175,28 +175,16 @@ class StyleforwardTTS(BaseTTS):
 
     # pylint: disable=dangerous-default-value
     def __init__(self, config: Coqpit, speaker_manager: SpeakerManager = None, style_manager: StyleManager = None):
-
         super().__init__(config)
 
         # Speaker Configuration
         self.speaker_manager = speaker_manager
         self.init_multispeaker(config)
-        if (config.style_encoder_config.use_guided_speaker):
-            pass
 
         # Style Configuration
         if(config.style_encoder_config.use_supervised_style):
             self.style_manager = style_manager
             self.init_style(config)
-
-            if(config.style_encoder_config.use_guided_style):
-                print(f"Using style guided training with {self.num_style} styles")
-                style_embedding_dim = config.style_encoder_config.proj_dim if config.style_encoder_config.use_proj_linear else config.style_encoder_config.style_embedding_dim
-                self.style_classify_layer = nn.Linear(style_embedding_dim,self.num_style)
-
-        # for key in config:
-        #     setattr(self, key, config[key])
-
 
         self.max_duration = self.args.max_duration
         self.use_aligner = self.args.use_aligner
@@ -589,12 +577,8 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = style_encoder_outputs.squeeze(1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            o_en, style_encoder_outputs, style_preds, spk_preds = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
             o_en = o_en.permute(0,2,1)
-
-        style_preds = None
-        if(self.config.style_encoder_config.use_guided_style):
-            style_preds = self.style_classify_layer(style_encoder_outputs)
 
         # duration predictor pass
         if self.args.detach_duration_predictor:
@@ -643,7 +627,8 @@ class StyleforwardTTS(BaseTTS):
             "style_encoder_outputs": style_encoder_outputs,
             "encoder_outputs": encoder_outputs,
             "speaker_outputs": g,
-            "style_preds": style_preds
+            "style_preds": style_preds,
+            "spk_preds": spk_preds
         }
         return outputs
 
@@ -740,9 +725,11 @@ class StyleforwardTTS(BaseTTS):
                 alignment_hard=outputs["alignment_mas"] if self.use_binary_alignment_loss else None,
                 style_encoder_output=outputs['style_encoder_outputs'],
                 style_ids = style_ids,
+                speaker_ids = speaker_ids,
                 encoder_output = outputs['encoder_outputs'],
                 speaker_output = outputs['speaker_outputs'],
                 style_preds = outputs['style_preds'],
+                spk_preds = outputs['spk_preds']
             )
             # compute duration error
             durations_pred = outputs["durations"]

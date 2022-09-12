@@ -7,6 +7,13 @@ from TTS.style_encoder.layers.vae import VAEStyleEncoder
 from TTS.style_encoder.layers.vaeflow import VAEFlowStyleEncoder
 from TTS.style_encoder.layers.diffusion import DiffStyleEncoder
 
+# TODO: LOOK UP HERE?
+# TODO: LOOK UP + STY CLASS
+# TODO: FORWARD BY NAME
+# TODO: CHECK EVERY ARG PATH
+# TODO: ADAPT STYLE TACOTRON 2
+# TODO: STYLE CLASS BEFORE OR AFTER AGGREGATE IN VAE VAEFLOW AND DIFF
+
 class StyleEncoder(nn.Module):
     def __init__(self, config:Coqpit) -> None:
         super().__init__()
@@ -14,30 +21,19 @@ class StyleEncoder(nn.Module):
         # Load from Config
         for key in config:
             setattr(self, key, config[key])
-            
-        # print(self.agg_norm)
 
-        if(self.use_nonlinear_proj):
-            self.nl_proj = nn.Linear(self.style_embedding_dim, self.style_embedding_dim)
-            nn.init.xavier_normal_(self.nl_proj.weight) # Good init for projection
-
-        self.dropout = nn.Dropout(p=0.5)
-
-        if(self.use_proj_linear):
-            self.proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
-            nn.init.xavier_normal_(self.proj.weight) # Good init for projection
-
-        if self.se_type == 'gst':
+        # Init Style Encoder Type
+        if self.se_type == 're':
+            self.layer = ReferenceEncoder(
+                num_mel = self.num_mel,
+                embedding_dim = self.style_embedding_dim
+            )
+        elif self.se_type == 'gst':
             self.layer = GST(
                 num_mel = self.num_mel,
                 gst_embedding_dim = self.style_embedding_dim,
                 num_heads = self.gst_num_heads,
                 num_style_tokens = self.gst_num_style_tokens,
-            )
-        elif self.se_type == 're':
-            self.layer = ReferenceEncoder(
-                num_mel = self.num_mel,
-                embedding_dim = self.style_embedding_dim
             )
         elif self.se_type == 'vae':
             self.layer = VAEStyleEncoder(
@@ -71,17 +67,40 @@ class StyleEncoder(nn.Module):
         else:
             raise NotImplementedError
 
-    def forward(self, inputs, aux_input):
-        if self.se_type == 'gst':
-            out = self.gst_embedding(*inputs)
-        elif self.se_type == 're':
+        # Init Projections
+        if(self.use_nonlinear_proj):
+            self.nl_proj = nn.Linear(self.style_embedding_dim, self.style_embedding_dim)
+            nn.init.xavier_normal_(self.nl_proj.weight)
+
+        self.dropout = nn.Dropout(p=0.5)
+
+        if(self.use_proj_linear):
+            self.proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
+            nn.init.xavier_normal_(self.proj.weight)
+
+        # Init Style Classifier
+        if(config.style_encoder_config.use_guided_style):
+            print(f"Using style guided training with {self.num_styles} styles")
+            in_classifier_dim = self.proj_dim if self.use_proj_linear else self.style_embedding_dim
+            self.style_classify_layer = nn.Linear(in_classifier_dim, self.num_style)
+
+        # Init Style Classifier
+        if(config.style_encoder_config.use_guided_speaker):
+            print(f"Using speaker guided training with {self.num_speakers} speakers")
+            in_classifier_dim = self.proj_dim if self.use_proj_linear else self.style_embedding_dim
+            self.spk_classify_layer = nn.Linear(in_classifier_dim, self.num_speakers)
+
+    def forward(self, inputs):
+        if self.se_type == 're':
             out = self.re_embedding(*inputs)
-        elif self.se_type == 'diffusion':
-            out = self.diff_forward(*inputs)
+        elif self.se_type == 'gst':
+            out = self.gst_embedding(*inputs)
         elif self.se_type == 'vae':
             out = self.vae_forward(*inputs)
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_forward(*inputs)
+        elif self.se_type == 'diffusion':
+            out = self.diff_forward(*inputs)
         else:
             raise NotImplementedError
         return out
@@ -100,6 +119,51 @@ class StyleEncoder(nn.Module):
         else:
             raise NotImplementedError
         return out
+
+    #############################
+    ## STYLE EMBEDDING FORWARD ##
+    #############################
+
+    def re_embedding(self, inputs, style_input):
+            if style_input is None:
+                # ignore style token and return zero tensor
+                gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
+            elif style_input.shape[-1] == self.style_embedding_dim:
+                gst_outputs = style_input
+            else:
+                # compute style tokens
+                input_args = [style_input]
+                gst_outputs = self.layer(*input_args)  # pylint: disable=not-callable
+            
+                # PROJECT
+                if(self.use_nonlinear_proj):
+                    gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
+                    gst_outputs = self.dropout(gst_outputs)
+                
+                if(self.use_proj_linear):
+                    gst_outputs = self.proj(gst_outputs)
+
+            # AGGREGATE
+            if(self.agg_type == 'concat'):
+                inputs = self._concat_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+            elif(self.agg_type == 'adain'):
+                inputs = self._adain(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+            else:
+                inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+
+            # STYLE CLASSIFIER
+            if(self.use_guided_style):
+                style_preds = self.style_classify_layer(gst_outputs)
+            else:
+                style_preds = None
+
+            # SPEAKER CLASSIFIER
+            if(self.use_guided_speaker):
+                spk_preds = self.spk_classify_layer(gst_outputs)
+            else:
+                spk_preds = None
+
+            return inputs, gst_outputs, style_preds, spk_preds
 
     def gst_embedding(self, inputs, style_input, speaker_embedding=None):
             if isinstance(style_input, dict):
@@ -122,6 +186,7 @@ class StyleEncoder(nn.Module):
                 input_args = [style_input, speaker_embedding]
                 gst_outputs = self.layer(*input_args)  # pylint: disable=not-callable
             
+            # PROJECT 
             if(self.use_nonlinear_proj):
                 # gst_outputs = self.nl_proj(gst_outputs)
                 gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
@@ -130,75 +195,30 @@ class StyleEncoder(nn.Module):
             if(self.use_proj_linear):
                 gst_outputs = self.proj(gst_outputs)
 
+            # AGGREGATE
             if(self.agg_type == 'concat'):
                 inputs = self._concat_embedding(inputs, gst_outputs)
             else:
                 inputs = self._add_speaker_embedding(inputs, gst_outputs)
-            return inputs
 
-
-
-    def re_embedding(self, inputs, style_input):
-            if style_input is None:
-                # ignore style token and return zero tensor
-                gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
-            elif style_input.shape[-1] == self.style_embedding_dim:
-                gst_outputs = style_input
+            # STYLE CLASSIFIER
+            if(self.use_guided_style):
+                style_preds = self.style_classify_layer(gst_outputs)
             else:
-                # compute style tokens
-                input_args = [style_input]
-                gst_outputs = self.layer(*input_args)  # pylint: disable=not-callable
-            
-                if(self.use_nonlinear_proj):
-                    gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
-                    gst_outputs = self.dropout(gst_outputs)
-                
-                if(self.use_proj_linear):
-                    gst_outputs = self.proj(gst_outputs)
+                style_preds = None
 
-            if(self.agg_type == 'concat'):
-                inputs = self._concat_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
-            elif(self.agg_type == 'adain'):
-                inputs = self._adain(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+            # SPEAKER CLASSIFIER
+            if(self.use_guided_speaker):
+                spk_preds = self.spk_classify_layer(gst_outputs)
             else:
-                inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
-            return inputs, gst_outputs
+                spk_preds = None
 
-    def diff_forward(self, inputs, ref_mels):
-            diff_output = self.layer.forward(ref_mels)
-
-            if(self.use_nonlinear_proj):
-                # diff_output = self.nl_proj(diff_output)
-                diff_output = torch.tanh(self.nl_proj(diff_output))
-                diff_output = self.dropout(diff_output)
-
-            if(self.use_proj_linear):
-                diff_output = self.proj(diff_output)
-
-            if(self.agg_type == 'concat'):
-                return self._concat_embedding(inputs, diff_output['style']), diff_output['noises']
-            else:
-                return self._add_speaker_embedding(inputs, diff_output['style']), diff_output['noises']
-
-    def diff_inference(self, inputs, ref_mels, infer_from):
-            diff_output = self.layer.inference(ref_mels, infer_from)
-            
-            if(self.use_nonlinear_proj):
-                diff_output = torch.tanh(self.nl_proj(diff_output))
-                diff_output = self.dropout(diff_output)
-               
-            if(self.use_proj_linear):
-                diff_output = self.proj(diff_output)
-
-            if(self.agg_type == 'concat'):
-                return self._concat_embedding(outputs = inputs, embedded_speakers = diff_output['style'])
-            else:
-                return self._add_speaker_embedding(outputs = inputs, embedded_speakers = diff_output['style'])
-    
+            return inputs, gst_outputs, style_preds, spk_preds
 
     def vae_forward(self, inputs, ref_mels): 
         vae_output = self.layer.forward(ref_mels)
 
+        # PROJECT
         if(self.use_nonlinear_proj):
             # vae_output = self.nl_proj(vae_output)
             vae_output = torch.tanh(self.nl_proj(vae_output))
@@ -207,10 +227,87 @@ class StyleEncoder(nn.Module):
         if(self.use_proj_linear):
             vae_output = self.proj(vae_output)
 
+        # STYLE CLASSIFIER
+            if(self.use_guided_style):
+                style_preds = self.style_classify_layer(vae_output)
+            else:
+                style_preds = None
+
+        # SPEAKER CLASSIFIER
+            if(self.use_guided_speaker):
+                spk_preds = self.spk_classify_layer(vae_output)
+            else:
+                spk_preds = None
+
+        # AGGREGATE
         if(self.agg_type == 'concat'):
-            return self._concat_embedding(inputs, vae_output['z']), {'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
+            return self._concat_embedding(inputs, vae_output['z']), {'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}, style_preds, spk_preds
         else:
-            return self._add_speaker_embedding(inputs, vae_output['z']), {'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
+            return self._add_speaker_embedding(inputs, vae_output['z']), {'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}, style_preds, spk_preds
+
+    def vaeflow_forward(self, inputs, ref_mels): 
+        vaeflow_output = self.layer.forward(ref_mels)
+
+        # PROJECT
+        if(self.use_nonlinear_proj):
+            # vaeflow_output = self.nl_proj(vaeflow_output)
+            vaeflow_output = torch.tanh(self.nl_proj(vaeflow_output))
+            vaeflow_output = self.dropout(vaeflow_output)
+
+        if(self.use_proj_linear):
+            vaeflow_output = self.proj(vaeflow_output)
+
+        # STYLE CLASSIFIER
+            if(self.use_guided_style):
+                style_preds = self.style_classify_layer(vaeflow_output)
+            else:
+                style_preds = None
+
+        # SPEAKER CLASSIFIER
+            if(self.use_guided_speaker):
+                spk_preds = self.spk_classify_layer(vaeflow_output)
+            else:
+                spk_preds = None
+
+        # AGGREGATE
+        if(self.agg_type == 'concat'):
+            return self._concat_embedding(inputs, vaeflow_output['z_T']), {'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}, style_preds, spk_preds
+        else:
+            return self._add_speaker_embedding(inputs, vaeflow_output['z_T']), {'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}, style_preds, spk_preds
+
+    def diff_forward(self, inputs, ref_mels):
+            diff_output = self.layer.forward(ref_mels)
+
+            # PROJECT
+            if(self.use_nonlinear_proj):
+                # diff_output = self.nl_proj(diff_output)
+                diff_output = torch.tanh(self.nl_proj(diff_output))
+                diff_output = self.dropout(diff_output)
+
+            if(self.use_proj_linear):
+                diff_output = self.proj(diff_output)
+
+            # STYLE CLASSIFIER
+            if(self.use_guided_style):
+                style_preds = self.style_classify_layer(diff_output)
+            else:
+                style_preds = None
+
+            # SPEAKER CLASSIFIER
+            if(self.use_guided_speaker):
+                spk_preds = self.spk_classify_layer(diff_output)
+            else:
+                spk_preds = None
+
+            # AGGREGATE
+            if(self.agg_type == 'concat'):
+                return self._concat_embedding(inputs, diff_output['style']), diff_output['noises'], style_preds, spk_preds
+            else:
+                return self._add_speaker_embedding(inputs, diff_output['style']), diff_output['noises'], style_preds, spk_preds
+
+    #########################
+    ## SPECIFIC INFERENCES ##
+    #########################
     
     def vae_inference(self, inputs, ref_mels, z=None):
         if(z):
@@ -221,6 +318,7 @@ class StyleEncoder(nn.Module):
         else:
             vae_output = self.layer.forward(ref_mels)
 
+            # PROJECT
             if(self.use_nonlinear_proj):
                 vae_output = torch.tanh(self.nl_proj(vae_output))
                 vae_output = self.dropout(vae_output)
@@ -228,26 +326,11 @@ class StyleEncoder(nn.Module):
             if(self.use_proj_linear):
                 vae_output = self.proj(vae_output)
 
+            # AGGREGATE
             if(self.agg_type == 'concat'):
                 return self._concat_embedding(inputs, vae_output['z'])
             else:
                 return self._add_speaker_embedding(inputs, vae_output['z'])
-
-    def vaeflow_forward(self, inputs, ref_mels): 
-        vaeflow_output = self.layer.forward(ref_mels)
-
-        if(self.use_nonlinear_proj):
-            # vaeflow_output = self.nl_proj(vaeflow_output)
-            vaeflow_output = torch.tanh(self.nl_proj(vaeflow_output))
-            vaeflow_output = self.dropout(vaeflow_output)
-
-        if(self.use_proj_linear):
-            vaeflow_output = self.proj(vaeflow_output)
-
-        if(self.agg_type == 'concat'):
-            return self._concat_embedding(inputs, vaeflow_output['z_T']), {'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
-        else:
-            return self._add_speaker_embedding(inputs, vaeflow_output['z_T']), {'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
     def vaeflow_inference(self, inputs, ref_mels, z=None):
         if(z):
@@ -258,6 +341,7 @@ class StyleEncoder(nn.Module):
         else:
             vaeflow_output = self.layer.forward(ref_mels)
 
+            # PROJECT
             if(self.use_nonlinear_proj):
                 vaeflow_output = torch.tanh(self.nl_proj(vaeflow_output))
                 vaeflow_output = self.dropout(vaeflow_output)
@@ -265,11 +349,32 @@ class StyleEncoder(nn.Module):
             if(self.use_proj_linear):
                 vaeflow_output = self.proj(vaeflow_output)
 
+            # AGGREGATE
             if(self.agg_type == 'concat'):
                 return self._concat_embedding(inputs, vaeflow_output['z_T'])
             else:
                 return self._add_speaker_embedding(inputs, vaeflow_output['z_T'])
 
+    def diff_inference(self, inputs, ref_mels, infer_from):
+            diff_output = self.layer.inference(ref_mels, infer_from)
+            
+            # PROJECT
+            if(self.use_nonlinear_proj):
+                diff_output = torch.tanh(self.nl_proj(diff_output))
+                diff_output = self.dropout(diff_output)
+               
+            if(self.use_proj_linear):
+                diff_output = self.proj(diff_output)
+
+            # AGGREGATE
+            if(self.agg_type == 'concat'):
+                return self._concat_embedding(outputs = inputs, embedded_speakers = diff_output['style'])
+            else:
+                return self._add_speaker_embedding(outputs = inputs, embedded_speakers = diff_output['style'])
+    
+    ###########################
+    ## AGGREGATION FUNCTIONS ##
+    ###########################
 
     # For this two below, remember if B is batch size, L the sequence length, E is the embedding dim and D the style embed dim
     # for tacotron2 the encoder outputs comes [B,L,E] and faspitch comes [B,E,L]
