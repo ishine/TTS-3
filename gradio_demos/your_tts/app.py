@@ -1,4 +1,3 @@
-from bdb import Breakpoint
 import os
 import numpy as np
 
@@ -33,7 +32,7 @@ ROOT_PATH = source_path.parent
 # model_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/YourTTS_modulated/YourTTS-variant17.4c83e719498b451a9a7640e645377800/models/checkpoint_2785000.pth"
 # config_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/config.json"
 
-model_path = "/data/best_models/variant17.1/checkpoint_2700000.pth"
+model_path = "/data/best_models/variant17.1/checkpoint_3290000.pth"
 config_path = "/data/best_models/variant17.1/model_config.json"
 
 language_path = None
