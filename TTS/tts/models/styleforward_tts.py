@@ -178,10 +178,14 @@ class StyleforwardTTS(BaseTTS):
 
         super().__init__(config)
 
+        # Speaker Configuration
         self.speaker_manager = speaker_manager
         self.init_multispeaker(config)
+        if (config.style_encoder_config.use_guided_speaker):
+            pass
+
+        # Style Configuration
         if(config.style_encoder_config.use_supervised_style):
-            # print(config.style_encoder_config)
             self.style_manager = style_manager
             self.init_style(config)
 
@@ -189,8 +193,7 @@ class StyleforwardTTS(BaseTTS):
                 print(f"Using style guided training with {self.num_style} styles")
                 style_embedding_dim = config.style_encoder_config.proj_dim if config.style_encoder_config.use_proj_linear else config.style_encoder_config.style_embedding_dim
                 self.style_classify_layer = nn.Linear(style_embedding_dim,self.num_style)
-        # # pass all config fields to `self`
-        # # for fewer code change
+
         # for key in config:
         #     setattr(self, key, config[key])
 
@@ -214,7 +217,7 @@ class StyleforwardTTS(BaseTTS):
             self.embedded_speaker_dim,
         )
 
-        if(not self.config.style_encoder_config.use_lookup):
+        if(not (self.config.style_encoder_config.se_type == "lookup")):
             self.style_encoder_layer = StyleEncoder(self.config.style_encoder_config)
 
         if self.args.positional_encoding:
@@ -290,7 +293,7 @@ class StyleforwardTTS(BaseTTS):
 
         print(" > using STYLE information.")
 
-        if self.config.style_encoder_config.use_lookup and self.style_manager:
+        if (self.config.style_encoder_config.se_type == "lookup") and self.style_manager:
             print(" > initialization of style-embedding layers.")
             self.num_style = self.style_manager.num_styles
             self.embedded_style_dim = self.config.style_encoder_config.style_embedding_dim
@@ -577,7 +580,7 @@ class StyleforwardTTS(BaseTTS):
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
         #Style embedding 
-        if(self.config.style_encoder_config.use_lookup):
+        if(self.config.style_encoder_config.se_type == "lookup"):
             # print(self.emb_s(aux_input["style_ids"]).unsqueeze(1).shape, o_en.shape)
             o_en = encoder_outputs.permute(0,2,1)
             style_encoder_outputs = self.emb_s(aux_input["style_ids"].unsqueeze(1)) 
@@ -668,7 +671,7 @@ class StyleforwardTTS(BaseTTS):
         # se_inputs = [o_en, aux_input['style_mel']]
         # o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
         
-        if(self.config.style_encoder_config.use_lookup):
+        if(self.config.style_encoder_config.se_type == "lookup"):
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs = self.emb_s(aux_input["style_ids"].unsqueeze(1)) 
             o_en = o_en + style_encoder_outputs # [B, 1, C]

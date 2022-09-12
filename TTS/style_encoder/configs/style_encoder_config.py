@@ -6,39 +6,34 @@ class StyleEncoderConfig(Coqpit):
     """Defines the Generic Style Encoder Config
 
     Args:    
-        embedding_dim (int):
-            Defines the size of the embedding vector dimensions. Defaults to 256.
-        
-        gst_style_input_weights (dict):
-            Defines the weights for each style token used at inference. Defaults to None.
-
-        gst_num_heads (int):
-            Number of attention heads used by the multi-head attention. Defaults to 4.
-
-        gst_num_style_tokens (int):
-            Number of style token vectors. Defaults to 10.
-
-        se_type (str):
-            Style encoder type \in {diffusion, vae, vaeflow, gst, re}
+        # TODO Args
     """
     # Style Encoder Type
-    se_type: str = "diffusion"
+    se_type: str = "re"
 
-    # Generic Style Encoder Configuration
+    # Inputs
     num_mel: int = 80
+
+    # Aggregation 
     style_embedding_dim: int = 128
-    agg_type: str = "concat" # Can be concat, sum, or adain
+    agg_type: str = "sum" # Can be concat, sum, or adain
     agg_norm: bool = False # If agg_type == sum, you can rather than normalizing or not
     use_proj_linear: bool = False # Whether use linear projection to decoder dim or not (specifcally useful for sum agg_style)
     proj_dim: int = 512 # Projection dim, often the encoder output (512 is the tacotron2 default encoder output)
-    start_loss_at: int = 0 # Iteration that the style loss should start propagate 
     use_nonlinear_proj: bool = False # Whether use or not a linear (last_dim, last_dim) + tanh before agg in TTS encoder outputs
+
+    # Supervised Infos
     use_speaker_embedding: bool = False
-    use_lookup: bool = False
     use_supervised_style: bool = False
+    use_guided_style: bool = False # Whether use guided style encoder training 
+    use_guided_speaker: bool = False # Whether use reversely guided style encoder training
+
+    # Losses
+    start_loss_at: int = 0 # Iteration that the style loss should start propagate 
     content_orthogonal_loss: bool = False # whether use othogonal loss between style and content embeddings
     speaker_orthogonal_loss: bool = False # whether use othogonal loss between speaker and content embeddings
-    use_guided_style: bool = False # Whether use guided style encoder training
+    orthogonal_loss: bool = False  # Use orthogonal loss
+    orthogonal_loss_alpha: float = 1.0 # Use weight for orthogonal loss
 
     # GST-SE Additional Configs
     gst_style_input_weights: dict = None
@@ -68,18 +63,13 @@ class StyleEncoderConfig(Coqpit):
     diff_dropout: float = 0.1
     diff_loss_alpha: float = 0.75
 
-
-    # Use orthogonal loss    
-    orthogonal_loss: bool = False  
-    orthogonal_loss_alpha: float = 1.0
-
     def check_values(
         self,
     ):
         """Check config fields"""
         c = asdict(self)
         super().check_values()
-        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae", "diffusion", "vaeflow"])
+        check_argument("se_type", c, restricted=True, enum_list=["lookup", "re", "gst", "vae", "diffusion", "vaeflow"])
         check_argument("agg_type", c, restricted=True, enum_list=["sum", "concat", "adain"])
         check_argument("num_mel", c, restricted=False)
         check_argument("style_embedding_dim", c, restricted=True, min_val=0, max_val=1000)
