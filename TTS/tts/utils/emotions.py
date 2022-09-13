@@ -71,11 +71,11 @@ class EmotionManager(EmbeddingManager):
 
     @property
     def emotion_names(self):
-        return list(self.ids.keys())
+        return list(self.name_to_id.keys())
 
     @property
     def num_emotions(self):
-        return self.ids
+        return self.name_to_id
 
     @staticmethod
     def parse_ids_from_data(items: List, parse_key: str) -> Any:
@@ -97,10 +97,10 @@ class EmotionManager(EmbeddingManager):
         Args:
             items (List): Data sampled returned by `load_tts_samples()`.
         """
-        self.ids = self.parse_ids_from_data(items, parse_key=parse_key)
+        self.name_to_id = self.parse_ids_from_data(items, parse_key=parse_key)
 
     def get_emotions(self) -> List:
-        return self.ids
+        return self.name_to_id
 
     @staticmethod
     def init_from_config(config: "Coqpit") -> "EmotionManager":
