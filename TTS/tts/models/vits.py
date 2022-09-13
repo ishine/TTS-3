@@ -30,6 +30,7 @@ from TTS.tts.layers.vits.discriminator import VitsDiscriminator
 from TTS.tts.layers.vits.networks import ContextEncoder, PosteriorEncoder, ResidualCouplingBlocks, TextEncoder
 from TTS.tts.layers.vits.stochastic_duration_predictor import StochasticDurationPredictor
 from TTS.tts.models.base_tts import BaseTTS
+from TTS.tts.layers.vits.denoise import VitsDenoiser
 from TTS.tts.utils.emotions import EmotionManager
 from TTS.tts.utils.helpers import (
     average_over_durations,
@@ -1719,6 +1720,9 @@ class Vits(BaseTTS):
                 periods=self.args.periods_multi_period_discriminator,
                 use_spectral_norm=self.args.use_spectral_norm_disriminator,
             )
+
+        # denoiser only to be used in inference
+        self.denoiser = VitsDenoiser(self)
 
     def init_multispeaker(self, config: Coqpit):
         """Initialize multi-speaker modules of a model. A model can be trained either with a speaker embedding layer
@@ -3438,6 +3442,7 @@ class Vits(BaseTTS):
             new_row = torch.randn(num_new_speakers, emb_g.shape[1])
             emb_g = torch.cat([emb_g, new_row], axis=0)
             state["model"]["emb_g.weight"] = emb_g
+
         # load the model weights
         self.load_state_dict(state["model"], strict=strict)
 
@@ -3499,6 +3504,7 @@ class Vits(BaseTTS):
         emotion_id=None,
         pitch_transform=None,
         noise_scale=0.66,
+        denoise_strength=0.05,
     ):
         # TODO: add language_id
         is_cuda = next(self.parameters()).is_cuda
@@ -3541,6 +3547,10 @@ class Vits(BaseTTS):
             aux_input={"d_vectors": d_vector, "speaker_ids": speaker_id, "emotion_vectors": emotion_vector},
             pitch_transform=pitch_transform,
         )
+
+        # Denois the output
+        if denoise_strength > 0:
+            outputs["model_outputs"] = self.denoiser.forward(outputs["model_outputs"].squeeze(1), strength=denoise_strength)
 
         # Collect outputs
         wav = outputs["model_outputs"][0].data.cpu().numpy()

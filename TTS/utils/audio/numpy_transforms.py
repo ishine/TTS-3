@@ -455,8 +455,6 @@ def quantize(*, x: np.ndarray, quantize_bits: int, **kwargs) -> np.ndarray:
 def dequantize(*, x, quantize_bits, **kwargs) -> np.ndarray:
     """Dequantize a waveform from the given number of bits."""
     return 2 * x / (2**quantize_bits - 1) - 1
-<<<<<<< HEAD
-=======
 
 
 def _log(x, base):
@@ -469,4 +467,3 @@ def _exp(x, base):
     if base == 10:
         return np.power(10, x)
     return np.exp(x)
->>>>>>> Update from updated API :)
