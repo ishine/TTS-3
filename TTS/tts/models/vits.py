@@ -3504,7 +3504,8 @@ class Vits(BaseTTS):
         emotion_id=None,
         pitch_transform=None,
         noise_scale=0.66,
-        denoise_strength=0.05,
+        sdp_noise_scale=0.33,
+        denoise_strength=0.08,
     ):
         # TODO: add language_id
         is_cuda = next(self.parameters()).is_cuda
@@ -3542,6 +3543,7 @@ class Vits(BaseTTS):
 
         # Synthesize voice
         self.inference_noise_scale = noise_scale
+        self.inference_noise_scale_dp = sdp_noise_scale
         outputs = self.inference(
             text_inputs,
             aux_input={"d_vectors": d_vector, "speaker_ids": speaker_id, "emotion_vectors": emotion_vector},
