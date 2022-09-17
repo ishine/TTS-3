@@ -1211,6 +1211,30 @@ class VitsArgs(Coqpit):
     max_inference_len: int = None
     init_discriminator: bool = True
     use_spectral_norm_disriminator: bool = False
+    combd_channels: List = field(default_factory=lambda: [16, 64, 256, 1024, 1024, 1024])
+    combd_kernels: List = field(
+        default_factory=lambda: [[7, 11, 11, 11, 11, 5], [11, 21, 21, 21, 21, 5], [15, 41, 41, 41, 41, 5]]
+    )
+    combd_groups: List = field(default_factory=lambda: [1, 4, 16, 64, 256, 1])
+    combd_strides: List = field(default_factory=lambda: [1, 1, 4, 4, 4, 1])
+    tkernels: List = field(default_factory=lambda: [7, 5, 3])
+    fkernel: int = 5
+    tchannels: List = field(default_factory=lambda: [64, 128, 256, 256, 256])
+    fchannels: List = field(default_factory=lambda: [32, 64, 128, 128, 128])
+    tstrides: List = field(default_factory=lambda: [[1, 1, 3, 3, 1], [1, 1, 3, 3, 1], [1, 1, 3, 3, 1]])
+    fstride: List = field(default_factory=lambda: [1, 1, 3, 3, 1])
+    tdilations: List = field(
+        default_factory=lambda: [
+            [[5, 7, 11], [5, 7, 11], [5, 7, 11], [5, 7, 11], [5, 7, 11], [5, 7, 11]],
+            [[3, 5, 7], [3, 5, 7], [3, 5, 7], [3, 5, 7], [3, 5, 7]],
+            [[1, 2, 3], [1, 2, 3], [1, 2, 3], [1, 2, 3], [1, 2, 3]],
+        ]
+    )
+    fdilations: List = field(default_factory=lambda: [[1, 2, 3], [1, 2, 3], [1, 2, 3], [2, 3, 5], [2, 3, 5]])
+    pqmf_n: int = 16
+    pqmf_m: int = 64
+    freq_init_ch: int = 256
+    tsubband: List = field(default_factory=lambda: [6, 11, 16])
     use_speaker_embedding: bool = False
     num_speakers: int = 0
     speakers_file: str = None
@@ -1716,13 +1740,10 @@ class Vits(BaseTTS):
         )
 
         if self.args.init_discriminator:
-            self.disc = VitsDiscriminator(
-                periods=self.args.periods_multi_period_discriminator,
-                use_spectral_norm=self.args.use_spectral_norm_disriminator,
-            )
+            self.disc = VitsDiscriminator(self.args)
 
         # denoiser only to be used in inference
-        self.denoiser = VitsDenoiser(self)
+        # self.denoiser = VitsDenoiser(self)
 
     def init_multispeaker(self, config: Coqpit):
         """Initialize multi-speaker modules of a model. A model can be trained either with a speaker embedding layer
@@ -2386,7 +2407,7 @@ class Vits(BaseTTS):
         # context_emb_seg, _, _, _ = self.upsampling_z(context_emb_seg, slice_ids=slice_ids)
 
         # TODO: Try passing only spk_emb
-        o = self.waveform_decoder(z_slice, g=None)
+        o, o1, o2 = self.waveform_decoder(z_slice, g=None)
 
         wav_seg = segment(
             waveform,
@@ -2413,6 +2434,8 @@ class Vits(BaseTTS):
         outputs.update(
             {
                 "model_outputs": o,
+                "o1": o1,
+                "o2": o2,
                 "m_p": m_p,
                 "logs_p": logs_p,
                 "z": z,
@@ -2617,7 +2640,7 @@ class Vits(BaseTTS):
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
         # o_context, _, _, _ = self.upsampling_z(o_context, y_lengths=y_lengths, y_mask=y_mask)
 
-        o = self.waveform_decoder((z * y_mask)[:, :, : self.max_inference_len], g=None)
+        o, _, _ = self.waveform_decoder((z * y_mask)[:, :, : self.max_inference_len], g=None)
 
         # masked_dur = dur.int()
         # masked_dur[:, :, 1:-1] = masked_dur[:, :, 1:-1] + masked_dur[:, :, 2:]
@@ -2743,9 +2766,12 @@ class Vits(BaseTTS):
             # cache tensors for the generator pass
             self.model_outputs_cache = outputs  # pylint: disable=attribute-defined-outside-init
 
-            # compute scores and features
-            scores_disc_fake, _, scores_disc_real, _ = self.disc(
-                outputs["model_outputs"].detach(), outputs["waveform_seg"]
+            # compute scores
+            scores_disc_real, scores_disc_fake, _, _ = self.disc(
+                x=outputs["waveform_seg"],
+                x_hat=outputs["model_outputs"].detach(),
+                x1_hat=outputs["o1"].detach(),
+                x2_hat=outputs["o2"].detach(),
             )
 
             # compute loss
@@ -2783,9 +2809,13 @@ class Vits(BaseTTS):
                 )
 
             # compute discriminator scores and features
-            scores_disc_fake, feats_disc_fake, _, feats_disc_real = self.disc(
-                self.model_outputs_cache["model_outputs"], self.model_outputs_cache["waveform_seg"]
+            _, scores_disc_fake, feats_disc_real, feats_disc_fake = self.disc(
+                x_hat=self.model_outputs_cache["model_outputs"],
+                x=self.model_outputs_cache["waveform_seg"],
+                x1_hat=self.model_outputs_cache["o1"],
+                x2_hat=self.model_outputs_cache["o2"],
             )
+
 
             # compute losses
             with autocast(enabled=False):  # use float32 for the criterion
@@ -3300,7 +3330,9 @@ class Vits(BaseTTS):
         if batch_sampler is None:
             batch_sampler = DistributedSampler(dataset) if num_gpus > 1 else None
         else:  # If a sampler is already defined use this sampler and DDP sampler together
-            batch_sampler = DistributedSamplerWrapper(batch_sampler) if num_gpus > 1 else batch_sampler  # TODO: check batch_sampler with multi-gpu
+            batch_sampler = (
+                DistributedSamplerWrapper(batch_sampler) if num_gpus > 1 else batch_sampler
+            )  # TODO: check batch_sampler with multi-gpu
         return batch_sampler
 
     def get_data_loader(
@@ -3419,9 +3451,9 @@ class Vits(BaseTTS):
         checkpoint_path,
         eval=False,
         strict=True,
-        cache_storage='/tmp/tts_cache',
-        target_protocol='s3',
-        target_options={'anon': True},
+        cache_storage="/tmp/tts_cache",
+        target_protocol="s3",
+        target_options={"anon": True},
     ):  # pylint: disable=unused-argument, redefined-builtin
         """Load the model checkpoint and setup for training or inference"""
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
@@ -3513,9 +3545,7 @@ class Vits(BaseTTS):
         # Speaker embeddings
         if speaker_id is not None:
             if self.config.use_d_vector_file:
-                d_vector = self.speaker_manager.get_mean_embedding(
-                        speaker_id, num_samples=None, randomize=False
-                    )
+                d_vector = self.speaker_manager.get_mean_embedding(speaker_id, num_samples=None, randomize=False)
                 speaker_id = None
             else:
                 speaker_id = id_to_torch(speaker_id, cuda=is_cuda)
@@ -3551,8 +3581,10 @@ class Vits(BaseTTS):
         )
 
         # Denois the output
-        if denoise_strength > 0:
-            outputs["model_outputs"] = self.denoiser.forward(outputs["model_outputs"].squeeze(1), strength=denoise_strength)
+        # if denoise_strength > 0:
+        #     outputs["model_outputs"] = self.denoiser.forward(
+        #         outputs["model_outputs"].squeeze(1), strength=denoise_strength
+        #     )
 
         # Collect outputs
         wav = outputs["model_outputs"][0].data.cpu().numpy()
