@@ -222,6 +222,8 @@ class HifiganGenerator(torch.nn.Module):
             for _, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilation_sizes)):
                 self.resblocks.append(resblock(ch, k, d))
         # post convolution layer
+        self.out_proj_x1 = weight_norm(Conv1d(upsample_initial_channel // 4, 1, 7, 1, padding=3))
+        self.out_proj_x2 = weight_norm(Conv1d(upsample_initial_channel // 8, 1, 7, 1, padding=3))
         self.conv_post = weight_norm(Conv1d(ch, out_channels, 7, 1, padding=3, bias=conv_post_bias))
         if cond_channels > 0:
             self.cond_layer = nn.Conv1d(cond_channels, upsample_initial_channel, 1)
@@ -231,6 +233,7 @@ class HifiganGenerator(torch.nn.Module):
 
         if not conv_post_weight_norm:
             remove_weight_norm(self.conv_post)
+
 
     def forward(self, x, g=None):
         """
@@ -248,6 +251,7 @@ class HifiganGenerator(torch.nn.Module):
         o = self.conv_pre(x)
         if hasattr(self, "cond_layer"):
             o = o + self.cond_layer(g)
+
         for i in range(self.num_upsamples):
             o = F.leaky_relu(o, LRELU_SLOPE)
             o = self.ups[i](o)
@@ -258,10 +262,16 @@ class HifiganGenerator(torch.nn.Module):
                 else:
                     z_sum += self.resblocks[i * self.num_kernels + j](o)
             o = z_sum / self.num_kernels
+
+            if i == 1: #self.num_upsamples - 3:
+                o1 = self.out_proj_x1(o)
+            elif i == 2: #self.num_upsamples - 2:
+                o2 = self.out_proj_x2(o)
+
         o = F.leaky_relu(o)
         o = self.conv_post(o)
         o = torch.tanh(o)
-        return o
+        return o, o1, o2
 
     @torch.no_grad()
     def inference(self, c):
