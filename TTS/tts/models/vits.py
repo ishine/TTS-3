@@ -3200,7 +3200,7 @@ class Vits(BaseTTS):
         # get emotion_vectors from audio file names
         if self.emotion_manager is not None and self.emotion_manager.embeddings and self.args.use_emotion_vector_file:
             vector_mapping = self.emotion_manager.embeddings
-            emo_vectors = [vector_mapping[w]["embedding"] for w in batch["audio_files"]]
+            emo_vectors = [vector_mapping[w]["embedding"] for w in batch["audio_unique_names"]]
             emo_vectors = torch.FloatTensor(emo_vectors)
 
         # get language ids from language names
