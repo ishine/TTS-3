@@ -17,6 +17,7 @@ from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
+from torch.nn.utils import remove_weight_norm
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
 from trainer.trainer_utils import get_optimizer, get_scheduler
 
@@ -62,8 +63,16 @@ mel_basis = {}
 def weights_reset(m: nn.Module):
     # check if the current module has reset_parameters and if it is reset the weight
     reset_parameters = getattr(m, "reset_parameters", None)
+    weight_normed = False
+    if hasattr(m, "weight_g"):
+        weight_normed = True
+        torch.nn.utils.remove_weight_norm(m)
     if callable(reset_parameters):
+        print(" > Reseting weights of {}".format(m))
         m.reset_parameters()
+    if weight_normed:
+        torch.nn.utils.weight_norm(m)
+
 
 
 def get_module_weights_sum(mdl: nn.Module):
@@ -1743,7 +1752,7 @@ class Vits(BaseTTS):
             self.disc = VitsDiscriminator(self.args)
 
         # denoiser only to be used in inference
-        # self.denoiser = VitsDenoiser(self)
+        self.denoiser = VitsDenoiser(self)
 
 
     @property
@@ -1879,7 +1888,7 @@ class Vits(BaseTTS):
             after_dict = get_module_weights_sum(self.duration_predictor)
             for key, value in after_dict.items():
                 if value == before_dict[key]:
-                    raise RuntimeError(" [!] The weights of Duration Predictor was not reinit check it !")
+                    raise RuntimeError(f" [!] The weights in Duration Predictor - {key} was not reinit check it !")
             print(" > Duration Predictor was reinit.")
 
         if self.args.reinit_text_encoder:
@@ -3585,10 +3594,10 @@ class Vits(BaseTTS):
         )
 
         # Denois the output
-        # if denoise_strength > 0:
-        #     outputs["model_outputs"] = self.denoiser.forward(
-        #         outputs["model_outputs"].squeeze(1), strength=denoise_strength
-        #     )
+        if denoise_strength > 0:
+            outputs["model_outputs"] = self.denoiser.forward(
+                outputs["model_outputs"].squeeze(1), strength=denoise_strength
+            )
 
         # Collect outputs
         wav = outputs["model_outputs"][0].data.cpu().numpy()

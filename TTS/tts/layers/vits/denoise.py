@@ -174,7 +174,7 @@ class VitsDenoiser(nn.Module):
             raise Exception("Mode {} if not supported".format(mode))
 
         with torch.no_grad():
-            bias_audio = model.waveform_decoder(mel_input).float()[0]
+            bias_audio = model.waveform_decoder(mel_input)[0].float()[0]
             bias_spec, _ = self.stft.transform(bias_audio)
 
         self.register_buffer("bias_spec", bias_spec[:, :, 0][:, :, None])
