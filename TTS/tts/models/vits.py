@@ -1270,6 +1270,9 @@ class VitsArgs(Coqpit):
     freeze_posterior_encoder: bool = False
     freeze_flow_decoder: bool = False
     freeze_waveform_decoder: bool = False
+    freeze_predictors: bool = False
+    freeze_prosody_encoders: bool = False
+    freeze_aligner: bool = False
     encoder_sample_rate: int = None
     interpolate_z: bool = True
     reinit_DP: bool = False
@@ -1955,6 +1958,53 @@ class Vits(BaseTTS):
         if self.args.freeze_waveform_decoder:
             print(" > Freezing waveform decoder...")
             for param in self.waveform_decoder.parameters():
+                param.requires_grad = False
+
+        if self.args.freeze_aligner:
+            print(" > Freezing Aligner...")
+            for param in self.aligner.parameters():
+                param.requires_grad = False
+            for param in self.aligner_spk_bottleneck.parameters():
+                param.requires_grad = False
+
+        if self.args.freeze_predictors:
+            print(" > Freezing Duration Predictor...")
+            for param in self.duration_predictor.parameters():
+                param.requires_grad = False
+
+            print(" > Freezing Pitch Predictor...")
+            for param in self.pitch_predictor.parameters():
+                param.requires_grad = False
+
+            print(" > Freezing Energy Predictor...")
+            for param in self.energy_predictor.parameters():
+                param.requires_grad = False
+
+            print(" > Freezing Phoneme Level Prosody Predictor...")
+            for param in self.phoneme_prosody_predictor.parameters():
+                param.requires_grad = False
+
+            print(" > Freezing Utterance Level Prosody Predictor...")
+            for param in self.utterance_prosody_predictor.parameters():
+                param.requires_grad = False
+            for param in self.adaptors_spk_bottleneck.parameters():
+                param.requires_grad = False
+
+        if self.args.freeze_prosody_encoders:
+            print(" > Freezing Phoneme Level Prosody Encoder...")
+            for param in self.phoneme_prosody_encoder.parameters():
+                param.requires_grad = False
+            for param in self.p_bottle_out.parameters():
+                param.requires_grad = False
+            for param in self.p_norm.parameters():
+                param.requires_grad = False
+
+            print(" > Freezing Utterance Level Prosody Encoder...")
+            for param in self.utterance_prosody_encoder.parameters():
+                param.requires_grad = False
+            for param in self.u_bottle_out.parameters():
+                param.requires_grad = False
+            for param in self.u_norm.parameters():
                 param.requires_grad = False
 
     @staticmethod
