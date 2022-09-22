@@ -3090,7 +3090,6 @@ class Vits(BaseTTS):
             switch_prob=0.01,
             no_trough_prob=0.01,
         )
-
         pitch[~voiced_mask] = 0.0
 
         input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(text, language="en"))
