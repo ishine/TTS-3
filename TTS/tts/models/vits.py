@@ -1121,7 +1121,7 @@ class VitsArgs(Coqpit):
         use_d_vector_file (bool):
             Enable/Disable the use of d-vectors for multi-speaker training. Defaults to False.
 
-        d_vector_file (str):
+        d_vector_file (List[str]):
             Path to the file including pre-computed speaker embeddings. Defaults to None.
 
         d_vector_dim (int):
@@ -1247,11 +1247,11 @@ class VitsArgs(Coqpit):
     use_speaker_embedding: bool = False
     num_speakers: int = 0
     speakers_file: str = None
-    d_vector_file: str = None
+    d_vector_file: List[str] = None
     speaker_embedding_channels: int = 256
     use_d_vector_file: bool = False
     d_vector_dim: int = 0
-    emotion_vector_file: str = None
+    emotion_vector_file: List[str] = None
     use_emotion_vector_file: bool = False
     emotion_vector_dim: int = 0
     detach_dp_input: bool = True
