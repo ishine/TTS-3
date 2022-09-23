@@ -1695,7 +1695,7 @@ class Vits(BaseTTS):
             self.context_encoder = ContextEncoder(
                 in_channels=self.args.hidden_channels,
                 cond_channels=context_cond_channels,
-                spk_emb_channels=self.embedded_speaker_dim,
+                spk_emb_channels=0,
                 emo_emb_channels=self.embedded_emotion_dim,
                 num_lstm_layers=1,
                 lstm_norm="spectral",
@@ -1708,7 +1708,8 @@ class Vits(BaseTTS):
             kernel_size=self.args.kernel_size_flow,
             dilation_rate=self.args.dilation_rate_flow,
             num_layers=self.args.num_layers_flow,
-            cond_channels=self.context_encoder.hidden_lstm_channels * 2,
+            cond_channels=self.embedded_speaker_dim,
+            cond_channels2=self.context_encoder.hidden_lstm_channels * 2,
         )
 
         # --> POSTERIOR ENCODER
@@ -1719,7 +1720,7 @@ class Vits(BaseTTS):
             kernel_size=self.args.kernel_size_posterior_encoder,
             dilation_rate=self.args.dilation_rate_posterior_encoder,
             num_layers=self.args.num_layers_posterior_encoder,
-            cond_channels=self.context_encoder.hidden_lstm_channels * 2,
+            cond_channels=self.embedded_speaker_dim,
         )
 
         # --> DURATION PREDICTOR
@@ -1752,7 +1753,7 @@ class Vits(BaseTTS):
             self.args.upsample_initial_channel_decoder,
             self.args.upsample_rates_decoder,
             inference_padding=0,
-            # cond_channels=self.context_encoder.hidden_lstm_channels * 2,
+            cond_channels=self.embedded_speaker_dim,
             conv_pre_weight_norm=False,
             conv_post_weight_norm=False,
             conv_post_bias=False,
@@ -2449,15 +2450,15 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_de]
-        context_emb = self.context_encoder(o_en_ex, y_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
+        context_emb = self.context_encoder(o_en_ex, y_lengths, spk_emb=None, emo_emb=emo_emb, cond=context_cond)
 
         ###### --> FLOW
 
         # posterior encoder
-        z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=context_emb * y_mask)
+        z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=spk_emb)
 
         # flow layers
-        z_p = self.flow(z, y_mask, g=context_emb * y_mask)
+        z_p = self.flow(z, y_mask, g=spk_emb, g2=context_emb * y_mask)
 
         ###### --> VOCODER
 
@@ -2475,7 +2476,7 @@ class Vits(BaseTTS):
         # context_emb_seg, _, _, _ = self.upsampling_z(context_emb_seg, slice_ids=slice_ids)
 
         # TODO: Try passing only spk_emb
-        o, o1, o2 = self.waveform_decoder(z_slice, g=None)
+        o, o1, o2 = self.waveform_decoder(z_slice, g=spk_emb)
 
         wav_seg = segment(
             waveform,
@@ -2702,12 +2703,12 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en_ex, y_lengths, spk_emb=spk_emb, emo_emb=emo_emb, cond=context_cond)
+        o_context = self.context_encoder(o_en_ex, y_lengths, spk_emb=None, emo_emb=emo_emb, cond=context_cond)
 
         ### --> FLOW DECODER
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
-        z = self.flow(z_p, y_mask, g=o_context * y_mask, reverse=True)
+        z = self.flow(z_p, y_mask,  g=spk_emb, g2=o_context * y_mask, reverse=True)
 
         ### --> VOCODER
 
@@ -2715,7 +2716,7 @@ class Vits(BaseTTS):
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
         # o_context, _, _, _ = self.upsampling_z(o_context, y_lengths=y_lengths, y_mask=y_mask)
 
-        o, _, _ = self.waveform_decoder((z * y_mask), g=None)
+        o, _, _ = self.waveform_decoder((z * y_mask), g=spk_emb)
 
         outputs = {
             "model_outputs": o,
