@@ -164,17 +164,27 @@ class VitsDenoiser(nn.Module):
                 dtype=model.waveform_decoder.ups[0].weight.dtype,
                 device=model.waveform_decoder.ups[0].weight.device,
             )
+            speaker_emb = torch.zeros(
+                (1, model.embedded_speaker_dim, 1),
+                dtype=model.waveform_decoder.ups[0].weight.dtype,
+                device=model.waveform_decoder.ups[0].weight.device,
+            )
         elif mode == "normal":
             mel_input = torch.randn(
                 (1, 192, 88),
-                dtype=model.waveform_decoder.upsample.weight.dtype,
-                device=model.waveform_decoder.upsample.weight.device,
+                dtype=model.waveform_decoder.ups[0].weight.dtype,
+                device=model.waveform_decoder.ups[0].weight.device,
+            )
+            speaker_emb = torch.randn(
+                (1, model.embedded_speaker_dim, 1),
+                dtype=model.waveform_decoder.ups[0].weight.dtype,
+                device=model.waveform_decoder.ups[0].weight.device,
             )
         else:
             raise Exception("Mode {} if not supported".format(mode))
 
         with torch.no_grad():
-            bias_audio = model.waveform_decoder(mel_input)[0].float()[0]
+            bias_audio = model.waveform_decoder(mel_input, g=speaker_emb)[0].float()[0]
             bias_spec, _ = self.stft.transform(bias_audio)
 
         self.register_buffer("bias_spec", bias_spec[:, :, 0][:, :, None])

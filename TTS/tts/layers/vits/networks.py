@@ -147,15 +147,16 @@ class ContextEncoder(nn.Module):
         self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0_reverse")
 
     def forward(self, x, x_len, spk_emb=None, emo_emb=None, cond=None):
-        spk_emb = spk_emb.expand(-1, -1, x.shape[2])
-        context_w_spk_emb = torch.cat((x, spk_emb), 1)
+        if spk_emb is not None:
+            spk_emb = spk_emb.expand(-1, -1, x.shape[2])
+            x = torch.cat((x, spk_emb), 1)
         if emo_emb is not None:
             emo_emb = emo_emb.expand(-1, -1, x.shape[2])
-            context_w_spk_emb = torch.cat((context_w_spk_emb, emo_emb), 1)
+            x = torch.cat((x, emo_emb), 1)
         if cond is not None:
-            context_w_spk_emb = torch.cat((context_w_spk_emb, cond), 1)
+            x = torch.cat((x, cond), 1)
         unfolded_out_lens_packed = nn.utils.rnn.pack_padded_sequence(
-            context_w_spk_emb.transpose(1, 2), x_len.to("cpu"), batch_first=True, enforce_sorted=False
+            x.transpose(1, 2), x_len.to("cpu"), batch_first=True, enforce_sorted=False
         )
         self.lstm.flatten_parameters()
         context, _ = self.lstm(unfolded_out_lens_packed)
@@ -174,6 +175,7 @@ class ResidualCouplingBlock(nn.Module):
         num_layers,
         dropout_p=0,
         cond_channels=0,
+        cond_channels2=0,
         mean_only=False,
     ):
         assert channels % 2 == 0, "channels should be divisible by 2"
@@ -191,6 +193,7 @@ class ResidualCouplingBlock(nn.Module):
             num_layers,
             dropout_p=dropout_p,
             c_in_channels=cond_channels,
+            c_in_channels2=cond_channels2,
         )
         # output layer
         # Initializing last layer to 0 makes the affine coupling layers
@@ -199,7 +202,7 @@ class ResidualCouplingBlock(nn.Module):
         self.post.weight.data.zero_()
         self.post.bias.data.zero_()
 
-    def forward(self, x, x_mask, g=None, reverse=False):
+    def forward(self, x, x_mask, g=None, g2=None, reverse=False):
         """
         Note:
             Set `reverse` to True for inference.
@@ -211,7 +214,7 @@ class ResidualCouplingBlock(nn.Module):
         """
         x0, x1 = torch.split(x, [self.half_channels] * 2, 1)
         h = self.pre(x0) * x_mask
-        h = self.enc(h, x_mask, g=g)
+        h = self.enc(h, x_mask, g=g, g2=g2)
         stats = self.post(h) * x_mask
         if not self.mean_only:
             m, log_scale = torch.split(stats, [self.half_channels] * 2, 1)
@@ -240,6 +243,7 @@ class ResidualCouplingBlocks(nn.Module):
         num_layers: int,
         num_flows=4,
         cond_channels=0,
+        cond_channels2=0,
     ):
         """Redisual Coupling blocks for VITS flow layers.
 
@@ -271,11 +275,12 @@ class ResidualCouplingBlocks(nn.Module):
                     dilation_rate,
                     num_layers,
                     cond_channels=cond_channels,
+                    cond_channels2=cond_channels2,
                     mean_only=True,
                 )
             )
 
-    def forward(self, x, x_mask, g=None, reverse=False):
+    def forward(self, x, x_mask, g=None, g2=None, reverse=False):
         """
         Note:
             Set `reverse` to True for inference.
@@ -287,12 +292,12 @@ class ResidualCouplingBlocks(nn.Module):
         """
         if not reverse:
             for flow in self.flows:
-                x, _ = flow(x, x_mask, g=g, reverse=reverse)
+                x, _ = flow(x, x_mask, g=g, g2=g2, reverse=reverse)
                 x = torch.flip(x, [1])
         else:
             for flow in reversed(self.flows):
                 x = torch.flip(x, [1])
-                x = flow(x, x_mask, g=g, reverse=reverse)
+                x = flow(x, x_mask, g=g, g2=g2, reverse=reverse)
         return x
 
 

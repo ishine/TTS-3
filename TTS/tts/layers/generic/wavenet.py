@@ -3,9 +3,9 @@ from torch import nn
 
 
 @torch.jit.script
-def fused_add_tanh_sigmoid_multiply(input_a, input_b, n_channels):
+def fused_add_tanh_sigmoid_multiply(input_a, input_b, input_b2, n_channels):
     n_channels_int = n_channels[0]
-    in_act = input_a + input_b
+    in_act = input_a + input_b + input_b2
     t_act = torch.tanh(in_act[:, :n_channels_int, :])
     s_act = torch.sigmoid(in_act[:, n_channels_int:, :])
     acts = t_act * s_act
@@ -41,6 +41,7 @@ class WN(torch.nn.Module):
         dilation_rate,
         num_layers,
         c_in_channels=0,
+        c_in_channels2=0,
         dropout_p=0,
         weight_norm=True,
     ):
@@ -53,6 +54,7 @@ class WN(torch.nn.Module):
         self.dilation_rate = dilation_rate
         self.num_layers = num_layers
         self.c_in_channels = c_in_channels
+        self.c_in_channels2 = c_in_channels2
         self.dropout_p = dropout_p
 
         self.in_layers = torch.nn.ModuleList()
@@ -64,6 +66,10 @@ class WN(torch.nn.Module):
             cond_layer = torch.nn.Conv1d(c_in_channels, 2 * hidden_channels * num_layers, 1)
             self.cond_layer = torch.nn.utils.weight_norm(cond_layer, name="weight")
 
+        if c_in_channels2 > 0:
+            cond_layer2 = torch.nn.Conv1d(c_in_channels2, 2 * hidden_channels * num_layers, 1)
+            self.cond_layer2 = torch.nn.utils.weight_norm(cond_layer2, name="weight")
+    
         # intermediate layers
         for i in range(num_layers):
             dilation = dilation_rate**i
@@ -91,12 +97,14 @@ class WN(torch.nn.Module):
         if not weight_norm:
             self.remove_weight_norm()
 
-    def forward(self, x, x_mask=None, g=None, **kwargs):  # pylint: disable=unused-argument
+    def forward(self, x, x_mask=None, g=None, g2=None, **kwargs):  # pylint: disable=unused-argument
         output = torch.zeros_like(x)
         n_channels_tensor = torch.IntTensor([self.hidden_channels])
         x_mask = 1.0 if x_mask is None else x_mask
         if g is not None:
             g = self.cond_layer(g)
+        if g2 is not None:
+            g2 = self.cond_layer2(g2)
         for i in range(self.num_layers):
             x_in = self.in_layers[i](x)
             x_in = self.dropout(x_in)
@@ -105,7 +113,14 @@ class WN(torch.nn.Module):
                 g_l = g[:, cond_offset : cond_offset + 2 * self.hidden_channels, :]
             else:
                 g_l = torch.zeros_like(x_in)
-            acts = fused_add_tanh_sigmoid_multiply(x_in, g_l, n_channels_tensor)
+
+            if g2 is not None:
+                cond_offset = i * 2 * self.hidden_channels
+                g_l2 = g2[:, cond_offset : cond_offset + 2 * self.hidden_channels, :]
+            else:
+                g_l2 = torch.zeros_like(x_in)
+
+            acts = fused_add_tanh_sigmoid_multiply(x_in, g_l, g_l2, n_channels_tensor)
             res_skip_acts = self.res_skip_layers[i](acts)
             if i < self.num_layers - 1:
                 x = (x + res_skip_acts[:, : self.hidden_channels, :]) * x_mask
@@ -117,6 +132,8 @@ class WN(torch.nn.Module):
     def remove_weight_norm(self):
         if self.c_in_channels != 0:
             torch.nn.utils.remove_weight_norm(self.cond_layer)
+        if self.c_in_channels2 != 0:
+            torch.nn.utils.remove_weight_norm(self.cond_layer2)
         for l in self.in_layers:
             torch.nn.utils.remove_weight_norm(l)
         for l in self.res_skip_layers:
