@@ -3157,8 +3157,18 @@ class Vits(BaseTTS):
                 center=False,
             )[0].transpose(0, 1)
 
+            y = torch.nn.functional.pad(
+                wav.unsqueeze(1),
+                (
+                    int((self.config.audio.fft_size - self.config.audio.hop_length) / 2),
+                    int((self.config.audio.fft_size - self.config.audio.hop_length) / 2),
+                ),
+                mode="reflect",
+            )
+            y = y.squeeze().numpy()
+
             pitch, voiced_mask, _ = pyin(
-                wav.numpy()[0],
+                y.astype(np.double),
                 self.config.audio.pitch_fmin,
                 self.config.audio.pitch_fmax,
                 self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
@@ -3175,7 +3185,6 @@ class Vits(BaseTTS):
                 switch_prob=0.01,
                 no_trough_prob=0.01,
             )
-
             pitch[~voiced_mask] = 0.0
 
             input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(aux_inputs["text"], language="en"))
