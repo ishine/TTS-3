@@ -7,7 +7,7 @@ from TTS.config import load_config
 torch.set_num_threads(32)
 
 
-output_path = "/raid/datasets/tts_outputs/variant17.1_denormed_2735000/"
+output_path = "/raid/datasets/tts_outputs/ecyourtts_v20_video_game_checkpoint_3685000/"
 
 # variant 17
 # model_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/checkpoint_2940000.pth"
@@ -27,16 +27,21 @@ output_path = "/raid/datasets/tts_outputs/variant17.1_denormed_2735000/"
 # model_path = "/data/best_models/variant17.2/checkpoint_2800000.pth"
 # config_path = "/data/best_models/variant17.2/model_config.json"
 
-model_path = "/data/best_models/ecyourtts_variant17.1_denorm/checkpoint_2735000.pth"
-config_path = "/data/best_models/ecyourtts_variant17.1_denorm/model_config.json"
+model_path = "/data/best_models/ecyourtts_v20_video_game/checkpoint_3685000.pth"
+config_path = "/data/best_models/ecyourtts_v20_video_game/model_config.json"
 
 
 config = load_config(config_path)
 model = Vits.init_from_config(config)
 model.load_checkpoint(config, model_path, eval=True)
 model.cuda()
-model.inference_noise_scale = 0.66
+model.inference_noise_scale = 0.44
 model.inference_noise_scale_dp = 0.0
+denoise_strength = 0.05
+
+# load emb files
+speakers_file = ["/raid/datasets/speaker_embeddings_new_key/speakers_vctk_libritts_esd_skyrim.pth", "/data/TTS/gradio_demos/your_tts/embeddings/dvectors.pth", "/data/TTS/gradio_demos/your_tts/dvector.pth"]
+model.speaker_manager.load_embeddings_from_list_of_files(speakers_file)
 
 
 speaker_ids = [
@@ -78,10 +83,43 @@ speaker_ids = [
     "LTTS_7447",
     "LTTS_83",
     "LTTS_850",
+    "adult_male_calm",
+    "adult_male_rough",
+    "female_adult_excited",
+    "female_adult_expressive",
+    "female_adult_rough",
+    "female_adult_soft",
+    "female_child",
+    "female_child_rough",
+    "female_elder1",
+    "female_elder2",
+    "female_elder3",
+    "female_elder4",
+    "female_elder5",
+    "female_elder6",
+    "female_elder_eager_dynamic",
+    "female_elder_eager_dynamic2",
+    "female_elder_rough",
+    "female_elder_soft",
+    "male_adult_accented",
+    "male_adult_accented_dwarf",
+    "male_adult_distinct",
+    "male_adult_sneaky",
+    "male_adult_soft_polite",
+    "male_child",
+    "male_child2",
+    "male_child_expressive",
+    "male_elder1",
+    "male_elder2",
+    "male_elder3",
+    "male_elder4",
+    "male_elder_dynamic",
+    "elder_18_m",
 ]
 
 transcripts = {
     "Neutral": "Once upon a time, the King’s youngest son became filled with the desire to go abroad, and see the world. He got his father’s permission to leave on an adventure, kissed his parents goodbye, mounted his black horse, and galloped away down the high road. Soon the grey towers of the old castle, in which he had been born, disappeared behind him.",
+    "Neutral": "I'm Commander Shepard, and this is my favorite store on the Citadel!",
     "Anger": "I cannot express in words how angry I am at this moment. Please refrain from talking with me for now.",
     "Happy": "I'm trilled to share this news with everyone. It's a honor to be in this project.",
     "Sad": "It's a really sad story but, if you try to restrain your tears I'll tell you about it.",
@@ -93,7 +131,7 @@ outputs = {}
 for speaker_id in speaker_ids:
     speaker_outputs = {}
     for emotion, transcript in transcripts.items():
-        output = model.synthesize(text=transcript, speaker_id=speaker_id, emotion_id=emotion)
+        output = model.synthesize(text=transcript, speaker_id=speaker_id, emotion_id=emotion, denoise_strength=denoise_strength)
         speaker_outputs[emotion] = output["wav"]
     outputs[speaker_id] = speaker_outputs
 

@@ -38,7 +38,7 @@ ROOT_PATH = source_path.parent
 # model_path = "/data/best_models/variant17.1/checkpoint_3290000.pth"
 # config_path = "/data/best_models/variant17.1/model_config.json"
 
-model_path = "/data/best_models/ecyourtts_v20_video_game/checkpoint_3500000.pth"
+model_path = "/data/best_models/ecyourtts_v20_video_game/checkpoint_3595000.pth"
 config_path = "/data/best_models/ecyourtts_v20_video_game/model_config.json"
 
 language_path = None
@@ -255,7 +255,9 @@ def tts(
     speaker_name = speaker_id
     # style_wav = speaker_name_to_wav(style_id)
     # orig_wav = speaker_name_to_wav(speaker_name)
-    if uploaded_wav is not None:
+    if speaker_wav is not None:
+        wav, wav_file = process_speaker_wav(speaker_wav, dbfs)
+    elif uploaded_wav is not None:
         wav, wav_file = process_speaker_wav(uploaded_wav, dbfs)
 
     # copy input files
@@ -276,7 +278,7 @@ def tts(
     pitch_transform = build_pitch_transformation(pitch_flatten, pitch_invert, pitch_amplify, pitch_shift)
 
 
-    if uploaded_wav is not None:
+    if uploaded_wav is not None or speaker_wav is not None:
         speaker_embedding = model.speaker_manager.compute_embedding_from_clip(wav_file)
     elif not use_last_spkemb:
 

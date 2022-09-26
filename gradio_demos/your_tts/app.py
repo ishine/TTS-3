@@ -32,8 +32,11 @@ ROOT_PATH = source_path.parent
 # model_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/YourTTS_modulated/YourTTS-variant17.4c83e719498b451a9a7640e645377800/models/checkpoint_2785000.pth"
 # config_path = "/data/TTS/output/YourTTS-variant17-August-12-2022_06+01PM-af3a2b1a/config.json"
 
-model_path = "/data/best_models/variant17.1/checkpoint_3290000.pth"
-config_path = "/data/best_models/variant17.1/model_config.json"
+# model_path = "/data/best_models/variant17.1/checkpoint_3290000.pth"
+# config_path = "/data/best_models/variant17.1/model_config.json"
+
+model_path = "/data/best_models/ecyourtts_v20_video_game/best_model_3430161.pth"
+config_path = "/data/best_models/ecyourtts_v20_video_game/model_config.json"
 
 language_path = None
 speakers_file = os.path.join(ROOT_PATH, 'models/speakers.json')
@@ -59,24 +62,26 @@ REQ_COUNTER = 0
 
 gr.close_all()
 
-synthesizer = Synthesizer(
-        tts_checkpoint=model_path,
-        tts_config_path=config_path,
-        tts_speakers_file=speakers_file,
-        tts_languages_file=language_path,
-        vocoder_checkpoint=None,
-        vocoder_config = None,
-        encoder_checkpoint= encoder_model_path,
-        encoder_config= encoder_config_path,
-        use_cuda=False
-    )
+# pylint: disable=global-statement
+model_config = load_config(config_path)
+model = setup_tts_model(config=model_config)
+model.load_checkpoint(model_config, model_path, eval=True, strict=False)
+model.speaker_manager.init_encoder(encoder_model_path, encoder_config_path, False)
+model.cuda()
 
-ORIGINAL_LENGTH_SCALE = synthesizer.tts_model.length_scale
-SPEAKERS = synthesizer.tts_model.speaker_manager.speaker_names
-EMOTION_EMB_PATH = "/raid/datasets/emotion_embeddings/Large_Hubert/emotions_embeddings_ESD_with_GT_labels/emotions.pth"
+# reading custom set of speakers
+speakers_file = ["/data/TTS/gradio_demos/your_tts/embeddings/dvectors.pth", "/data/TTS/gradio_demos/your_tts/dvector.pth"]
+model.speaker_manager.load_embeddings_from_list_of_files(speakers_file)
 
+ORIGINAL_LENGTH_SCALE = model.length_scale
+SPEAKERS = model.speaker_manager.speaker_names
+EMOTION_EMB_PATH = [
+        "/raid/datasets/emotion_embeddings/Large_Hubert/emotions_embeddings_ESD+Skyrim+VCTK+LibriTTS_with_LibriTTS_outliers/emotions_with_undefined_labels_new_keys.pth",
+        "/raid/datasets/emotion_embeddings/Large_Hubert/new_keys/emotions_embeddings_Game_dataset/emotions.pth",
+    ]
 emotion_embeddings = torch.load(EMOTION_EMB_PATH)
-EMOTION_NAMES = synthesizer.tts_model.emotion_manager.emotion_names
+EMOTION_NAMES = model.emotion_manager.emotion_names
+
 
 esd_train_config = BaseDatasetConfig(
     name="esd",
@@ -108,8 +113,15 @@ libritts_100_config = BaseDatasetConfig(
     path="/raid/datasets/libritts-clean-16khz-bwe-coqui_44khz/LibriTTS/train-clean-100/",
 )
 
+game_config = BaseDatasetConfig(
+    formatter="coqui",
+    dataset_name="video_game_dataset",
+    path="/raid/datasets/video_game_dataset/video_game_dataset_bwe_44khz/",
+    meta_file_train="metadata_filtered.csv",
+)
+
 train_samples, _ = load_tts_samples(
-    [vctk_config, libritts_360_config, libritts_100_config, esd_train_config, skyrim_config],
+    [vctk_config, libritts_360_config, libritts_100_config, esd_train_config, skyrim_config, game_config],
     eval_split=False,
 )
 
