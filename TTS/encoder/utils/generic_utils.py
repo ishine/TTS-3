@@ -9,6 +9,7 @@ from scipy import signal
 
 from TTS.encoder.models.lstm import LSTMSpeakerEncoder
 from TTS.encoder.models.resnet import ResNetSpeakerEncoder
+from TTS.encoder.models.ssl import SSLEncoder
 from TTS.utils.io import save_fsspec
 
 
@@ -126,23 +127,37 @@ def to_camel(text):
 
 
 def setup_encoder_model(config: "Coqpit"):
-    if config.model_params["model_name"].lower() == "lstm":
+    model_name = config.model_params["model_name"].lower()
+    if model_name == "lstm":
         model = LSTMSpeakerEncoder(
-            config.model_params["input_dim"],
+            config.model_params.get("input_dim", None),
             config.model_params["proj_dim"],
-            config.model_params["lstm_dim"],
-            config.model_params["num_lstm_layers"],
+            config.model_params.get("lstm_dim", None),
+            config.model_params.get("num_lstm_layers", None),
             use_torch_spec=config.model_params.get("use_torch_spec", False),
             audio_config=config.audio,
         )
-    elif config.model_params["model_name"].lower() == "resnet":
+    elif model_name == "resnet":
         model = ResNetSpeakerEncoder(
-            input_dim=config.model_params["input_dim"],
+            input_dim=config.model_params.get("input_dim", None),
             proj_dim=config.model_params["proj_dim"],
             log_input=config.model_params.get("log_input", False),
             use_torch_spec=config.model_params.get("use_torch_spec", False),
             audio_config=config.audio,
         )
+    elif model_name == "ssl":
+        model = SSLEncoder(
+            proj_dim=config.model_params["proj_dim"],
+            ssl_model_name_or_path=config.model_params.get("ssl_model_name_or_path", "ntu-spml/distilhubert"),
+            freeze_feature_extractor=config.model_params.get("freeze_feature_extractor", True),
+            freeze_ssl_model=config.model_params.get("freeze_ssl_model", False),
+            use_layers_weighted_sum=config.model_params.get("use_layers_weighted_sum", False),
+        )
+    else:
+        raise RuntimeError(
+            f" [!] model type {model_name} is not supported !!"
+        )
+
     return model
 
 
