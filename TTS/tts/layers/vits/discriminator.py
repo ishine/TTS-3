@@ -361,18 +361,18 @@ class VitsDiscriminator(nn.Module):
             args.combd_kernels, args.combd_channels, args.combd_groups, args.combd_strides
         )
         self.msbd = MultiSubBandDiscriminator(
-            args.tkernels,
-            args.fkernel,
-            args.tchannels,
-            args.fchannels,
-            args.tstrides,
-            args.fstride,
-            args.tdilations,
-            args.fdilations,
-            args.tsubband,
-            args.pqmf_n,
-            args.pqmf_m,
-            args.freq_init_ch,
+            tkernels=args.tkernels,
+            fkernel=args.fkernel,
+            tchannels=args.tchannels,
+            fchannels=args.fchannels,
+            tstrides=args.tstrides,
+            fstride=args.fstride,
+            tdilations=args.tdilations,
+            fdilations=args.fdilations,
+            tsubband=args.tsubband,
+            n=args.pqmf_n,
+            m=args.pqmf_m,
+            freq_init_ch=args.freq_init_ch,
         )
 
     def forward(self, x, x_hat, x1_hat, x2_hat):
