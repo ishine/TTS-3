@@ -2002,7 +2002,6 @@ class Vits(BaseTTS):
     def forward_duration_predictor(self, outputs, attn, x, x_mask, g, lang_emb, emo_emb, x_lengths):
         # duration predictor
         attn_durations = attn.sum(3)
-        breakpoint()
         if self.args.use_sdp:
             loss_duration = self.duration_predictor(
                 x.detach() if self.args.detach_dp_input else x,
