@@ -1,5 +1,6 @@
 import math
 import os
+import pysbd
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from pathlib import Path
@@ -72,7 +73,6 @@ def weights_reset(m: nn.Module):
         m.reset_parameters()
     if weight_normed:
         torch.nn.utils.weight_norm(m)
-
 
 
 def get_module_weights_sum(mdl: nn.Module):
@@ -1100,9 +1100,6 @@ class VitsArgs(Coqpit):
         inference_noise_scale_dp (float):
             Noise scale for the Stochastic Duration Predictor in inference. Defaults to 0.8.
 
-        max_inference_len (int):
-            Maximum inference length to limit the memory use. Defaults to None.
-
         init_discriminator (bool):
             Initialize the disciminator network if set True. Set False for inference. Defaults to True.
 
@@ -1220,7 +1217,6 @@ class VitsArgs(Coqpit):
     length_scale: float = 1
     noise_scale_dp: float = 1.0
     inference_noise_scale_dp: float = 1.0
-    max_inference_len: int = None
     init_discriminator: bool = True
     use_spectral_norm_disriminator: bool = False
     combd_channels: List = field(default_factory=lambda: [16, 64, 256, 1024, 1024, 1024])
@@ -1536,7 +1532,6 @@ class Vits(BaseTTS):
         self.inference_noise_scale = self.args.inference_noise_scale
         self.inference_noise_scale_dp = self.args.inference_noise_scale_dp
         self.noise_scale_dp = self.args.noise_scale_dp
-        self.max_inference_len = self.args.max_inference_len
         self.spec_segment_size = self.args.spec_segment_size
         self.binarize_alignment = False
 
@@ -1581,6 +1576,14 @@ class Vits(BaseTTS):
                 spk_emb_channels=self.embedded_speaker_dim,
                 emo_emb_channels=self.embedded_emotion_dim,
             )
+            # self. = ResidualCouplingBlocks(
+            #     self.args.hidden_channels,
+            #     self.args.hidden_channels,
+            #     kernel_size=self.args.kernel_size_flow,
+            #     dilation_rate=self.args.dilation_rate_flow,
+            #     num_layers=self.args.num_layers_flow,
+            #     cond_channels=self.context_encoder.hidden_lstm_channels * 2,
+            # )
             self.pitch_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
@@ -1998,6 +2001,7 @@ class Vits(BaseTTS):
     def forward_duration_predictor(self, outputs, attn, x, x_mask, g, lang_emb, emo_emb, x_lengths):
         # duration predictor
         attn_durations = attn.sum(3)
+        breakpoint()
         if self.args.use_sdp:
             loss_duration = self.duration_predictor(
                 x.detach() if self.args.detach_dp_input else x,
@@ -2486,9 +2490,10 @@ class Vits(BaseTTS):
     def inference(
         self,
         x,
+        x_lengths=None,
         pitch_transform=None,
         energy_transform=None,
-        aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None},
+        aux_input={"emotion_vectors": None, "d_vectors": None, "speaker_ids": None, "language_ids": None},
     ):  # pylint: disable=dangerous-default-value
         """
         Note:
@@ -2498,6 +2503,7 @@ class Vits(BaseTTS):
             - x: :math:`[B, T_seq]`
             - x_lengths: :math:`[B]`
             - d_vectors: :math:`[B, C]`
+            - emotion_vectors: :math:`[B, C]`
             - speaker_ids: :math:`[B]`
 
         Return Shapes:
@@ -2509,7 +2515,9 @@ class Vits(BaseTTS):
             - logs_p: :math:`[B, C, T_dec]`
         """
         sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
-        x_lengths = self._set_x_lengths(x, aux_input)
+
+        if x_lengths is None:
+            x_lengths = self._set_x_lengths(x, aux_input)
 
         if self.config.add_blank:
             blank_mask = x == self.tokenizer.characters.blank_id
@@ -2544,21 +2552,23 @@ class Vits(BaseTTS):
             dur_log = self.duration_predictor(o_en, spk_emb=spk_emb, emo_emb=emo_emb, lens=x_lengths)
 
         ### --> DURATION FORMATTING
-
         dur = (torch.exp(dur_log) - 1) * x_mask
-
         if self.target_cps:
-            model_output_in_sec = (self.config.audio.hop_length * dur.sum()) / self.args.encoder_sample_rate
-            num_input_chars = x_lengths[0]
-            num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum()
-            dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec))
+            target_sr = (
+                self.args.encoder_sample_rate if self.args.encoder_sample_rate else self.args.encoder_sample_rate
+            )
+            model_output_in_sec = (self.config.audio.hop_length * dur.squeeze(1).sum(axis=1)) / target_sr
+            num_input_chars = x_lengths.clone().float()
+            num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum(1).float()
+            dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec)[:, None, None])
 
         # check hack to fix fast jumps
         # dur[dur < dur.mean()] = dur.mean()
-
         dur = dur * self.length_scale
         dur = torch.round(dur)
         dur[dur < 1] = 1
+        dur =  dur * x_mask
+
 
         y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
         y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
@@ -2603,7 +2613,6 @@ class Vits(BaseTTS):
         o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
 
         ### --> ATTENTION MAP
-
         attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
         attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
 
@@ -2656,17 +2665,12 @@ class Vits(BaseTTS):
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
         # o_context, _, _, _ = self.upsampling_z(o_context, y_lengths=y_lengths, y_mask=y_mask)
 
-        o, _, _ = self.waveform_decoder((z * y_mask)[:, :, : self.max_inference_len], g=None)
-
-        # masked_dur = dur.int()
-        # masked_dur[:, :, 1:-1] = masked_dur[:, :, 1:-1] + masked_dur[:, :, 2:]
-        # masked_dur = masked_dur.masked_fill(blank_mask, 0.0)
+        o, _, _ = self.waveform_decoder((z * y_mask), g=None)
 
         outputs = {
             "model_outputs": o,
             "alignments": attn.squeeze(1),
             "durations": dur,
-            # "masked_durations": masked_dur,
             "pitch": o_pitch,
             "energy": o_energy,
             "z": z,
@@ -2831,7 +2835,6 @@ class Vits(BaseTTS):
                 x1_hat=self.model_outputs_cache["o1"],
                 x2_hat=self.model_outputs_cache["o2"],
             )
-
 
             # compute losses
             with autocast(enabled=False):  # use float32 for the criterion
@@ -3094,12 +3097,12 @@ class Vits(BaseTTS):
         durations = outputs["durations"]
 
         pitch_avg = average_over_durations(
-            torch.from_numpy(pitch)[None, None, :], durations.squeeze(0).cpu()
+            torch.from_numpy(pitch)[None, None, :], durations[0].cpu()
         )  # [1, 1, n_frames]
 
-        pred_pitch = outputs["pitch"].squeeze().cpu()
+        pred_pitch = outputs["pitch"][0].cpu()
 
-        figures["alignment"] = plot_alignment(alignment.transpose(1, 2), output_fig=False)
+        figures["alignment"] = plot_alignment(alignment.transpose(1, 2)[0], output_fig=False)
         figures["spectrogram"] = plot_spectrogram(spec)
         figures["pitch_from_audio"] = plot_pitch(pitch, spec)
         figures["pitch_predicted"] = plot_pitch(pred_pitch, spec)
@@ -3546,16 +3549,16 @@ class Vits(BaseTTS):
 
         upsample_rate = torch.prod(torch.as_tensor(config.model_args.upsample_rates_decoder)).item()
 
-        if not config.model_args.encoder_sample_rate:
-            assert (
-                upsample_rate == config.audio.hop_length
-            ), f" [!] Product of upsample rates must be equal to the hop length - {upsample_rate} vs {config.audio.hop_length}"
-        else:
-            encoder_to_vocoder_upsampling_factor = config.audio.sample_rate / config.model_args.encoder_sample_rate
-            effective_hop_length = config.audio.hop_length * encoder_to_vocoder_upsampling_factor
-            assert (
-                upsample_rate == effective_hop_length
-            ), f" [!] Product of upsample rates must be equal to the hop length - {upsample_rate} vs {effective_hop_length}"
+        # if not config.model_args.encoder_sample_rate:
+        #     assert (
+        #         upsample_rate == config.audio.hop_length
+        #     ), f" [!] Product of upsample rates must be equal to the hop length - {upsample_rate} vs {config.audio.hop_length}"
+        # else:
+        #     encoder_to_vocoder_upsampling_factor = config.audio.sample_rate / config.model_args.encoder_sample_rate
+        #     effective_hop_length = config.audio.hop_length * encoder_to_vocoder_upsampling_factor
+        #     assert (
+        #         upsample_rate == effective_hop_length
+        #     ), f" [!] Product of upsample rates must be equal to the hop length - {upsample_rate} vs {effective_hop_length}"
 
         ap = AudioProcessor.init_from_config(config, verbose=verbose)
         tokenizer, new_config = TTSTokenizer.init_from_config(config)
@@ -3582,6 +3585,7 @@ class Vits(BaseTTS):
         noise_scale=0.66,
         sdp_noise_scale=0.33,
         denoise_strength=0.08,
+        split_batch_sentences=True,
     ):
         # TODO: add language_id
         is_cuda = next(self.parameters()).is_cuda
@@ -3607,36 +3611,89 @@ class Vits(BaseTTS):
         if emotion_vector is not None:
             emotion_vector = embedding_to_torch(emotion_vector, cuda=is_cuda)
 
-        # Text formatting
-        text_inputs = np.asarray(
-            self.tokenizer.text_to_ids(text, language=language_id),
-            dtype=np.int32,
-        )
-        text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=is_cuda)
-        text_inputs = text_inputs.unsqueeze(0)
+        # --> TEXT FORMATTING
 
-        # Synthesize voice
+        # split to sentences
+        if split_batch_sentences:
+            # TODO: reformat this
+            segmenter = pysbd.Segmenter(language="en", clean=True)
+            sentences = segmenter.segment(text)
+        else:
+            sentences = [text]
+
+        input_tensors = []
+        input_lengths = []
+        for sentence in sentences:
+
+            # --> TEXT NORMALIZATION & PHONEMIZATION
+
+            input_tensor = np.asarray(
+                self.tokenizer.text_to_ids(sentence, language=language_id),
+                dtype=np.int32,
+            )
+            input_tensor = numpy_to_torch(input_tensor, torch.long, cuda=is_cuda)
+            input_tensors.append(input_tensor)
+
+            input_length = input_tensor.shape[0]
+            input_lengths.append(input_length)
+
+        num_sentences = len(sentences)
+        input_lengths = torch.tensor(input_lengths)
+        max_len = input_lengths.max().item()
+        input_tensors = torch.stack(
+            [
+                F.pad(x, (0, max_len - x.size(-1)), mode="constant", value=0) if max_len - x.size(-1) > 0 else x
+                for x in input_tensors
+            ],
+            dim=0,
+        )
+
+        if is_cuda:
+            input_tensors = input_tensors.cuda()
+            input_lengths = input_lengths.cuda()
+
+        # --> SYNTHESIZE VOICE
+
+        # Set parameters from arguments
         self.inference_noise_scale = noise_scale
         self.inference_noise_scale_dp = sdp_noise_scale
+
         outputs = self.inference(
-            text_inputs,
-            aux_input={"d_vectors": d_vector, "speaker_ids": speaker_id, "emotion_vectors": emotion_vector},
+            input_tensors,
+            x_lengths=input_lengths,
+            aux_input={"d_vectors": d_vector.expand(num_sentences, -1), "speaker_ids": speaker_id, "emotion_vectors": emotion_vector.expand(num_sentences, -1), "emotion_ids": emotion_id},
             pitch_transform=pitch_transform,
         )
 
-        # Denois the output
+        # Denoise the output
         if denoise_strength > 0:
             outputs["model_outputs"] = self.denoiser.forward(
                 outputs["model_outputs"].squeeze(1), strength=denoise_strength
             )
 
-        # Collect outputs
-        wav = outputs["model_outputs"][0].data.cpu().numpy()
-        alignments = outputs["alignments"]
+        # --> POST-PROCESSING
+
+        model_outputs = []
+        wav = None
+        upsampling_rate = 1
+
+        if self.args.encoder_sample_rate:
+            upsampling_rate = self.config.audio.sample_rate // self.args.encoder_sample_rate
+
+        for k, output in enumerate(outputs["model_outputs"]):
+            dur = outputs["durations"][k].sum().item() * self.config.audio.hop_length * upsampling_rate
+            wav_ = output[:, : int(dur)].data.cpu().numpy()
+            if wav is None:
+                wav = wav_
+            else:
+                zero_pad = np.zeros([1, 10000]) * self.length_scale
+                wav = np.concatenate([wav, zero_pad, wav_], 1)
+
+            model_outputs.append(outputs)
+
         return_dict = {
             "wav": wav,
-            "alignments": alignments,
-            "text_inputs": text_inputs,
+            "input_tensors": input_tensors,
             "outputs": outputs,
         }
         return return_dict
@@ -3723,44 +3780,54 @@ class VitsCharacters(BaseCharacters):
         )
 
 
-# if __name__ == "__main__":
-#     from TTS.tts.configs.vits_config import VitsConfig
+if __name__ == "__main__":
+    from TTS.tts.configs.vits_config import VitsConfig
 
-#     def _create_inputs(config, batch_size=2, device="cuda"):
-#         input_dummy = torch.randint(0, 24, (batch_size, 10)).long().to(device)
-#         input_lengths = torch.randint(2, 11, (batch_size,)).long().to(device)
-#         input_lengths[-1] = 10
-#         spec = torch.rand(batch_size, config.audio["fft_size"] // 2 + 1, 30).to(device)
-#         mel = torch.rand(batch_size, config.audio["num_mels"], 30).to(device)
-#         spec_lengths = torch.randint(20, 30, (batch_size,)).long().to(device)
-#         spec_lengths[-1] = spec.size(2)
-#         waveform = torch.rand(batch_size, 1, spec.size(2) * config.audio["hop_length"]).to(device)
-#         energy = torch.rand(batch_size, 1, 30).to(device)
-#         pitch = torch.rand(batch_size, 1, 30).to(device)
-#         spk_emb = torch.rand(batch_size, 512).to(device)
-#         return input_dummy, input_lengths, mel, spec, spec_lengths, waveform, energy, pitch, spk_emb
+    def _create_inputs(config, batch_size=2, device="cuda"):
+        input_dummy = torch.randint(0, 24, (batch_size, 10)).long().to(device)
+        input_lengths = torch.randint(2, 11, (batch_size,)).long().to(device)
+        input_lengths[-1] = 10
+        spec = torch.rand(batch_size, config.audio["fft_size"] // 2 + 1, 30).to(device)
+        mel = torch.rand(batch_size, config.audio["num_mels"], 30).to(device)
+        spec_lengths = torch.randint(20, 30, (batch_size,)).long().to(device)
+        spec_lengths[-1] = spec.size(2)
+        waveform = torch.rand(batch_size, 1, spec.size(2) * config.audio["hop_length"]).to(device)
+        energy = torch.rand(batch_size, 1, 30).to(device)
+        pitch = torch.rand(batch_size, 1, 30).to(device)
+        spk_emb = torch.rand(batch_size, 512).to(device)
+        emo_emb = torch.rand(batch_size, 64).to(device)
+        return input_dummy, input_lengths, mel, spec, spec_lengths, waveform, energy, pitch, spk_emb, emo_emb
 
-#     config = VitsConfig()
-#     config.model_args.use_pitch = True
-#     config.model_args.use_energy_predictor = True
-#     config.model_args.use_context_encoder = True
-#     config.model_args.use_d_vector_file = True
-#     config.model_args.d_vector_dim = 512
-#     config.model_args.use_sdp = False
-#     model = Vits.init_from_config(config)
-#     model.cuda()
+    config = VitsConfig()
+    config.model_args.use_pitch = True
+    config.model_args.use_energy_predictor = True
+    config.model_args.use_context_encoder = True
+    config.model_args.use_d_vector_file = True
+    config.model_args.d_vector_dim = 512
+    config.model_args.use_emotion_vector_file = True
+    config.model_args.emotion_vector_dim = 64
+    config.model_args.encoder_sample_rate = 22050
+    config.model_args.use_sdp = False
+    model = Vits.init_from_config(config)
+    model.cuda()
 
-#     input_dummy, input_lengths, mel, spec, spec_lengths, waveform, energy, pitch, spk_emb = _create_inputs(config)
-#     model.forward(
-#         x=input_dummy,
-#         x_lengths=input_lengths,
-#         y=spec,
-#         y_lengths=spec_lengths,
-#         waveform=waveform,
-#         energy=energy,
-#         pitch=pitch,
-#         attn_priors=None,
-#         aux_input={"d_vectors": spk_emb},
-#     )
+    input_dummy, input_lengths, mel, spec, spec_lengths, waveform, energy, pitch, spk_emb, emo_emb = _create_inputs(
+        config
+    )
+    model.forward(
+        x=input_dummy,
+        x_lengths=input_lengths,
+        y=spec,
+        y_lengths=spec_lengths,
+        mel=mel,
+        waveform=waveform,
+        energy=energy,
+        pitch=pitch,
+        attn_priors=None,
+        aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb},
+        binarize_alignment=False,
+    )
 
-#     model.inference(x=input_dummy[0][None, :], aux_input={"d_vectors": spk_emb[0][None, :]})
+    model.inference(
+        x=input_dummy, x_lengths=input_lengths, aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb}
+    )
