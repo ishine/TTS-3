@@ -1288,6 +1288,10 @@ class VitsArgs(Coqpit):
     energy_predictor_dropout_p: float = 0.1
     energy_embedding_kernel_size: int = 3
     use_context_encoder: bool = False
+    use_utterance_level_prosody_encoder: bool = True
+    use_phoneme_level_prosody_encoder: bool = True
+    condition_context_encoder_on_emotion: bool = True
+    condition_context_encoder_on_text: bool = True
 
 
 class RelativeMultiHeadAttention(nn.Module):
@@ -1616,87 +1620,89 @@ class Vits(BaseTTS):
             # self.energy_scaler.requires_grad_(False)
             context_cond_channels += 128
 
-        ## -- BOTTLENECK ADAPTOPRS -- ##
+        if self.args.use_utterance_level_prosody_encoder or self.args.use_phoneme_level_prosody_encoder:
+            ## -- BOTTLENECK ADAPTOPRS -- ##
+            in_channels_with_emb = self.args.hidden_channels
+            if self.embedded_speaker_dim > 0:
+                self.adaptors_spk_bottleneck = BottleneckLayerLayer(
+                    in_channels=self.embedded_speaker_dim, bottleneck_channels=32, norm="weight_norm"
+                )
+                in_channels_with_emb += 32
+            if self.embedded_emotion_dim > 0:
+                in_channels_with_emb += self.embedded_emotion_dim
 
-        in_channels_with_emb = self.args.hidden_channels
-        if self.embedded_speaker_dim > 0:
-            self.adaptors_spk_bottleneck = BottleneckLayerLayer(
-                in_channels=self.embedded_speaker_dim, bottleneck_channels=32, norm="weight_norm"
+        if self.args.use_utterance_level_prosody_encoder:
+            ## -- UTTRANCE ENCODER & PREDICTOR -- ##
+
+            self.utterance_prosody_encoder = UtteranceLevelProsodyEncoder(
+                hidden_channels=self.args.hidden_channels,
+                gru_channels=32,
+                p_dropout=0.2,
+                bottleneck_channels=96,
+                num_stl_heads=1,
+                num_stl_tokens=32,
+                reference_encoder_num_mels=513,
+                reference_encoder_hidden_channels=[32, 32, 64, 64, 128, 128],
+                reference_encoder_strides=[1, 2, 1, 2, 1],
+                reference_encoder_kernel_size=3,
+                reference_encoder_gpu_channels=32,
             )
-            in_channels_with_emb += 32
-        if self.embedded_emotion_dim > 0:
-            in_channels_with_emb += self.embedded_emotion_dim
+            self.utterance_prosody_predictor = PhonemeProsodyPredictor(
+                in_channels=in_channels_with_emb,
+                hidden_channels=self.args.hidden_channels,
+                out_channels=96,  # TODO: config these
+                kernel_size=3,
+                p_dropout=0.1,
+            )
+            self.u_bottle_out = nn.Linear(
+                96,
+                self.args.hidden_channels,
+            )
+            # TODO: change this with IntanceNorm as in StyleTTS
+            self.u_norm = nn.LayerNorm(
+                96,
+                elementwise_affine=False,
+            )
 
-        ## -- UTTRANCE ENCODER & PREDICTOR -- ##
 
-        self.utterance_prosody_encoder = UtteranceLevelProsodyEncoder(
-            hidden_channels=self.args.hidden_channels,
-            gru_channels=32,
-            p_dropout=0.2,
-            bottleneck_channels=96,
-            num_stl_heads=1,
-            num_stl_tokens=32,
-            reference_encoder_num_mels=513,
-            reference_encoder_hidden_channels=[32, 32, 64, 64, 128, 128],
-            reference_encoder_strides=[1, 2, 1, 2, 1],
-            reference_encoder_kernel_size=3,
-            reference_encoder_gpu_channels=32,
-        )
-        self.utterance_prosody_predictor = PhonemeProsodyPredictor(
-            in_channels=in_channels_with_emb,
-            hidden_channels=self.args.hidden_channels,
-            out_channels=96,  # TODO: config these
-            kernel_size=3,
-            p_dropout=0.1,
-        )
-        self.u_bottle_out = nn.Linear(
-            96,
-            self.args.hidden_channels,
-        )
-        # TODO: change this with IntanceNorm as in StyleTTS
-        self.u_norm = nn.LayerNorm(
-            96,
-            elementwise_affine=False,
-        )
-
-        ## -- PHONEME ENCODER & PREDICTOR -- ##
-
-        self.phoneme_prosody_encoder = PhonemeLevelProsodyEncoder(
-            self.args.hidden_channels,
-            bottleneck_channels=16,
-            gru_channels=32,
-            num_heads=2,
-            p_dropout=0.1,
-            reference_encoder_num_mels=513,
-            reference_encoder_hidden_channels=[32, 32, 64, 64, 128, 128],
-            reference_encoder_strides=[1, 2, 1, 2, 1],
-            reference_encoder_kernel_size=3,
-            reference_encoder_gpu_channels=32,
-        )
-        self.phoneme_prosody_predictor = PhonemeProsodyPredictor(
-            in_channels=in_channels_with_emb,
-            hidden_channels=self.args.hidden_channels,
-            out_channels=16,
-            kernel_size=5,
-            p_dropout=0.1,
-        )
-        self.p_bottle_out = nn.Linear(
-            16,
-            self.args.hidden_channels,
-        )
-        # TODO: change this with IntanceNorm as in StyleTTS
-        self.p_norm = nn.LayerNorm(
-            16,
-            elementwise_affine=False,
-        )
+        if self.args.use_phoneme_level_prosody_encoder:
+            ## -- PHONEME ENCODER & PREDICTOR -- ##
+            self.phoneme_prosody_encoder = PhonemeLevelProsodyEncoder(
+                self.args.hidden_channels,
+                bottleneck_channels=16,
+                gru_channels=32,
+                num_heads=2,
+                p_dropout=0.1,
+                reference_encoder_num_mels=513,
+                reference_encoder_hidden_channels=[32, 32, 64, 64, 128, 128],
+                reference_encoder_strides=[1, 2, 1, 2, 1],
+                reference_encoder_kernel_size=3,
+                reference_encoder_gpu_channels=32,
+            )
+            self.phoneme_prosody_predictor = PhonemeProsodyPredictor(
+                in_channels=in_channels_with_emb,
+                hidden_channels=self.args.hidden_channels,
+                out_channels=16,
+                kernel_size=5,
+                p_dropout=0.1,
+            )
+            self.p_bottle_out = nn.Linear(
+                16,
+                self.args.hidden_channels,
+            )
+            # TODO: change this with IntanceNorm as in StyleTTS
+            self.p_norm = nn.LayerNorm(
+                16,
+                elementwise_affine=False,
+            )
 
         # --> CONTEXT ENCODER
         if self.args.use_context_encoder:
             self.context_encoder = ContextEncoder(
-                in_channels=self.args.hidden_channels,
+                in_channels=self.args.hidden_channels if self.args.condition_context_encoder_on_text else 0,
                 cond_channels=context_cond_channels,
                 spk_emb_channels=0,
-                emo_emb_channels=self.embedded_emotion_dim,
+                emo_emb_channels=self.embedded_emotion_dim if self.args.condition_context_encoder_on_emotion else 0,
                 num_lstm_layers=1,
                 lstm_norm="spectral",
             )
@@ -1992,21 +1998,22 @@ class Vits(BaseTTS):
                 param.requires_grad = False
 
         if self.args.freeze_prosody_encoders:
-            print(" > Freezing Phoneme Level Prosody Encoder...")
-            for param in self.phoneme_prosody_encoder.parameters():
-                param.requires_grad = False
-            for param in self.p_bottle_out.parameters():
-                param.requires_grad = False
-            for param in self.p_norm.parameters():
-                param.requires_grad = False
-
-            print(" > Freezing Utterance Level Prosody Encoder...")
-            for param in self.utterance_prosody_encoder.parameters():
-                param.requires_grad = False
-            for param in self.u_bottle_out.parameters():
-                param.requires_grad = False
-            for param in self.u_norm.parameters():
-                param.requires_grad = False
+            if self.args.use_phoneme_level_prosody_encoder:
+                print(" > Freezing Phoneme Level Prosody Encoder...")
+                for param in self.phoneme_prosody_encoder.parameters():
+                    param.requires_grad = False
+                for param in self.p_bottle_out.parameters():
+                    param.requires_grad = False
+                for param in self.p_norm.parameters():
+                    param.requires_grad = False
+            if self.args.use_utterance_level_prosody_encoder:
+                print(" > Freezing Utterance Level Prosody Encoder...")
+                for param in self.utterance_prosody_encoder.parameters():
+                    param.requires_grad = False
+                for param in self.u_bottle_out.parameters():
+                    param.requires_grad = False
+                for param in self.u_norm.parameters():
+                    param.requires_grad = False
 
     @staticmethod
     def _set_cond_input(aux_input: Dict):
@@ -2353,65 +2360,69 @@ class Vits(BaseTTS):
             outputs, aligner_hard, o_en, x_mask, spk_emb, lang_emb, emo_emb, x_lengths
         )
 
-        ##### --> Bottleneck Embeddings
+        if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
+            ##### --> Bottleneck Embeddings
+            spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
 
-        spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
-        o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
+        u_prosody_loss = None
+        if self.args.use_utterance_level_prosody_encoder:
+            o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
 
-        ##### --> Utterance Prosody encoder
-        u_prosody_ref = self.u_norm(
-            self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths)
-        )  # TODO: use mel like the original imp
-        u_prosody_pred = self.u_norm(
-            self.average_utterance_prosody(
-                u_prosody_pred=self.utterance_prosody_predictor(
-                    x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
-                ),
-                lengths=x_lengths,
+            ##### --> Utterance Prosody encoder
+            u_prosody_ref = self.u_norm(
+                self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths)
+            )  # TODO: use mel like the original imp
+            u_prosody_pred = self.u_norm(
+                self.average_utterance_prosody(
+                    u_prosody_pred=self.utterance_prosody_predictor(
+                        x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
+                    ),
+                    lengths=x_lengths,
+                )
             )
-        )
 
-        if use_encoder:
-            o_en = o_en + self.u_bottle_out(u_prosody_ref).transpose(1, 2)
-        else:
-            o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
+            if use_encoder:
+                o_en = o_en + self.u_bottle_out(u_prosody_ref).transpose(1, 2)
+            else:
+                o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
 
-        # compute loss
-        u_prosody_loss = 0.5 * torch.nn.functional.mse_loss(u_prosody_ref.detach(), u_prosody_pred)
+            # compute loss
+            u_prosody_loss = 0.5 * torch.nn.functional.mse_loss(u_prosody_ref.detach(), u_prosody_pred)
 
-        ##### --> Phoneme prosody encoder
+        p_prosody_loss = None
+        if self.args.use_phoneme_level_prosody_encoder:
+            ##### --> Phoneme prosody encoder
+            o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
 
-        o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
-
-        pos_encoding = positional_encoding(
-            self.args.hidden_channels,
-            max(x_emb.shape[2], max(y_lengths)),
-            device=x_emb.device,
-        )
-
-        p_prosody_ref = self.p_norm(
-            self.phoneme_prosody_encoder(
-                x=o_en.transpose(1, 2),
-                src_mask=x_filler_mask.transpose(1, 2),
-                mels=y,
-                mel_lens=y_lengths,
-                encoding=pos_encoding,
+            pos_encoding = positional_encoding(
+                self.args.hidden_channels,
+                max(x_emb.shape[2], max(y_lengths)),
+                device=x_emb.device,
             )
-        )
-        p_prosody_pred = self.p_norm(
-            self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
-        )
 
-        if use_encoder:
-            o_en = o_en + self.p_bottle_out(p_prosody_ref).transpose(1, 2)
-        else:
-            o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+            p_prosody_ref = self.p_norm(
+                self.phoneme_prosody_encoder(
+                    x=o_en.transpose(1, 2),
+                    src_mask=x_filler_mask.transpose(1, 2),
+                    mels=y,
+                    mel_lens=y_lengths,
+                    encoding=pos_encoding,
+                )
+            )
+            p_prosody_pred = self.p_norm(
+                self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
+            )
 
-        # compute loss
-        p_prosody_loss = 0.5 * torch.nn.functional.mse_loss(
-            p_prosody_ref.masked_select(x_mask.bool().transpose(1, 2)).detach(),
-            p_prosody_pred.masked_select(x_mask.bool().transpose(1, 2)),
-        )
+            if use_encoder:
+                o_en = o_en + self.p_bottle_out(p_prosody_ref).transpose(1, 2)
+            else:
+                o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+
+            # compute loss
+            p_prosody_loss = 0.5 * torch.nn.functional.mse_loss(
+                p_prosody_ref.masked_select(x_mask.bool().transpose(1, 2)).detach(),
+                p_prosody_pred.masked_select(x_mask.bool().transpose(1, 2)),
+            )
 
         ##### --> EXPAND
 
@@ -2450,7 +2461,7 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_de]
-        context_emb = self.context_encoder(o_en_ex, y_lengths, spk_emb=None, emo_emb=emo_emb, cond=context_cond)
+        context_emb = self.context_encoder(o_en_ex if self.args.condition_context_encoder_on_text else None, y_lengths, spk_emb=None, emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None, cond=context_cond)
 
         ###### --> FLOW
 
@@ -2624,44 +2635,47 @@ class Vits(BaseTTS):
         y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
         y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
 
-        ##### --> Bottleneck Embeddings
+        if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
+            ##### --> Bottleneck Embeddings
+            spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
 
-        spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
-        o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
+        if self.args.use_utterance_level_prosody_encoder:
+            o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
 
-        ##### --> Utterance Prosody encoder
-        # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
-        u_prosody_pred = self.u_norm(
-            self.average_utterance_prosody(
-                u_prosody_pred=self.utterance_prosody_predictor(
-                    x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
-                ),
-                lengths=x_lengths,
+            ##### --> Utterance Prosody encoder
+            # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
+            u_prosody_pred = self.u_norm(
+                self.average_utterance_prosody(
+                    u_prosody_pred=self.utterance_prosody_predictor(
+                        x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
+                    ),
+                    lengths=x_lengths,
+                )
             )
-        )
 
-        o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
+            o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
 
-        ##### --> Phoneme prosody encoder
+        if self.args.use_phoneme_level_prosody_encoder:
+            ##### --> Phoneme prosody encoder
 
-        o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
+            o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
 
-        pos_encoding = positional_encoding(
-            self.args.hidden_channels,
-            max(o_en.shape[2], max(y_lengths)),
-            device=o_en.device,
-        )
+            pos_encoding = positional_encoding(
+                self.args.hidden_channels,
+                max(o_en.shape[2], max(y_lengths)),
+                device=o_en.device,
+            )
 
-        # p_prosody_ref = self.p_norm(
-        #     self.phoneme_prosody_encoder(
-        #         x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
-        #     )
-        # )
-        p_prosody_pred = self.p_norm(
-            self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
-        )
+            # p_prosody_ref = self.p_norm(
+            #     self.phoneme_prosody_encoder(
+            #         x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
+            #     )
+            # )
+            p_prosody_pred = self.p_norm(
+                self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
+            )
 
-        o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+            o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
 
         ### --> ATTENTION MAP
         attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
@@ -2703,7 +2717,7 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en_ex, y_lengths, spk_emb=None, emo_emb=emo_emb, cond=context_cond)
+        o_context = self.context_encoder(o_en_ex if self.args.condition_context_encoder_on_text else None, y_lengths, spk_emb=None, emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None, cond=context_cond)
 
         ### --> FLOW DECODER
 
@@ -2923,14 +2937,17 @@ class Vits(BaseTTS):
             loss_dict["loss_energy"] = self.model_outputs_cache["loss_energy"] * self.config.energy_loss_alpha
 
             # add prosody losses
-            loss_dict["loss"] = (
-                self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha + loss_dict["loss"]
-            )
-            loss_dict["loss"] = (
-                self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha + loss_dict["loss"]
-            )
-            loss_dict["loss_u_prosody"] = self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha
-            loss_dict["loss_p_prosody"] = self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha
+            if self.model_outputs_cache["u_prosody_loss"] is not None:
+                loss_dict["loss_u_prosody"] = self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha
+                loss_dict["loss"] = (
+                    loss_dict["loss_u_prosody"] + loss_dict["loss"]
+                )
+
+            if self.model_outputs_cache["p_prosody_loss"] is not None:
+                loss_dict["loss_p_prosody"] = self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha
+                loss_dict["loss"] = (
+                    loss_dict["loss_p_prosody"] + loss_dict["loss"]
+                )
 
             # compute useful training stats
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()

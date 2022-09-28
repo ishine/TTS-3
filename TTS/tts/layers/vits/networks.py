@@ -26,6 +26,15 @@ def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
 
+def concat_not_none(x1, x2, dim=1):
+    if x1 is not None and x2 is not None:
+        return torch.cat((x1, x2), dim)
+    elif x1 is not None:
+        return x1
+    else:
+        return x2
+
+
 class TextEncoder(nn.Module):
     def __init__(
         self,
@@ -149,12 +158,13 @@ class ContextEncoder(nn.Module):
     def forward(self, x, x_len, spk_emb=None, emo_emb=None, cond=None):
         if spk_emb is not None:
             spk_emb = spk_emb.expand(-1, -1, x.shape[2])
-            x = torch.cat((x, spk_emb), 1)
+            x = concat_not_none(x, spk_emb)
         if emo_emb is not None:
             emo_emb = emo_emb.expand(-1, -1, x.shape[2])
-            x = torch.cat((x, emo_emb), 1)
+            x = concat_not_none(x, emo_emb)
         if cond is not None:
-            x = torch.cat((x, cond), 1)
+            x = concat_not_none(x, cond)
+
         unfolded_out_lens_packed = nn.utils.rnn.pack_padded_sequence(
             x.transpose(1, 2), x_len.to("cpu"), batch_first=True, enforce_sorted=False
         )
