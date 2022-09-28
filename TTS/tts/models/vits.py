@@ -954,6 +954,7 @@ class ConvTransposed(nn.Module):
 
 class PhonemeProsodyPredictor(nn.Module):
     """Non-parallel Prosody Predictor inspired by Du et al., 2021"""
+    # TODO: use LSTM duration predictor like architecture
 
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, kernel_size: int, p_dropout: float):
         super().__init__()
@@ -2356,7 +2357,7 @@ class Vits(BaseTTS):
 
         # compute loss
         p_prosody_loss = 0.5 * torch.nn.functional.mse_loss(
-            p_prosody_ref.masked_select(x_mask.bool().transpose(1, 2)),
+            p_prosody_ref.masked_select(x_mask.bool().transpose(1, 2)).detach(),
             p_prosody_pred.masked_select(x_mask.bool().transpose(1, 2)),
         )
 
@@ -2462,6 +2463,8 @@ class Vits(BaseTTS):
                 "pitch_hat": o_pitch,
                 "loss_pitch": loss_pitch,
                 "loss_energy": loss_energy,
+                "p_prosody_ref": p_prosody_ref,
+                "u_prosody_ref": u_prosody_ref,
                 "u_prosody_loss": u_prosody_loss,
                 "p_prosody_loss": p_prosody_loss,
                 "waveform_seg": wav_seg,
