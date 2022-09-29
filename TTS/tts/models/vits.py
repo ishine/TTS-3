@@ -1987,15 +1987,19 @@ class Vits(BaseTTS):
             for param in self.energy_predictor.parameters():
                 param.requires_grad = False
 
-            print(" > Freezing Phoneme Level Prosody Predictor...")
-            for param in self.phoneme_prosody_predictor.parameters():
-                param.requires_grad = False
+            if self.args.use_phoneme_level_prosody_encoder:
+                print(" > Freezing Phoneme Level Prosody Predictor...")
+                for param in self.phoneme_prosody_predictor.parameters():
+                    param.requires_grad = False
 
-            print(" > Freezing Utterance Level Prosody Predictor...")
-            for param in self.utterance_prosody_predictor.parameters():
-                param.requires_grad = False
-            for param in self.adaptors_spk_bottleneck.parameters():
-                param.requires_grad = False
+            if self.args.use_utterance_level_prosody_encoder:
+                print(" > Freezing Utterance Level Prosody Predictor...")
+                for param in self.utterance_prosody_predictor.parameters():
+                    param.requires_grad = False
+
+            if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
+                for param in self.adaptors_spk_bottleneck.parameters():
+                    param.requires_grad = False
 
         if self.args.freeze_prosody_encoders:
             if self.args.use_phoneme_level_prosody_encoder:
