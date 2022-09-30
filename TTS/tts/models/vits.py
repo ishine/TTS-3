@@ -1292,6 +1292,7 @@ class VitsArgs(Coqpit):
     use_phoneme_level_prosody_encoder: bool = True
     condition_context_encoder_on_emotion: bool = True
     condition_context_encoder_on_text: bool = True
+    use_flow_predicted_z: bool = False
 
 
 class RelativeMultiHeadAttention(nn.Module):
@@ -1930,6 +1931,7 @@ class Vits(BaseTTS):
 
     def _freeze_layers(self):
         if self.args.freeze_encoder:
+            print(" > Freezing Text encoder...")
             for param in self.text_encoder.parameters():
                 param.requires_grad = False
 
@@ -2476,6 +2478,8 @@ class Vits(BaseTTS):
         z_p = self.flow(z, y_mask, g=spk_emb, g2=context_emb * y_mask)
 
         ###### --> VOCODER
+        if self.args.use_flow_predicted_z:
+            z = self.flow(z_p, y_mask, g=spk_emb, g2=context_emb * y_mask, reverse=True)
 
         # select a random feature segment for the waveform decoder
         z_slice, slice_ids = rand_segments(z, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
