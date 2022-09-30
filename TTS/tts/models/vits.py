@@ -1241,7 +1241,6 @@ class VitsArgs(Coqpit):
     )
     fdilations: List = field(default_factory=lambda: [[1, 2, 3], [1, 2, 3], [1, 2, 3], [2, 3, 5], [2, 3, 5]])
     pqmf_n: int = 16
-    pqmf_m: int = 64
     freq_init_ch: int = 256
     tsubband: List = field(default_factory=lambda: [6, 11, 16])
     use_speaker_embedding: bool = False

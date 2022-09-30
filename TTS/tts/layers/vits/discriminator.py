@@ -257,7 +257,7 @@ class MultiSubBandDiscriminator(torch.nn.Module):
         tsubband,
         n,
         m,
-        freq_init_ch,
+        freq_init_ch
     ):
 
         super(MultiSubBandDiscriminator, self).__init__()
@@ -371,7 +371,7 @@ class VitsDiscriminator(nn.Module):
             fdilations=args.fdilations,
             tsubband=args.tsubband,
             n=args.pqmf_n,
-            m=args.pqmf_m,
+            m=args.spec_segment_size * 2,
             freq_init_ch=args.freq_init_ch,
         )
 
