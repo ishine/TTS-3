@@ -1147,10 +1147,12 @@ class VitsArgs(Coqpit):
             Enable/Disable Speaker Consistency Loss (SCL). Defaults to False.
 
         speaker_encoder_config_path (str):
-            Path to the file speaker encoder config file, to use for SCL. Defaults to "".
+            Path to the file speaker encoder config file, to use for SCL. 
+            Defaults to "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/config_se.json".
 
         speaker_encoder_model_path (str):
-            Path to the file speaker encoder checkpoint file, to use for SCL. Defaults to "".
+            Path to the file speaker encoder checkpoint file, to use for SCL. 
+            Defaults to "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/model_se.pth.tar".
 
         condition_dp_on_speaker (bool):
             Condition the duration predictor on the speaker embedding. Defaults to True.
@@ -1176,6 +1178,19 @@ class VitsArgs(Coqpit):
         freeze_waveform_decoder (bool):
             Freeze the waveform decoder weigths during training. Defaults to False.
 
+        freeze_predictors (bool):
+            Freeze duration, pitch, energy, utterance level prosody and phoneme level prosody weigths during training. 
+            Defaults to False.
+
+        freeze_prosody_encoders (bool):
+            Freeze utterance level prosody encoder and phoneme level prosody encoder weigths during training. Defaults to False.
+
+        freeze_aligner (bool):
+            Freeze aligner weigths during training. Defaults to False.
+
+        freeze_all_except_DP (bool):
+            Freeze all generator modules weigths except duration predictor during training. Defaults to False.
+
         encoder_sample_rate (int):
             If not None this sample rate will be used for training the Posterior Encoder,
             flow, text_encoder and duration predictor. The decoder part (vocoder) will be
@@ -1186,6 +1201,9 @@ class VitsArgs(Coqpit):
             will be used to upsampling the latent variable z with the sampling rate `encoder_sample_rate`
             to the `config.audio.sample_rate`. If it is False you will need to add extra
             `upsample_rates_decoder` to match the shape. Defaults to True.
+
+        target_cps (int):
+            Target characteres per second. Defaults to 16.
 
     """
 
@@ -1259,8 +1277,8 @@ class VitsArgs(Coqpit):
     num_languages: int = 0
     language_ids_file: str = None
     use_speaker_encoder_as_loss: bool = False
-    speaker_encoder_config_path: str = ""
-    speaker_encoder_model_path: str = ""
+    speaker_encoder_config_path: str = "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/config_se.json"
+    speaker_encoder_model_path: str = "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/model_se.pth.tar"
     condition_dp_on_speaker: bool = True
     freeze_encoder: bool = False
     freeze_duration_predictor: bool = False
@@ -1272,6 +1290,7 @@ class VitsArgs(Coqpit):
     freeze_predictors: bool = False
     freeze_prosody_encoders: bool = False
     freeze_aligner: bool = False
+    freeze_all_except_DP: bool = False
     encoder_sample_rate: int = None
     interpolate_z: bool = True
     reinit_DP: bool = False
@@ -1292,6 +1311,7 @@ class VitsArgs(Coqpit):
     condition_context_encoder_on_emotion: bool = True
     condition_context_encoder_on_text: bool = True
     use_flow_predicted_z: bool = False
+    target_cps: int = 16
 
 
 class RelativeMultiHeadAttention(nn.Module):
@@ -1534,7 +1554,7 @@ class Vits(BaseTTS):
         self.init_emotion()
         self.init_upsampling()
 
-        self.target_cps = 16
+        self.target_cps = self.args.target_cps
         self.length_scale = self.args.length_scale
         self.noise_scale = self.args.noise_scale
         self.inference_noise_scale = self.args.inference_noise_scale
@@ -1771,9 +1791,11 @@ class Vits(BaseTTS):
         # denoiser only to be used in inference
         self.denoiser = VitsDenoiser(self)
 
+
     @property
     def device(self):
         return next(self.parameters()).device
+
 
     def init_multispeaker(self, config: Coqpit):
         """Initialize multi-speaker modules of a model. A model can be trained either with a speaker embedding layer
@@ -1887,7 +1909,7 @@ class Vits(BaseTTS):
         self._freeze_layers()
         # set the device of speaker encoder
         if self.args.use_speaker_encoder_as_loss:
-            self.speaker_manager.encoder = self.speaker_manager.encoder.to(next(self.parameters()).device)
+            self.speaker_manager.encoder = self.speaker_manager.encoder.to(self.device)
 
     def on_train_step_start(self, trainer):
         """Schedule binary loss weight."""
@@ -2024,6 +2046,13 @@ class Vits(BaseTTS):
                     param.requires_grad = False
                 for param in self.u_norm.parameters():
                     param.requires_grad = False
+
+        if self.args.freeze_all_except_DP:
+            print(" > Freezing all the modules of the model except duration predictor...")
+            for name, param in self.named_parameters():
+                if "duration_predictor." in name or "disc." in name:
+                    continue
+                param.requires_grad = False
 
     @staticmethod
     def _set_cond_input(aux_input: Dict):

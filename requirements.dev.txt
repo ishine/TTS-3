@@ -3,3 +3,7 @@ coverage
 isort
 nose2
 pylint==2.10.2
+requests
+aiohttp
+s3fs
+transformers
