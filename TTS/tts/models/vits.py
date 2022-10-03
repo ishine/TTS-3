@@ -219,10 +219,10 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
     """
     y = y.squeeze(1)
 
-    if torch.min(y) < -1.0:
-        print("min value is ", torch.min(y))
-    if torch.max(y) > 1.0:
-        print("max value is ", torch.max(y))
+    # if torch.min(y) < -1.0:
+    #     print("min value is ", torch.min(y))
+    # if torch.max(y) > 1.0:
+    #     print("max value is ", torch.max(y))
 
     global mel_basis, hann_window
     mel_basis_key = name_mel_basis(y, n_fft, fmax)
@@ -1761,11 +1761,9 @@ class Vits(BaseTTS):
         # denoiser only to be used in inference
         self.denoiser = VitsDenoiser(self)
 
-
     @property
     def device(self):
         return next(self.parameters()).device
-
 
     def init_multispeaker(self, config: Coqpit):
         """Initialize multi-speaker modules of a model. A model can be trained either with a speaker embedding layer
@@ -3138,7 +3136,7 @@ class Vits(BaseTTS):
 
             # plot outputs
             wav = return_dict["wav"]
-            alignment = return_dict["alignments"]
+            alignment = return_dict["outputs"]["alignments"]
             test_audios["{}-audio".format(idx)] = wav.T
 
             # plot pitch and spectrogram
@@ -3198,7 +3196,7 @@ class Vits(BaseTTS):
             durations = return_dict["outputs"]["durations"]
 
             pitch_avg = average_over_durations(
-                torch.from_numpy(pitch)[None, None, :], durations.squeeze(0).cpu()
+                torch.from_numpy(pitch)[None, None, :], durations.squeeze(1).cpu()
             )  # [1, 1, n_frames]
 
             pred_pitch = return_dict["outputs"]["pitch"].squeeze().cpu()
@@ -3587,7 +3585,7 @@ class Vits(BaseTTS):
         noise_scale=0.66,
         sdp_noise_scale=0.33,
         denoise_strength=0.08,
-        split_batch_sentences=True,
+        split_batch_sentences=False,
     ):
         # TODO: add language_id
         is_cuda = next(self.parameters()).is_cuda
@@ -3689,7 +3687,7 @@ class Vits(BaseTTS):
                 wav = wav_
             else:
                 zero_pad = np.zeros([1, 10000]) * self.length_scale
-                wav = np.concatenate([wav, zero_pad, wav_], 1)
+                wav = np.concatenate([wav, zero_pad, wav_], 1).astype(np.float32)
 
             model_outputs.append(outputs)
 
