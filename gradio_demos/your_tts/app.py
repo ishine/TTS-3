@@ -4,9 +4,11 @@ import numpy as np
 import gradio as gr
 
 import torch
-from TTS.utils.synthesizer import Synthesizer
+from TTS.config import load_config
+from TTS.tts.models import setup_model as setup_tts_model
 from TTS.config.shared_configs import BaseDatasetConfig
 from TTS.tts.datasets import load_tts_samples
+from TTS.bin.compute_gmm import GMM, sample_speakers
 from matplotlib import pylab
 
 
@@ -17,6 +19,9 @@ import librosa
 import librosa.display
 
 import os
+
+from TTS.utils.audio.numpy_transforms import save_wav
+
 
 torch.set_num_threads(32)
 
@@ -70,46 +75,46 @@ model.speaker_manager.init_encoder(encoder_model_path, encoder_config_path, Fals
 model.cuda()
 
 # reading custom set of speakers
-speakers_file = ["/data/TTS/gradio_demos/your_tts/embeddings/dvectors.pth", "/data/TTS/gradio_demos/your_tts/dvector.pth"]
+speakers_file = ["/raid/datasets/speaker_embeddings_new_key/speakers_vctk_libritts_esd_skyrim.pth", "/data/TTS/gradio_demos/your_tts/embeddings/dvectors.pth", "/data/TTS/gradio_demos/your_tts/dvector.pth"]
 model.speaker_manager.load_embeddings_from_list_of_files(speakers_file)
 
 ORIGINAL_LENGTH_SCALE = model.length_scale
 SPEAKERS = model.speaker_manager.speaker_names
-EMOTION_EMB_PATH = [
-        "/raid/datasets/emotion_embeddings/Large_Hubert/emotions_embeddings_ESD+Skyrim+VCTK+LibriTTS_with_LibriTTS_outliers/emotions_with_undefined_labels_new_keys.pth",
-        "/raid/datasets/emotion_embeddings/Large_Hubert/new_keys/emotions_embeddings_Game_dataset/emotions.pth",
-    ]
-emotion_embeddings = torch.load(EMOTION_EMB_PATH)
+# EMOTION_EMB_PATH = [
+#         "/raid/datasets/emotion_embeddings/Large_Hubert/emotions_embeddings_ESD+Skyrim+VCTK+LibriTTS_with_LibriTTS_outliers/emotions_with_undefined_labels_new_keys.pth",
+#         "/raid/datasets/emotion_embeddings/Large_Hubert/new_keys/emotions_embeddings_Game_dataset/emotions.pth",
+#     ]
+# emotion_embeddings = torch.load(EMOTION_EMB_PATH)
 EMOTION_NAMES = model.emotion_manager.emotion_names
 
 
 esd_train_config = BaseDatasetConfig(
-    name="esd",
+    formatter="esd",
     meta_file_train="train",  # TODO: compute emotion and d-vectors for test and evaluation splits
     path="/raid/datasets/Emotion/ESD-44kHz-VAD/English/",
     meta_file_val="evaluation"
 )
 
 skyrim_config = BaseDatasetConfig(
-    name="coqui",
+    formatter="coqui",
     path="/raid/datasets/skyrim_dataset_44khz_fixed_vad",
     meta_file_train = "metadata_new_fixed_without_emptly_text_and_audios_filtered.csv",
     ignored_speakers = ["crdragonpriestvoice", "crdogvoice"],
 )
 
 vctk_config = BaseDatasetConfig(
-    name="vctk",
+    formatter="vctk",
     meta_file_train="metadata.csv",
     path="/raid/datasets/VCTK_NEW_44khz_removed_silence_silero_vad/",
 )
 
 libritts_360_config = BaseDatasetConfig(
-    name="libri_tts",
+    formatter="libri_tts",
     path="/raid/datasets/libritts-clean-16khz-bwe-coqui_44khz/LibriTTS/train-clean-360/",
 )
 
 libritts_100_config = BaseDatasetConfig(
-    name="libri_tts",
+    formatter="libri_tts",
     path="/raid/datasets/libritts-clean-16khz-bwe-coqui_44khz/LibriTTS/train-clean-100/",
 )
 
@@ -201,9 +206,31 @@ def rms_norm(*, wav: np.ndarray = None, db_level: float = -27.0, **kwargs) -> np
     a = np.sqrt((len(wav) * (r**2)) / np.sum(wav**2))
     return wav * a
 
+# needed for morping a speaker
+speaker_embedding = None
 
-def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_flatten, pitch_invert, pitch_amplify, pitch_shift, speed, model_noise_scale):
+def tts(
+    speaker_wav,
+    uploaded_wav,
+    text,
+    speaker_id,
+    emotion_name,
+    dbfs,
+    sample_gmm,
+    use_last_spkemb,
+    gmm_noise_scale,
+    pitch_flatten,
+    pitch_invert,
+    pitch_amplify,
+    pitch_shift,
+    speed,
+    denoiser_strength,
+    model_noise_scale,
+    sdp_noise_scale,
+    split_batching
+):
     global REQ_COUNTER
+    global speaker_embedding
 
     cmd = f"rm -fr {GENERATED_WAV_PATH}/*"
     print(cmd)
@@ -215,6 +242,8 @@ def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_f
     print(f" > Uploaded wav: {uploaded_wav}")
     print(f" > Text: {text}")
     print(f" > DBFS: {dbfs}")
+    print(f" > Sample GMM: {sample_gmm}")
+    print(f" > GMM noise scale: {gmm_noise_scale}")
     print(f" > Pitch Flatten: {pitch_flatten}")
     print(f" > Pitch Invert: {pitch_invert}")
     print(f" > Pitch Amplify: {pitch_amplify}")
@@ -222,6 +251,7 @@ def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_f
     print(f" > Speed: {speed}")
     print(f" > Running inference...")
     REQ_COUNTER += 1
+
 
     lang = None
     speaker_name = None
@@ -248,34 +278,57 @@ def tts(speaker_wav, uploaded_wav, text, speaker_id, emotion_name, dbfs, pitch_f
 
     pitch_transform = build_pitch_transformation(pitch_flatten, pitch_invert, pitch_amplify, pitch_shift)
 
-    # run TTS
-    synthesizer.tts_model.length_scale = ORIGINAL_LENGTH_SCALE / speed
-    wavs, outputss = synthesizer.tts(text=text, speaker_name=speaker_name, language_name=lang, speaker_wav=wav_file, emotion_name=emotion_name, pitch_transform=pitch_transform, noise_scale=model_noise_scale)
-    wavs = list(rms_norm(wav=np.array(wavs)))
-    synthesizer.save_wav(wavs, output_path)
+    if not use_last_spkemb:
+
+        # compute spk_emb
+        speaker_embedding = model.speaker_manager.get_mean_embedding(speaker_name, num_samples=None, randomize=False)
+
+        # sample GMM
+        if sample_gmm:
+            # out_alpha, out_mu, out_sigma = gmm_model(torch.from_numpy(speaker_embedding[None, :]).float())
+            # speaker_embedding, _ = sample_speakers(out_alpha, out_mu, out_sigma, noise_scale=gmm_noise_scale, indep_dim=True)
+            # speaker_embedding = speaker_embedding.detach().cpu().numpy()[0]
+            speaker_embedding = np.random.randn(speaker_embedding.shape[0]) * gmm_noise_scale + speaker_embedding
+
+    emotion_embedding = model.emotion_manager.get_mean_embedding(emotion_name)
+
+    # run the model
+    model.length_scale = ORIGINAL_LENGTH_SCALE / speed
+    output_dict = model.synthesize(
+        text=text,
+        speaker_id=None,
+        language_id=None,
+        d_vector=speaker_embedding,
+        ref_waveform=None,
+        emotion_vector=emotion_embedding,
+        emotion_id=emotion_name,
+        pitch_transform=pitch_transform,
+        noise_scale=model_noise_scale,
+        sdp_noise_scale=sdp_noise_scale,
+        denoise_strength=denoiser_strength,
+        split_batch_sentences=split_batching,
+    )
+    wav = output_dict["wav"][0]
+    save_wav(wav=wav, path=output_path, sample_rate=model_config.audio["sample_rate"])
     print(f" > Output audio saved to - {output_path}")
 
      # compute mean basis vector attn
     fig1 = None
-    if "basis_attn" in outputss[0]["outputs"] and outputss[0]["outputs"]["basis_attn"] is not None:
-        basis_attn = np.zeros([len(outputss), outputss[0]["outputs"]["basis_attn"].shape[1]])
-        for idx, outputs in enumerate(outputss):
-            basis_attn[idx, :] = outputs["outputs"]["basis_attn"][0].cpu().numpy()
-        basis_attn = basis_attn.mean(axis=0, keepdims=True)
-        fig1 = pylab.figure()
-        pylab.stem(range(basis_attn.shape[1]), basis_attn[0])
 
-    # plot spectrogram
-    fig2, ax = pylab.subplots()
-    M = librosa.feature.melspectrogram(y=np.array(wavs), sr=synthesizer.tts_model.config.audio.sample_rate, n_mels=synthesizer.tts_model.config.audio.num_mels)
+    ## plot spectrogram
+    fig1, ax = pylab.subplots()
+    M = librosa.feature.melspectrogram(
+        y=np.array(wav), sr=model.config.audio.sample_rate, n_mels=model.config.audio.num_mels
+    )
     M_db = librosa.power_to_db(M, ref=np.max)
     img = librosa.display.specshow(M_db, ax=ax)
-    ax.set(title='Mel spectrogram display')
-    fig2.colorbar(img, ax=ax, format="%+2.f dB")
+    ax.set(title="Mel spectrogram display")
+    fig1.colorbar(img, ax=ax, format="%+2.f dB")
 
-     # plot figures for the first sentence
-    figures = synthesizer.tts_model.plot_outputs(outputss[0]["sentence"], outputss[0]["wav"], outputss[0]["alignments"], outputss[0]["outputs"])
-    return output_path, orig_wav, fig1, fig2, uploaded_wav.name if uploaded_wav else None, figures["alignment"], figures["pitch_from_audio"], figures["pitch_predicted"], figures["pitch_avg_from_audio"]
+    # plot figures for the first sentence
+    figures = model.plot_outputs(text, output_dict["wav"], output_dict["outputs"]["alignments"], output_dict["outputs"])
+
+    return output_path, orig_wav, fig1, uploaded_wav.name if uploaded_wav else None, figures["alignment"], figures["pitch_from_audio"], figures["pitch_predicted"], figures["pitch_avg_from_audio"]
 
 
 article= """
@@ -287,27 +340,33 @@ Once upon a time, the King’s youngest son became filled with the desire to go 
 iface = gr.Interface(
     fn=tts,
     inputs=[
-        gr.Audio(source="microphone", label="Step 1. Record your voice. - You can say or read anything you want -", type="file"),
+        gr.Audio(
+            source="microphone",
+            label="Step 1. Record your voice. - You can say or read anything you want -",
+            type="file",
+        ),
         gr.File(file_count="single"),
-        # gr.File(file_count="multiple", label="Alternative Step 1. Input Audio files. - You can upload one or more audio files - ", type="file", optional=True),
         gr.Textbox(
             label="Step 2. Write a sentence - This is what the model reads - (Max. 500 characters)",
-            value="Erase this text and enter your own.",
+            value="Once upon a time, the King’s youngest son became filled with the desire to go abroad, and see the world.",
         ),
         gr.Dropdown(SPEAKERS, label="Choose a speaker"),
         gr.Dropdown(EMOTION_NAMES, label="Choose emotion"),
         gr.Number(value=-27, label="Target dBFS"),
-        # gr.Number(value=0.22, label="Duraiton Noise Scale"),
-        # gr.Number(value=0.22, label="Model Noise Scale")
+        gr.Checkbox(label="Sample new speaker with GMM"),
+        gr.Checkbox(label="Use the last sampled embedding"),
+        gr.Number(value=0.05, label="GMM noise scale"),
         gr.Checkbox(label="Pitch Flatten (Pitch * 0)"),
         gr.Checkbox(label="Pitch Invert (Pitch * -1)"),
         gr.Number(value=1.0, label="Pitch Amplify (Pitch * Pitch Amplify)"),
         gr.Number(value=0.0, label="Pitch Shift (Pitch + Pitch Shift in Hz)"),
         gr.Number(value=1.0, label="Speed"),
-        # gr.Number(value=0.11, label="Duration Noise Scale"),
+        gr.Number(value=0.05, label="Denoise strength"),
         gr.Number(value=0.44, label="Model Noise Scale"),
+        gr.Number(value=0.44, label="SDP Noise Scale"),
+        gr.Checkbox(label="Split batching. (Split into sentences and batch)", value=True),
     ],
-    outputs=[gr.outputs.Audio(label="Output Speech."), gr.outputs.Audio(label="Original Speech."), gr.Plot(label="Basis attention weights"), gr.Plot(label="Spectrogram"), gr.outputs.Audio(label="Uploaded Speech."), gr.Plot(label="Durations"), gr.Plot(label="Pitch from audio"), gr.Plot(label="Pitch Avg from audio"), gr.Plot(label="Pitch Avg Pred")],
+    outputs=[gr.outputs.Audio(label="Output Speech."), gr.outputs.Audio(label="Original Speech."), gr.Plot(label="Spectrogram"), gr.outputs.Audio(label="Uploaded Speech."), gr.Plot(label="Durations"), gr.Plot(label="Pitch from audio"), gr.Plot(label="Pitch Avg from audio"), gr.Plot(label="Pitch Avg Pred")],
     allow_flagging=False,
     # flagging_options=['error', 'bad-quality', 'wrong-pronounciation'],
     layout="vertical",
