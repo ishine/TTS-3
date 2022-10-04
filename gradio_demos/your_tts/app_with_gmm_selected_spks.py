@@ -45,12 +45,21 @@ ROOT_PATH = source_path.parent
 # model_path = "/data/best_models/ecyourtts_v19/checkpoint_3510000.pth"
 # config_path = "/data/best_models/ecyourtts_v19/model_config.json"
 
-# model_path = "/data/best_models/ecyourtts_v20_video_game/best_model_3430161.pth"
+model_path = "/data/best_models/ecyourtts_v20_video_game/best_model_3430161.pth"
+config_path = "/data/best_models/ecyourtts_v20_video_game/model_config.json"
+
+# model_path = "/data/best_models/ecyourtts_v20_video_game/checkpoint_3595000.pth"
 # config_path = "/data/best_models/ecyourtts_v20_video_game/model_config.json"
 
-model_path = "/data/best_models/ecyourtts_v20_video_game/checkpoint_3595000.pth"
-config_path = "/data/best_models/ecyourtts_v20_video_game/model_config.json"
-port = 5013
+# model_path = "/data/best_models/ecyourtts_v20_video_game_pitch_fix/checkpoint_3365000.pth"
+# config_path = "/data/best_models/ecyourtts_v20_video_game_pitch_fix/model_config.json"
+
+# model_path = "/data/best_models/YourTTS-variant20-pitch_fix-ploss_fix/checkpoint_3425000.pth"
+# config_path = "/data/best_models/YourTTS-variant20-pitch_fix-ploss_fix/model_config.json"
+
+# model_path = "/data/best_models/ecyourtts_v21/checkpoint_3845000.pth"
+# config_path = "/data/best_models/ecyourtts_v21/model_config.json"
+port = 5021
 
 language_path = None
 speakers_file = os.path.join(ROOT_PATH, "models/speakers.json")
@@ -261,7 +270,7 @@ def rms_norm(*, wav: np.ndarray = None, db_level: float = -27.0, **kwargs) -> np
     a = np.sqrt((len(wav) * (r**2)) / np.sum(wav**2))
     return wav * a
 
-
+# needed for morping a speaker
 speaker_embedding = None
 
 
