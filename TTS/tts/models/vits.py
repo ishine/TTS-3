@@ -1147,11 +1147,11 @@ class VitsArgs(Coqpit):
             Enable/Disable Speaker Consistency Loss (SCL). Defaults to False.
 
         speaker_encoder_config_path (str):
-            Path to the file speaker encoder config file, to use for SCL. 
+            Path to the file speaker encoder config file, to use for SCL.
             Defaults to "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/config_se.json".
 
         speaker_encoder_model_path (str):
-            Path to the file speaker encoder checkpoint file, to use for SCL. 
+            Path to the file speaker encoder checkpoint file, to use for SCL.
             Defaults to "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/model_se.pth.tar".
 
         condition_dp_on_speaker (bool):
@@ -1179,7 +1179,7 @@ class VitsArgs(Coqpit):
             Freeze the waveform decoder weigths during training. Defaults to False.
 
         freeze_predictors (bool):
-            Freeze duration, pitch, energy, utterance level prosody and phoneme level prosody weigths during training. 
+            Freeze duration, pitch, energy, utterance level prosody and phoneme level prosody weigths during training.
             Defaults to False.
 
         freeze_prosody_encoders (bool):
@@ -2778,6 +2778,20 @@ class Vits(BaseTTS):
             "z_p": z_p,
             "m_p": m_p,
             "logs_p": logs_p,
+            "y_mask": y_mask,
+        }
+        return outputs
+
+    @torch.no_grad()
+    def inference_posterior_encoder(self, spec, spec_lengths, spk_emb):
+        """Inference through the posterior encoder with a spectrogram as input."""
+        spk_emb = spk_emb.unsqueeze(2)
+        z, _, _, y_mask = self.posterior_encoder(spec, spec_lengths, g=spk_emb)
+        z, _, _, y_mask = self.upsampling_z(z, y_lengths=spec_lengths, y_mask=y_mask)
+        o, _, _ = self.waveform_decoder((z * y_mask), g=spk_emb)
+        outputs = {
+            "model_outputs": o,
+            "z": z,
             "y_mask": y_mask,
         }
         return outputs
