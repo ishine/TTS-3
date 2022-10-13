@@ -59,7 +59,7 @@ def add_extra_keys(metadata, language, dataset_name):
         # add language name
         item["language"] = language
         # add unique audio name
-        relfilepath = os.path.splitext(item["audio_file"].replace(item["root_path"], ""))[0]
+        relfilepath = os.path.splitext(os.path.relpath(item["audio_file"], item["root_path"]))[0]
         audio_unique_name = f"{dataset_name}#{relfilepath}"
         item["audio_unique_name"] = audio_unique_name
 
