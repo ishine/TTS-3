@@ -1,3 +1,4 @@
+import base64
 import math
 import os
 import pysbd
@@ -25,7 +26,7 @@ from trainer.trainer_utils import get_optimizer, get_scheduler
 from TTS.utils.samplers import BucketBatchSampler
 from TTS.utils.io import load_fsspec
 from TTS.tts.configs.shared_configs import CharactersConfig
-from TTS.tts.datasets.dataset import F0Dataset, TTSDataset, _parse_sample, string2filename
+from TTS.tts.datasets.dataset import F0Dataset, TTSDataset, _parse_sample
 from TTS.tts.layers.generic.aligner import AlignmentNetwork
 from TTS.tts.layers.generic.duration_predictor_lstm import BottleneckLayerLayer, DurationPredictorLSTM
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
@@ -302,6 +303,12 @@ def get_attribute_balancer_weights(items: list, attr_name: str, multi_dict: dict
         unique_attr_names,
         np.unique(dataset_samples_weight).tolist(),
     )
+
+
+def string2filename(string):
+    # generate a safe and reversible filename based on a string
+    filename = base64.urlsafe_b64encode(string.encode("utf-8")).decode("utf-8", "ignore")
+    return filename
 
 
 class VitsF0Dataset(F0Dataset):
@@ -1560,8 +1567,8 @@ class Vits(BaseTTS):
         if self.args.use_pitch:
 
             # computed externally
-            self.pitch_mean = 185.0
-            self.pitch_std = 89.0
+            self.pitch_mean = 181.0
+            self.pitch_std = 86.0
 
             self.pitch_predictor = DurationPredictorLSTM(
                 in_channels=self.args.hidden_channels,
@@ -1854,7 +1861,6 @@ class Vits(BaseTTS):
 
     def on_epoch_start(self, trainer):  # pylint: disable=W0613
         """Freeze layers at the beginning of an epoch"""
-        self._freeze_layers()
         # set the device of speaker encoder
         if self.args.use_speaker_encoder_as_loss:
             self.speaker_manager.encoder = self.speaker_manager.encoder.to(self.device)
