@@ -1683,7 +1683,7 @@ class Vits(BaseTTS):
             self.context_encoder = ContextEncoder(
                 in_channels=self.args.hidden_channels if self.args.condition_context_encoder_on_text else 0,
                 cond_channels=context_cond_channels,
-                spk_emb_channels=self.embedded_speaker_dim,
+                spk_emb_channels=0,
                 emo_emb_channels=self.embedded_emotion_dim if self.args.condition_context_encoder_on_emotion else 0,
                 num_lstm_layers=1,
                 lstm_norm="spectral",
