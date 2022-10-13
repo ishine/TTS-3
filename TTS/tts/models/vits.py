@@ -25,7 +25,7 @@ from trainer.trainer_utils import get_optimizer, get_scheduler
 from TTS.utils.samplers import BucketBatchSampler
 from TTS.utils.io import load_fsspec
 from TTS.tts.configs.shared_configs import CharactersConfig
-from TTS.tts.datasets.dataset import F0Dataset, TTSDataset, _parse_sample
+from TTS.tts.datasets.dataset import F0Dataset, TTSDataset, _parse_sample, string2filename
 from TTS.tts.layers.generic.aligner import AlignmentNetwork
 from TTS.tts.layers.generic.duration_predictor_lstm import BottleneckLayerLayer, DurationPredictorLSTM
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
@@ -363,11 +363,11 @@ class VitsF0Dataset(F0Dataset):
             np.save(pitch_file, f0)
         return f0
 
-    def compute_or_load(self, wav_file):
+    def compute_or_load(self, wav_file, audio_unique_name):
         """
         compute pitch and return a numpy array of pitch values
         """
-        pitch_file = self.create_pitch_file_path(wav_file, self.cache_path)
+        pitch_file = self.create_pitch_file_path(audio_unique_name, self.cache_path)
         if not os.path.exists(pitch_file):
             pitch = self._compute_and_save_pitch(
                 audio_config=self.audio_config, wav_file=wav_file, pitch_file=pitch_file, sample_rate=self.sample_rate
@@ -378,8 +378,8 @@ class VitsF0Dataset(F0Dataset):
 
     def __getitem__(self, idx):
         item = self.samples[idx]
-        f0 = self.compute_or_load(item["audio_file"])
-        return {"audio_file": item["audio_file"], "f0": f0}
+        f0 = self.compute_or_load(item["audio_file"], string2filename(item["audio_unique_name"]))
+        return {"audio_unique_name": item["audio_unique_name"], "f0": f0}
 
 
 class VitsDataset(TTSDataset):
@@ -954,6 +954,7 @@ class ConvTransposed(nn.Module):
 
 class PhonemeProsodyPredictor(nn.Module):
     """Non-parallel Prosody Predictor inspired by Du et al., 2021"""
+
     # TODO: use LSTM duration predictor like architecture
 
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, kernel_size: int, p_dropout: float):
@@ -1157,40 +1158,6 @@ class VitsArgs(Coqpit):
         condition_dp_on_speaker (bool):
             Condition the duration predictor on the speaker embedding. Defaults to True.
 
-        freeze_encoder (bool):
-            Freeze the encoder weigths during training. Defaults to False.
-
-        freeze_duration_predictor (bool):
-            Freeze the duration predictor weigths during training. Defaults to False.
-
-        feezer_pitch_predictor (bool):
-            Freeze the pitch predictor weigths during training. Defaults to False.
-
-        freeze_energy_predictor (bool):
-            Freeze the energy predictor weigths during training. Defaults to False.
-
-        freeze_posterior_encoder (bool):
-            Freeze the posterior encoder weigths during training. Defaults to False.
-
-        freeze_flow_encoder (bool):
-            Freeze the flow encoder weigths during training. Defaults to False.
-
-        freeze_waveform_decoder (bool):
-            Freeze the waveform decoder weigths during training. Defaults to False.
-
-        freeze_predictors (bool):
-            Freeze duration, pitch, energy, utterance level prosody and phoneme level prosody weigths during training.
-            Defaults to False.
-
-        freeze_prosody_encoders (bool):
-            Freeze utterance level prosody encoder and phoneme level prosody encoder weigths during training. Defaults to False.
-
-        freeze_aligner (bool):
-            Freeze aligner weigths during training. Defaults to False.
-
-        freeze_all_except_DP (bool):
-            Freeze all generator modules weigths except duration predictor during training. Defaults to False.
-
         encoder_sample_rate (int):
             If not None this sample rate will be used for training the Posterior Encoder,
             flow, text_encoder and duration predictor. The decoder part (vocoder) will be
@@ -1277,20 +1244,13 @@ class VitsArgs(Coqpit):
     num_languages: int = 0
     language_ids_file: str = None
     use_speaker_encoder_as_loss: bool = False
-    speaker_encoder_config_path: str = "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/config_se.json"
-    speaker_encoder_model_path: str = "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/model_se.pth.tar"
+    speaker_encoder_config_path: str = (
+        "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/config_se.json"
+    )
+    speaker_encoder_model_path: str = (
+        "https://github.com/coqui-ai/TTS/releases/download/speaker_encoder_model/model_se.pth.tar"
+    )
     condition_dp_on_speaker: bool = True
-    freeze_encoder: bool = False
-    freeze_duration_predictor: bool = False
-    freeze_pitch_predictor: bool = False
-    freeze_energy_predictor: bool = False
-    freeze_posterior_encoder: bool = False
-    freeze_flow_decoder: bool = False
-    freeze_waveform_decoder: bool = False
-    freeze_predictors: bool = False
-    freeze_prosody_encoders: bool = False
-    freeze_aligner: bool = False
-    freeze_all_except_DP: bool = False
     encoder_sample_rate: int = None
     interpolate_z: bool = True
     reinit_DP: bool = False
@@ -1305,7 +1265,7 @@ class VitsArgs(Coqpit):
     energy_predictor_kernel_size: int = 3
     energy_predictor_dropout_p: float = 0.1
     energy_embedding_kernel_size: int = 3
-    use_context_encoder: bool = False
+    use_context_encoder: bool = True
     use_utterance_level_prosody_encoder: bool = True
     use_phoneme_level_prosody_encoder: bool = True
     condition_context_encoder_on_emotion: bool = True
@@ -1598,20 +1558,18 @@ class Vits(BaseTTS):
         # --> PITCH PREDICTOR
         context_cond_channels = 0
         if self.args.use_pitch:
+
+            # computed externally
+            self.pitch_mean = 185.0
+            self.pitch_std = 89.0
+
             self.pitch_predictor = DurationPredictorLSTM(
                 in_channels=self.args.hidden_channels,
                 bottleneck_channels=16,  # TODO: make this configurable
                 spk_emb_channels=self.embedded_speaker_dim,
                 emo_emb_channels=self.embedded_emotion_dim,
             )
-            # self. = ResidualCouplingBlocks(
-            #     self.args.hidden_channels,
-            #     self.args.hidden_channels,
-            #     kernel_size=self.args.kernel_size_flow,
-            #     dilation_rate=self.args.dilation_rate_flow,
-            #     num_layers=self.args.num_layers_flow,
-            #     cond_channels=self.context_encoder.hidden_lstm_channels * 2,
-            # )
+
             self.pitch_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
@@ -1619,8 +1577,6 @@ class Vits(BaseTTS):
                 padding=int((self.args.pitch_embedding_kernel_size - 1) / 2),
             )
             context_cond_channels += self.args.hidden_channels
-            self.pitch_scaler = torch.nn.BatchNorm1d(1, affine=False, track_running_stats=True, momentum=None)
-            self.pitch_scaler.requires_grad_(False)
 
         # --> ENERGY PREDICTOR
         if self.args.use_energy_predictor:
@@ -1684,7 +1640,6 @@ class Vits(BaseTTS):
                 elementwise_affine=False,
             )
 
-
         if self.args.use_phoneme_level_prosody_encoder:
             ## -- PHONEME ENCODER & PREDICTOR -- ##
             self.phoneme_prosody_encoder = PhonemeLevelProsodyEncoder(
@@ -1721,7 +1676,7 @@ class Vits(BaseTTS):
             self.context_encoder = ContextEncoder(
                 in_channels=self.args.hidden_channels if self.args.condition_context_encoder_on_text else 0,
                 cond_channels=context_cond_channels,
-                spk_emb_channels=0,
+                spk_emb_channels=self.embedded_speaker_dim,
                 emo_emb_channels=self.embedded_emotion_dim if self.args.condition_context_encoder_on_emotion else 0,
                 num_lstm_layers=1,
                 lstm_norm="spectral",
@@ -1791,11 +1746,9 @@ class Vits(BaseTTS):
         # denoiser only to be used in inference
         self.denoiser = VitsDenoiser(self)
 
-
     @property
     def device(self):
         return next(self.parameters()).device
-
 
     def init_multispeaker(self, config: Coqpit):
         """Initialize multi-speaker modules of a model. A model can be trained either with a speaker embedding layer
@@ -1939,19 +1892,31 @@ class Vits(BaseTTS):
             print(" > Text Encoder was reinit.")
 
     def on_epoch_end(self, trainer):
-        # if self.args.use_energy_predictor:
-        #     # stop updating mean and var
-        #     self.energy_scaler.eval()
-        if self.args.use_pitch:
-            # stop updating mean and var
-            self.pitch_scaler.eval()
+        pass
 
     def get_aux_input(self, aux_input: Dict):
         sid, g, lid = self._set_cond_input(aux_input)
         return {"speaker_ids": sid, "style_wav": None, "d_vectors": g, "language_ids": lid}
 
-    def _freeze_layers(self):
-        if self.args.freeze_encoder:
+    def freeze_layers(
+        self,
+        text_encoder: bool = False,
+        posterior_encoder: bool = False,
+        duration_predictor: bool = False,
+        pitch_predictor: bool = False,
+        energy_predictor: bool = False,
+        flow_decoder: bool = False,
+        waveform_decoder: bool = False,
+        aligner: bool = False,
+        phoneme_level_prosody_encoder: bool = False,
+        phoneme_level_prosody_predictor: bool = False,
+        utterance_level_prosody_predictor: bool = False,
+        utterance_level_prosody_encoder: bool = False,
+        all_except_dp: bool = False,
+    ):
+        """Freeze layers of the model. Call this before training
+        """
+        if text_encoder:
             print(" > Freezing Text encoder...")
             for param in self.text_encoder.parameters():
                 param.requires_grad = False
@@ -1960,61 +1925,65 @@ class Vits(BaseTTS):
                 for param in self.emb_l.parameters():
                     param.requires_grad = False
 
-        if self.args.freeze_posterior_encoder:
+        if posterior_encoder:
             print(" > Freezing posterior encoder...")
             for param in self.posterior_encoder.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_duration_predictor:
+        if duration_predictor:
             print(" > Freezing duration predictor...")
             for param in self.duration_predictor.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_energy_predictor:
+        if energy_predictor:
             print(" > Freezing energy predictor...")
             for param in self.energy_predictor.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_pitch_predictor:
+        if pitch_predictor:
             print(" > Freezing pitch predictor...")
             for param in self.pitch_predictor.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_flow_decoder:
+        if flow_decoder:
             print(" > Freezing flow decoder...")
             for param in self.flow.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_waveform_decoder:
+        if waveform_decoder:
             print(" > Freezing waveform decoder...")
             for param in self.waveform_decoder.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_aligner:
+        if aligner:
             print(" > Freezing Aligner...")
             for param in self.aligner.parameters():
                 param.requires_grad = False
             for param in self.aligner_spk_bottleneck.parameters():
                 param.requires_grad = False
 
-        if self.args.freeze_predictors:
+        if duration_predictor:
             print(" > Freezing Duration Predictor...")
             for param in self.duration_predictor.parameters():
                 param.requires_grad = False
 
+        if pitch_predictor:
             print(" > Freezing Pitch Predictor...")
             for param in self.pitch_predictor.parameters():
                 param.requires_grad = False
 
+        if energy_predictor:
             print(" > Freezing Energy Predictor...")
             for param in self.energy_predictor.parameters():
                 param.requires_grad = False
 
+        if phoneme_level_prosody_predictor:
             if self.args.use_phoneme_level_prosody_encoder:
                 print(" > Freezing Phoneme Level Prosody Predictor...")
                 for param in self.phoneme_prosody_predictor.parameters():
                     param.requires_grad = False
 
+        if utterance_level_prosody_predictor:
             if self.args.use_utterance_level_prosody_encoder:
                 print(" > Freezing Utterance Level Prosody Predictor...")
                 for param in self.utterance_prosody_predictor.parameters():
@@ -2024,7 +1993,7 @@ class Vits(BaseTTS):
                 for param in self.adaptors_spk_bottleneck.parameters():
                     param.requires_grad = False
 
-        if self.args.freeze_prosody_encoders:
+        if phoneme_level_prosody_encoder:
             if self.args.use_phoneme_level_prosody_encoder:
                 print(" > Freezing Phoneme Level Prosody Encoder...")
                 for param in self.phoneme_prosody_encoder.parameters():
@@ -2033,6 +2002,8 @@ class Vits(BaseTTS):
                     param.requires_grad = False
                 for param in self.p_norm.parameters():
                     param.requires_grad = False
+
+        if utterance_level_prosody_encoder:
             if self.args.use_utterance_level_prosody_encoder:
                 print(" > Freezing Utterance Level Prosody Encoder...")
                 for param in self.utterance_prosody_encoder.parameters():
@@ -2042,7 +2013,7 @@ class Vits(BaseTTS):
                 for param in self.u_norm.parameters():
                     param.requires_grad = False
 
-        if self.args.freeze_all_except_DP:
+        if all_except_dp:
             print(" > Freezing all the modules of the model except duration predictor...")
             for name, param in self.named_parameters():
                 if "duration_predictor." in name or "disc." in name:
@@ -2219,7 +2190,7 @@ class Vits(BaseTTS):
             o_energy = o_energy / 1.4
             o_energy = (o_energy + 1) / 2
             if energy_transform is not None:
-                o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
+                o_energy = energy_transform(o_energy, x_mask.sum(dim=(1, 2)))
             o_energy_emb = self.energy_emb(o_energy)
             return o_energy_emb, o_energy
 
@@ -2495,7 +2466,14 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_de]
-        context_emb = self.context_encoder(o_en_ex if self.args.condition_context_encoder_on_text else None, y_lengths, spk_emb=None, emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None, cond=context_cond)
+        # TODO: add spk_emb to context encoder
+        context_emb = self.context_encoder(
+            o_en_ex if self.args.condition_context_encoder_on_text else None,
+            y_lengths,
+            spk_emb=None,
+            emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None,
+            cond=context_cond,
+        )
 
         ###### --> FLOW
 
@@ -2522,7 +2500,6 @@ class Vits(BaseTTS):
         z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
         # context_emb_seg, _, _, _ = self.upsampling_z(context_emb_seg, slice_ids=slice_ids)
 
-        # TODO: Try passing only spk_emb
         o, o1, o2 = self.waveform_decoder(z_slice, g=spk_emb)
 
         wav_seg = segment(
@@ -2665,8 +2642,7 @@ class Vits(BaseTTS):
         dur = dur * self.length_scale
         dur = torch.round(dur)
         dur[dur < 1] = 1
-        dur =  dur * x_mask
-
+        dur = dur * x_mask
 
         y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
         y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
@@ -2753,12 +2729,19 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en_ex if self.args.condition_context_encoder_on_text else None, y_lengths, spk_emb=None, emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None, cond=context_cond)
+        # TODO: add speaker embedding to context encoder
+        o_context = self.context_encoder(
+            o_en_ex if self.args.condition_context_encoder_on_text else None,
+            y_lengths,
+            spk_emb=None,
+            emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None,
+            cond=context_cond,
+        )
 
         ### --> FLOW DECODER
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
-        z = self.flow(z_p, y_mask,  g=spk_emb, g2=o_context * y_mask, reverse=True)
+        z = self.flow(z_p, y_mask, g=spk_emb, g2=o_context * y_mask, reverse=True)
 
         ### --> VOCODER
 
@@ -2988,16 +2971,16 @@ class Vits(BaseTTS):
 
             # add prosody losses
             if self.model_outputs_cache["u_prosody_loss"] is not None:
-                loss_dict["loss_u_prosody"] = self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha
-                loss_dict["loss"] = (
-                    loss_dict["loss_u_prosody"] + loss_dict["loss"]
+                loss_dict["loss_u_prosody"] = (
+                    self.model_outputs_cache["u_prosody_loss"] * self.config.u_prosody_loss_alpha
                 )
+                loss_dict["loss"] = loss_dict["loss_u_prosody"] + loss_dict["loss"]
 
             if self.model_outputs_cache["p_prosody_loss"] is not None:
-                loss_dict["loss_p_prosody"] = self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha
-                loss_dict["loss"] = (
-                    loss_dict["loss_p_prosody"] + loss_dict["loss"]
+                loss_dict["loss_p_prosody"] = (
+                    self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha
                 )
+                loss_dict["loss"] = loss_dict["loss_p_prosody"] + loss_dict["loss"]
 
             # compute useful training stats
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
@@ -3457,9 +3440,7 @@ class Vits(BaseTTS):
             # batch["energy"] = self.energy_scaler(batch["energy"])
 
         if self.args.use_pitch:
-            zero_idxs = batch["pitch"] == 0.0
-            pitch_norm = self.pitch_scaler(batch["pitch"])
-            pitch_norm[zero_idxs] = 0.0
+            pitch_norm = (batch["pitch"] - self.pitch_mean) / self.pitch_std
             batch["pitch"] = pitch_norm[:, :, : batch["energy"].shape[-1]]
         return batch
 
@@ -3648,10 +3629,7 @@ class Vits(BaseTTS):
             assert not self.training
 
     def set_inference(self):
-        self.pitch_mean = self.pitch_scaler.running_mean.clone()
-        self.pitch_std = torch.sqrt(self.pitch_scaler.running_var.clone())
-        # self.energy_mean = self.energy_scaler.running_mean.clone()
-        # self.energy_std = torch.sqrt(self.energy_scaler.running_var.clone())
+        pass
 
     @staticmethod
     def init_from_config(config: "VitsConfig", samples: Union[List[List], List[Dict]] = None, verbose=True):
@@ -3778,7 +3756,12 @@ class Vits(BaseTTS):
         outputs = self.inference(
             input_tensors,
             x_lengths=input_lengths,
-            aux_input={"d_vectors": d_vector.expand(num_sentences, -1), "speaker_ids": speaker_id, "emotion_vectors": emotion_vector.expand(num_sentences, -1), "emotion_ids": emotion_id},
+            aux_input={
+                "d_vectors": d_vector.expand(num_sentences, -1),
+                "speaker_ids": speaker_id,
+                "emotion_vectors": emotion_vector.expand(num_sentences, -1),
+                "emotion_ids": emotion_id,
+            },
             pitch_transform=pitch_transform,
         )
 
