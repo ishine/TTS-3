@@ -771,6 +771,7 @@ class F0Dataset:
         return pitch.astype(np.float32)
 
     def collate_fn(self, batch):
+        audio_file = [item["audio_file"] for item in batch]
         audio_unique_name = [item["audio_unique_name"] for item in batch]
         f0s = [item["f0"] for item in batch]
         f0_lens = [len(item["f0"]) for item in batch]
@@ -778,7 +779,7 @@ class F0Dataset:
         f0s_torch = torch.LongTensor(len(f0s), f0_lens_max).fill_(self.get_pad_id())
         for i, f0_len in enumerate(f0_lens):
             f0s_torch[i, :f0_len] = torch.LongTensor(f0s[i])
-        return {"audio_unique_name": audio_unique_name, "f0": f0s_torch, "f0_lens": f0_lens}
+        return {"audio_unique_name": audio_unique_name, "audio_file": audio_file, "f0": f0s_torch, "f0_lens": f0_lens}
 
     def print_logs(self, level: int = 0) -> None:
         indent = "\t" * level
