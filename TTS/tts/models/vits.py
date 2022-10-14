@@ -386,7 +386,7 @@ class VitsF0Dataset(F0Dataset):
     def __getitem__(self, idx):
         item = self.samples[idx]
         f0 = self.compute_or_load(item["audio_file"], string2filename(item["audio_unique_name"]))
-        return {"audio_unique_name": item["audio_unique_name"], "f0": f0}
+        return {"audio_unique_name": item["audio_unique_name"], "audio_file": item["audio_file"], "f0": f0}
 
 
 class VitsDataset(TTSDataset):

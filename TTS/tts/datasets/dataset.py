@@ -684,7 +684,7 @@ class F0Dataset:
         if self.normalize_f0:
             assert self.mean is not None and self.std is not None, " [!] Mean and STD is not available"
             f0 = self.normalize(f0)
-        return {"audio_unique_name": item["audio_unique_name"], "f0": f0}
+        return {"audio_unique_name": item["audio_unique_name"], "audio_file": item["audio_file"], "f0": f0}
 
     def __len__(self):
         return len(self.samples)
