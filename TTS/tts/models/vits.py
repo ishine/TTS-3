@@ -260,6 +260,18 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
     return spec
 
 
+def normalize_pitch(pitch, mean, std):
+    pitch = pitch - mean
+    pitch = pitch / std
+    return pitch
+
+
+def denormalize_pitch(pitch, mean, std):
+    pitch *= std
+    pitch += mean
+    return pitch
+
+
 #############################
 # CONFIGS
 #############################
@@ -2161,7 +2173,17 @@ class Vits(BaseTTS):
         else:
             # Inference
             if pitch_transform is not None:
+                print("Pitch without transform:", o_pitch)
+                # denormalize
+                o_pitch = denormalize_pitch(o_pitch, self.pitch_mean, self.pitch_std)
+                print("Pitch without transform denormalized:", o_pitch)
+
                 o_pitch = pitch_transform(o_pitch, x_mask.sum(dim=(1, 2)), self.pitch_mean, self.pitch_std)
+                print("Pitch with transform:", o_pitch)
+                # normalize if needed
+                o_pitch = normalize_pitch(o_pitch, self.pitch_mean, self.pitch_std)
+                print("Pitch with transform re-normalized:", o_pitch)
+
             o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
