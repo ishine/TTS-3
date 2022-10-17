@@ -2184,6 +2184,10 @@ class Vits(BaseTTS):
                 o_pitch = normalize_pitch(o_pitch, self.pitch_mean, self.pitch_std)
                 print("Pitch with transform re-normalized:", o_pitch)
 
+            # Replace pitch values < 0
+            zero_point = (0.0 - self.pitch_mean) / self.pitch_std
+            o_pitch[o_pitch < zero_point] = zero_point
+
             o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
