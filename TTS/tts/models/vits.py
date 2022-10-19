@@ -32,6 +32,7 @@ from TTS.tts.layers.generic.duration_predictor_lstm import BottleneckLayerLayer,
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
 from TTS.tts.layers.vits.networks import ContextEncoder, PosteriorEncoder, ResidualCouplingBlocks, TextEncoder
 from TTS.tts.layers.vits.stochastic_duration_predictor import StochasticDurationPredictor
+from TTS.tts.layers.vits.learned_upsampling import RangePredictor, GaussianUpsampling
 from TTS.tts.models.base_tts import BaseTTS
 from TTS.tts.layers.vits.denoise import VitsDenoiser
 from TTS.tts.utils.emotions import EmotionManager
@@ -973,7 +974,6 @@ class ConvTransposed(nn.Module):
 
 class PhonemeProsodyPredictor(nn.Module):
     """Non-parallel Prosody Predictor inspired by Du et al., 2021"""
-
     # TODO: use LSTM duration predictor like architecture
 
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, kernel_size: int, p_dropout: float):
@@ -1742,6 +1742,13 @@ class Vits(BaseTTS):
                 emo_emb_channels=self.embedded_emotion_dim,
             )
 
+        self.range_predictor = RangePredictor(
+            self.args.hidden_channels, 256, 3, self.args.dropout_p_duration_predictor, cond_channels=0
+        )
+
+        self.gaussian_upsampling = GaussianUpsampling()
+
+
         # --> VOCODER
         self.waveform_decoder = HifiganGenerator(
             self.args.hidden_channels,
@@ -2303,6 +2310,24 @@ class Vits(BaseTTS):
         u_prosody_pred = u_prosody_pred.sum(1, keepdim=True) / lengths.view(-1, 1, 1)
         return u_prosody_pred
 
+    def _expand_encoder_with_gaussian_upsampling(
+            self,
+            m_p: torch.FloatTensor,
+            logs_p: torch.FloatTensor,
+            o_ranges: torch.FloatTensor,
+            y_lengths: torch.IntTensor,
+            dr: torch.IntTensor,
+            x_mask: torch.IntTensor,
+            x_lengths: torch.LongTensor,
+        ):
+        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).to(m_p.dtype)
+        m_p_ex = self.gaussian_upsampling(x=m_p, durations=dr, vars=o_ranges, x_lengths=x_lengths)  # [B, T_de', C_en]
+        logs_p_ex = self.gaussian_upsampling(
+            x=logs_p, durations=dr, vars=o_ranges, x_lengths=x_lengths
+        )  # [B, T_de', C_en]
+        # attn = self.generate_attn(dr, x_mask, y_mask)  # [B, T_en, T_de']
+        return y_mask, m_p_ex, logs_p_ex
+
     def forward(  # pylint: disable=dangerous-default-value
         self,
         x: torch.tensor,
@@ -2462,15 +2487,28 @@ class Vits(BaseTTS):
             )
 
         ##### --> EXPAND
+        # range predictor
+        o_ranges = self.range_predictor(x=o_en.detach(), dr=aligner_hard.sum(3).squeeze(1), x_mask=x_mask)
+
+        # expand encoder outputs
+        y_mask, m_p, logs_p = self._expand_encoder_with_gaussian_upsampling(
+            m_p=m_p,
+            logs_p=logs_p,
+            o_ranges=o_ranges,
+            y_lengths=y_lengths,
+            dr=aligner_hard.sum(3).squeeze(1),
+            x_mask=x_mask,
+            x_lengths=x_lengths,
+        )
 
         # expand prior
         if binarize_alignment:
-            m_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, m_p])
-            logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, logs_p])
+            # m_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, m_p])
+            # logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, logs_p])
             o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_hard, o_en])
         else:
-            m_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, m_p])
-            logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, logs_p])
+            # m_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, m_p])
+            # logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, logs_p])
             o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_soft, o_en])
 
         ##### --> Pitch & Energy Predictors
@@ -2727,8 +2765,21 @@ class Vits(BaseTTS):
 
         ### --> EXPAND
 
-        m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
-        logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
+        o_ranges = self.range_predictor(x=o_en.detach(), dr=dur.squeeze(1), x_mask=x_mask)
+
+        # expand encoder outputs
+        y_mask, m_p, logs_p = self._expand_encoder_with_gaussian_upsampling(
+            m_p=m_p,
+            logs_p=logs_p,
+            o_ranges=o_ranges,
+            y_lengths=y_lengths,
+            dr=dur.squeeze(1),
+            x_mask=x_mask,
+            x_lengths=x_lengths,
+        )
+
+        # m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
+        # logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
         o_en_ex = torch.matmul(attn.transpose(1, 2), o_en.transpose(1, 2)).transpose(1, 2)
 
         ### --> PITCH & ENERGY PREDICTORS
@@ -2761,14 +2812,7 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        # TODO: add speaker embedding to context encoder
-        o_context = self.context_encoder(
-            o_en_ex if self.args.condition_context_encoder_on_text else None,
-            y_lengths,
-            spk_emb=None,
-            emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None,
-            cond=context_cond,
-        )
+        o_context = self.context_encoder(o_en_ex if self.args.condition_context_encoder_on_text else None, y_lengths, spk_emb=None, emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None, cond=context_cond)
 
         ### --> FLOW DECODER
 
@@ -3013,6 +3057,16 @@ class Vits(BaseTTS):
                     self.model_outputs_cache["p_prosody_loss"] * self.config.p_prosody_loss_alpha
                 )
                 loss_dict["loss"] = loss_dict["loss_p_prosody"] + loss_dict["loss"]
+
+            # compute useful training stats
+            loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
+            loss_dict["avg_spec_length"] = batch["spec_lens"].float().mean()
+            loss_dict["avg_text_batch_occupancy"] = (
+                batch["token_lens"].float() / batch["token_lens"].float().max()
+            ).mean()
+            loss_dict["avg_spec_batch_occupancy"] = (
+                batch["spec_lens"].float() / batch["spec_lens"].float().max()
+            ).mean()
 
             # compute useful training stats
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
