@@ -757,12 +757,16 @@ class VitsGeneratorLoss(nn.Module):
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
         loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
-        loss_char_dur = (
-            self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len)
-            * self.char_dur_loss_alpha
-        )
         loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
-        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_char_dur + loss_aligner
+        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_aligner
+
+        if self.char_dur_loss_alpha > 0:
+            loss_char_dur = (
+                self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len)
+                * self.char_dur_loss_alpha
+            )
+            return_dict["loss_char_dur"] = loss_char_dur
+            loss += loss_char_dur
 
         if use_speaker_encoder_as_loss:
             loss_se = self.cosine_similarity_loss(gt_spk_emb, syn_spk_emb) * self.spk_encoder_loss_alpha
@@ -797,7 +801,6 @@ class VitsGeneratorLoss(nn.Module):
         return_dict["loss_feat"] = loss_feat
         return_dict["loss_mel"] = loss_mel
         return_dict["loss_duration"] = loss_duration
-        return_dict["loss_char_dur"] = loss_char_dur
         return_dict["loss_aligner"] = loss_aligner
         return_dict["loss"] = loss
         return return_dict
