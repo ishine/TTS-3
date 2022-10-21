@@ -235,6 +235,11 @@ class EmbeddingManager(BaseIDManager):
             self.embeddings_by_names.update(embeddings_by_names)
             self.embeddings.update(embeddings)
 
+        # cache the averaged speaker embedding for fast inference and training
+        self.averaged_embeddings_by_names = {}
+        for idx in self.embeddings_by_names:
+            self.averaged_embeddings_by_names[idx] = np.stack(self.embeddings_by_names[idx]).mean(0)
+
     def get_embedding_by_clip(self, clip_idx: str) -> List:
         """Get embedding by clip ID.
 
@@ -282,10 +287,10 @@ class EmbeddingManager(BaseIDManager):
         Returns:
             np.ndarray: Mean embedding.
         """
-        embeddings = self.get_embeddings_by_name(idx)
         if num_samples is None:
-            embeddings = np.stack(embeddings).mean(0)
+            embeddings = self.averaged_embeddings_by_names[idx]
         else:
+            embeddings = self.get_embeddings_by_name(idx)
             assert len(embeddings) >= num_samples, f" [!] {idx} has number of samples < {num_samples}"
             if randomize:
                 embeddings = np.stack(random.choices(embeddings, k=num_samples)).mean(0)
