@@ -110,6 +110,7 @@ class VitsConfig(BaseTTSConfig):
     # model specific params
     model_args: VitsArgs = field(default_factory=VitsArgs)
     audio: VitsAudioConfig = VitsAudioConfig()
+    train_dp: bool = False
 
     # optimizer
     grad_clip: List[float] = field(default_factory=lambda: [1000, 1000])
@@ -137,7 +138,7 @@ class VitsConfig(BaseTTSConfig):
     p_prosody_loss_alpha: float = 1.0
     speaker_encoder_loss_alpha: float = 1.0
     aligner_loss_alpha: float = 1.0
-    binary_alignment_loss_alpha: float = 0.05
+    binary_alignment_loss_alpha: float = 1.0
 
     # aligner params
     binarize_alignment: bool = False

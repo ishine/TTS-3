@@ -53,6 +53,46 @@ from TTS.tts.utils.visual import plot_alignment, plot_avg_pitch, plot_pitch, plo
 from TTS.vocoder.models.hifigan_generator import HifiganGenerator
 from TTS.vocoder.utils.generic_utils import plot_results
 
+
+def beta_div(input, target, beta=2):
+    r"""The `β-divergence loss
+    <https://arxiv.org/pdf/1010.1763.pdf>`__ measure
+
+    The loss can be described as:
+
+    .. math::
+        \ell(x, y) = \sum_{n = 0}^{N - 1} \frac{1}{\beta (\beta - 1)}\left ( x_n^{\beta} + \left (\beta - 1
+        \right ) y_n^{\beta} - \beta x_n y_n^{\beta-1}\right )
+
+    Args:
+        input (Tensor): tensor of arbitrary shape
+        target (Tensor): tensor of the same shape as input
+        beta (float): a real value control the shape of loss function
+
+    Returns:
+        Tensor: single element tensor
+    """
+    eps = 1e-8
+    # if beta == 2:
+    #     return euclidean(input, target)
+    # elif beta == 1:
+    #     return kl_div(input, target)
+    # elif beta == 0:
+    #     return is_div(input, target)
+    input = input.reshape(-1).add(eps)
+    target = target.reshape(-1)
+    if beta < 0:
+        target = target.add(eps)
+    bminus = beta - 1
+
+    term_1 = target.pow(beta).sum()
+    term_2 = input.pow(beta).sum()
+    term_3 = target @ input.pow(bminus)
+
+    loss = term_1 + bminus * term_2 - beta * term_3
+    return loss / (beta * bminus)
+
+
 ##############################
 # IO / Feature extraction
 ##############################
@@ -2098,12 +2138,6 @@ class Vits(BaseTTS):
             )
             loss_duration = loss_duration / torch.sum(x_mask)
         else:
-            # log_durations = self.duration_predictor(
-            #     x.detach() if self.args.detach_dp_input else x,
-            #     x_mask,
-            #     g=g.detach() if self.args.detach_dp_input and g is not None else g,
-            #     lang_emb=lang_emb.detach() if self.args.detach_dp_input and lang_emb is not None else lang_emb,
-            # )
             log_durations = self.duration_predictor(
                 txt_enc=x.detach() if self.args.detach_dp_input else x,
                 spk_emb=g.detach() if self.args.detach_dp_input and g is not None else g,
@@ -2111,8 +2145,12 @@ class Vits(BaseTTS):
                 lens=x_lengths,
             )
             # compute duration loss
+            # TODO: Try linear scale with beta_div
             attn_log_durations = torch.log(attn_durations + 1) * x_mask
-            loss_duration = torch.sum((log_durations - attn_log_durations) ** 2, [1, 2]) / torch.sum(x_mask)
+            log_durations = log_durations * x_mask
+            log_durations[log_durations < 0] = 0
+            # loss_duration = torch.sum((log_durations - attn_log_durations) ** 2, [1, 2]) / torch.sum(x_mask)
+            loss_duration = beta_div(log_durations, attn_log_durations, beta=0.663) / torch.sum(x_mask)
             outputs["log_duration_pred"] = log_durations.squeeze(1)  # [B, 1] -> [B]
         outputs["loss_duration"] = loss_duration
         return outputs
@@ -2910,7 +2948,156 @@ class Vits(BaseTTS):
         o_hat = self.waveform_decoder(z_hat * y_mask, g=g_tgt)
         return o_hat, y_mask, (z, z_p, z_hat)
 
-    def train_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int) -> Tuple[Dict, Dict]:
+
+    def forward_for_dp(
+            self,
+            x: torch.tensor,
+            x_lengths: torch.tensor,
+            y: torch.tensor,
+            y_lengths: torch.tensor,
+            mel: torch.tensor,
+            pitch: torch.tensor,
+            energy: torch.tensor,
+            waveform: torch.tensor,
+            attn_priors: torch.tensor,
+            binarize_alignment: bool,
+            use_encoder: bool = True,
+            is_eval: bool = False,
+            aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
+        ) -> Dict:
+        """Forward pass of the model.
+
+        Args:
+            x (torch.tensor): Batch of input character sequence IDs.
+            x_lengths (torch.tensor): Batch of input character sequence lengths.
+            y (torch.tensor): Batch of linear spectrograms.
+            y_lengths (torch.tensor): Batch of input spectrogram lengths.
+            waveform (torch.tensor): Batch of ground truth waveforms per sample.
+            aux_input (dict, optional): Auxiliary inputs for multi-speaker and multi-lingual training.
+                Defaults to {"d_vectors": None, "speaker_ids": None, "language_ids": None}.
+
+        Returns:
+            Dict: model outputs keyed by the output name.
+
+        Shapes:
+            - x: :math:`[B, T_seq]`
+            - x_lengths: :math:`[B]`
+            - y: :math:`[B, C, T_spec]`
+            - y_lengths: :math:`[B]`
+            - waveform: :math:`[B, 1, T_wav]`
+            - d_vectors: :math:`[B, C, 1]`
+            - emotion_vectors: :math:`[B, C, 1]`
+            - speaker_ids: :math:`[B]`
+            - language_ids: :math:`[B]`
+
+        Return Shapes:
+            - model_outputs: :math:`[B, 1, T_wav]`
+            - alignments: :math:`[B, T_seq, T_dec]`
+            - z: :math:`[B, C, T_dec]`
+            - z_p: :math:`[B, C, T_dec]`
+            - m_p: :math:`[B, C, T_dec]`
+            - logs_p: :math:`[B, C, T_dec]`
+            - m_q: :math:`[B, C, T_dec]`
+            - logs_q: :math:`[B, C, T_dec]`
+            - waveform_seg: :math:`[B, 1, spec_seg_size * hop_length]`
+            - gt_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
+            - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
+        """
+        outputs = {}
+        sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
+
+        if self.config.add_blank:
+            blank_mask = x == self.tokenizer.characters.blank_id
+            blank_mask[:, 0] = False
+
+        ##### --> EMBEDDINGS
+
+        # speaker embedding
+        if self.args.use_speaker_embedding and sid is not None:
+            spk_emb = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+
+        spk_emb_predictors = spk_emb
+        # language embedding
+        lang_emb = None
+        if self.args.use_language_embedding and lid is not None:
+            lang_emb = self.emb_l(lid).unsqueeze(-1)
+
+        ##### --> TEXT ENCODING
+        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
+        x_filler_mask = ~(x_mask.bool())
+
+        ##### --> ALIGNER
+        # x_emb_aligner = self.emb_aligner(x) * math.sqrt(self.args.hidden_channels)
+        # x_emb_aligner = x_emb_aligner.transpose(1, 2)  # [B, T, C] --> [B, C, T]
+        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
+        spk_emb_bottle = self.aligner_spk_bottleneck(spk_emb)  # [B, C, 1]
+        spk_emb_bottle_ex = spk_emb_bottle.expand(-1, -1, x_emb.shape[2])
+        emo_emb_ex = emo_emb.expand(-1, -1, x_emb.shape[2])
+        x_emb_spk = torch.cat((x_emb, spk_emb_bottle_ex.detach()), 1)
+        x_emb_spk = torch.cat((x_emb_spk, emo_emb_ex.detach()), 1)
+        aligner_durations, aligner_soft, aligner_logprob, aligner_hard = self._forward_aligner(
+            x=x_emb_spk, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
+        )
+
+        # duration predictor and duration loss
+        outputs = self.forward_duration_predictor(
+            outputs, aligner_hard, o_en, x_mask, spk_emb_predictors, lang_emb, emo_emb, x_lengths
+        )
+        return outputs
+
+    def train_step_dp(self, batch, criterion: nn.Module) -> Tuple[Dict, Dict]:
+        """Training only the duration predictor."""
+
+        spec_lens = batch["spec_lens"]
+        tokens = batch["tokens"]
+        token_lenghts = batch["token_lens"]
+        spec = batch["spec"]
+        energy = batch["energy"]
+        pitch = batch["pitch"]
+        d_vectors = batch["d_vectors"]
+        emotion_vectors = batch["emotion_vectors"]
+        speaker_ids = batch["speaker_ids"]
+        language_ids = batch["language_ids"]
+        waveform = batch["waveform"]
+        attn_priors = batch["attn_priors"]
+
+        # generator pass
+        outputs = self.forward(
+            x=tokens,
+            x_lengths=token_lenghts,
+            y=spec,
+            y_lengths=spec_lens,
+            pitch=pitch,
+            energy=energy,
+            waveform=waveform,
+            attn_priors=attn_priors,
+            binarize_alignment=self.binarize_alignment,
+            mel=batch["mel"],
+            aux_input={
+                "d_vectors": d_vectors,
+                "speaker_ids": speaker_ids,
+                "language_ids": language_ids,
+                "emotion_vectors": emotion_vectors,
+            },
+        )
+
+        loss_dict = {}
+        # if self.char_dur_loss_alpha > 0:
+        #     loss_char_dur = (
+        #         self.char_dur_loss(dur_output=outputs["log_duration_pred"], decoder_output_lens=spec_lens, input_lens=token_lenghts)
+        #         * self.config.char_dur_loss_alpha
+        #     )
+        #     loss_dict["loss_char_dur"] = loss_char_dur
+        #     loss += loss_char_dur
+        # loss_duration = torch.sum(outputs["loss_duration"].float()) * self.config.dur_loss_alpha
+        loss_duration = outputs["loss_duration"].float() * self.config.dur_loss_alpha
+        # loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
+
+        loss_dict["loss"] = loss_duration
+        return outputs, loss_dict
+
+
+    def train_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int=0) -> Tuple[Dict, Dict]:
         """Perform a single training step. Run the model forward pass and compute losses.
 
         Args:
@@ -2921,6 +3108,9 @@ class Vits(BaseTTS):
         Returns:
             Tuple[Dict, Dict]: Model ouputs and computed losses.
         """
+
+        if self.config.train_dp:
+            return self.train_step_dp(batch, criterion)
 
         spec_lens = batch["spec_lens"]
 
@@ -3083,6 +3273,10 @@ class Vits(BaseTTS):
         raise ValueError(" [!] Unexpected `optimizer_idx`.")
 
     def _log(self, ap, batch, outputs, name_prefix="train"):  # pylint: disable=unused-argument,no-self-use
+        figures = {}
+        audios = {}
+        if self.config.train_dp:
+            return figures, audios
         y_hat = outputs[1]["model_outputs"]
         y = outputs[1]["waveform_seg"]
         figures = plot_results(y_hat, y, ap, name_prefix)
@@ -3144,7 +3338,7 @@ class Vits(BaseTTS):
         logger.train_audios(steps, audios, self.ap.sample_rate)
 
     @torch.no_grad()
-    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int):
+    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int=0):
         return self.train_step(batch, criterion, optimizer_idx)
 
     def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
@@ -3636,6 +3830,10 @@ class Vits(BaseTTS):
         Returns:
             List: optimizers.
         """
+        if self.config.train_dp:
+            return get_optimizer(
+                self.config.optimizer, self.config.optimizer_params, self.config.lr_gen, parameters=self.duration_predictor.parameters()
+            )
         # select generator parameters
         optimizer0 = get_optimizer(self.config.optimizer, self.config.optimizer_params, self.config.lr_disc, self.disc)
 
@@ -3651,6 +3849,8 @@ class Vits(BaseTTS):
         Returns:
             List: learning rates for each optimizer.
         """
+        if self.config.train_dp:
+            return self.config.lr_gen
         return [self.config.lr_disc, self.config.lr_gen]
 
     def get_scheduler(self, optimizer) -> List:
@@ -3662,6 +3862,8 @@ class Vits(BaseTTS):
         Returns:
             List: Schedulers, one for each optimizer.
         """
+        if self.config.train_dp:
+            return get_scheduler(self.config.lr_scheduler_gen, self.config.lr_scheduler_gen_params, optimizer)
         scheduler_G = get_scheduler(self.config.lr_scheduler_gen, self.config.lr_scheduler_gen_params, optimizer[0])
         scheduler_D = get_scheduler(self.config.lr_scheduler_disc, self.config.lr_scheduler_disc_params, optimizer[1])
         return [scheduler_D, scheduler_G]
@@ -3669,12 +3871,15 @@ class Vits(BaseTTS):
     def get_criterion(self):
         """Get criterions for each optimizer. The index in the output list matches the optimizer idx used in
         `train_step()`"""
-        from TTS.tts.layers.losses import (  # pylint: disable=import-outside-toplevel
-            VitsDiscriminatorLoss,
-            VitsGeneratorLoss,
-        )
+        if self.config.train_dp:
+            return None
+        else:
+            from TTS.tts.layers.losses import (  # pylint: disable=import-outside-toplevel
+                VitsDiscriminatorLoss,
+                VitsGeneratorLoss,
+            )
 
-        return [VitsDiscriminatorLoss(self.config), VitsGeneratorLoss(self.config)]
+            return [VitsDiscriminatorLoss(self.config), VitsGeneratorLoss(self.config)]
 
     def load_checkpoint(
         self,
@@ -4016,4 +4221,19 @@ if __name__ == "__main__":
 
     model.inference(
         x=input_dummy, x_lengths=input_lengths, aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb}
+    )
+
+
+    model.forward_for_dp(
+        x=input_dummy,
+        x_lengths=input_lengths,
+        y=spec,
+        y_lengths=spec_lengths,
+        mel=mel,
+        waveform=waveform,
+        energy=energy,
+        pitch=pitch,
+        attn_priors=None,
+        aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb},
+        binarize_alignment=False,
     )
