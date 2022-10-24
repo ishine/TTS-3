@@ -212,6 +212,10 @@ class EmbeddingManager(BaseIDManager):
         self.name_to_id, self.clip_ids, self.embeddings, self.embeddings_by_names = self.read_embeddings_from_file(
             file_path
         )
+        # cache the averaged speaker embedding for fast inference and training
+        self.averaged_embeddings_by_names = {}
+        for idx in self.embeddings_by_names:
+            self.averaged_embeddings_by_names[idx] = np.stack(self.embeddings_by_names[idx]).mean(0)
 
     def load_embeddings_from_list_of_files(self, file_paths: List[str]) -> None:
         """Load embeddings from a list of json files and don't allow duplicate keys.
