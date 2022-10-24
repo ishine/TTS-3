@@ -721,7 +721,6 @@ class VitsGeneratorLoss(nn.Module):
         feats_disc_fake,
         feats_disc_real,
         log_duration_pred,
-        loss_duration,
         aligner_logprob,
         alignment_hard,
         alignment_soft,
@@ -756,9 +755,8 @@ class VitsGeneratorLoss(nn.Module):
         )
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
-        loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
         loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
-        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration + loss_aligner
+        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_aligner
 
         if self.char_dur_loss_alpha > 0:
             loss_char_dur = (
@@ -772,18 +770,6 @@ class VitsGeneratorLoss(nn.Module):
             loss_se = self.cosine_similarity_loss(gt_spk_emb, syn_spk_emb) * self.spk_encoder_loss_alpha
             loss = loss + loss_se
             return_dict["loss_spk_encoder"] = loss_se
-
-        # if hasattr(self, "pitch_loss") and self.pitch_loss_alpha > 0:
-        #     pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), z_len)
-        #     loss = loss + self.pitch_loss_alpha * pitch_loss
-        #     return_dict["loss_pitch"] = self.pitch_loss_alpha * pitch_loss
-
-        # if hasattr(self, "energy_loss") and self.energy_loss_alpha > 0:
-        #     energy_loss = self.energy_loss(
-        #         energy_output.transpose(1, 2), energy_target.transpose(1, 2), z_len
-        #     )
-        #     loss = loss + self.energy_loss_alpha * energy_loss
-        #     return_dict["loss_energy"] = self.energy_loss_alpha * energy_loss
 
         if self.binary_alignment_loss_alpha > 0 and alignment_hard is not None:
             binary_alignment_loss = self._binary_alignment_loss(alignment_hard, alignment_soft)
@@ -800,7 +786,6 @@ class VitsGeneratorLoss(nn.Module):
         return_dict["loss_kl"] = loss_kl
         return_dict["loss_feat"] = loss_feat
         return_dict["loss_mel"] = loss_mel
-        return_dict["loss_duration"] = loss_duration
         return_dict["loss_aligner"] = loss_aligner
         return_dict["loss"] = loss
         return return_dict

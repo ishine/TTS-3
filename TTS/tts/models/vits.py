@@ -1,6 +1,7 @@
 import base64
 import math
 import os
+from random import gauss
 import pysbd
 from dataclasses import dataclass, field, replace
 from itertools import chain
@@ -20,6 +21,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
 from torch.nn.utils import remove_weight_norm
+from TTS.tts.layers.losses import VitsGeneratorLoss
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
 from trainer.trainer_utils import get_optimizer, get_scheduler
 
@@ -1014,6 +1016,7 @@ class ConvTransposed(nn.Module):
 
 class PhonemeProsodyPredictor(nn.Module):
     """Non-parallel Prosody Predictor inspired by Du et al., 2021"""
+
     # TODO: use LSTM duration predictor like architecture
 
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, kernel_size: int, p_dropout: float):
@@ -1788,7 +1791,6 @@ class Vits(BaseTTS):
 
         self.gaussian_upsampling = GaussianUpsampling()
 
-
         # --> VOCODER
         self.waveform_decoder = HifiganGenerator(
             self.args.hidden_channels,
@@ -1978,11 +1980,12 @@ class Vits(BaseTTS):
         utterance_level_prosody_predictor: bool = False,
         utterance_level_prosody_encoder: bool = False,
         all_except_dp: bool = False,
+        verbose=True
     ):
-        """Freeze layers of the model. Call this before training
-        """
+        """Freeze layers of the model. Call this before training"""
         if text_encoder:
-            print(" > Freezing Text encoder...")
+            if verbose:
+                print(" > Freezing Text encoder...")
             for param in self.text_encoder.parameters():
                 param.requires_grad = False
 
@@ -1991,66 +1994,78 @@ class Vits(BaseTTS):
                     param.requires_grad = False
 
         if posterior_encoder:
-            print(" > Freezing posterior encoder...")
+            if verbose:
+                print(" > Freezing posterior encoder...")
             for param in self.posterior_encoder.parameters():
                 param.requires_grad = False
 
         if duration_predictor:
-            print(" > Freezing duration predictor...")
+            if verbose:
+                print(" > Freezing duration predictor...")
             for param in self.duration_predictor.parameters():
                 param.requires_grad = False
 
         if energy_predictor:
-            print(" > Freezing energy predictor...")
+            if verbose:
+                print(" > Freezing energy predictor...")
             for param in self.energy_predictor.parameters():
                 param.requires_grad = False
 
         if pitch_predictor:
-            print(" > Freezing pitch predictor...")
+            if verbose:
+                print(" > Freezing pitch predictor...")
             for param in self.pitch_predictor.parameters():
                 param.requires_grad = False
 
         if flow_decoder:
-            print(" > Freezing flow decoder...")
+            if verbose:
+                print(" > Freezing flow decoder...")
             for param in self.flow.parameters():
                 param.requires_grad = False
 
         if waveform_decoder:
-            print(" > Freezing waveform decoder...")
+            if verbose:
+                print(" > Freezing waveform decoder...")
             for param in self.waveform_decoder.parameters():
                 param.requires_grad = False
 
         if aligner:
-            print(" > Freezing Aligner...")
+            if verbose:
+                print(" > Freezing Aligner...")
             for param in self.aligner.parameters():
                 param.requires_grad = False
             for param in self.aligner_spk_bottleneck.parameters():
                 param.requires_grad = False
 
         if duration_predictor:
-            print(" > Freezing Duration Predictor...")
+            if verbose:
+                print(" > Freezing Duration Predictor...")
             for param in self.duration_predictor.parameters():
                 param.requires_grad = False
 
         if pitch_predictor:
-            print(" > Freezing Pitch Predictor...")
+            if verbose:
+                print(" > Freezing Pitch Predictor...")
             for param in self.pitch_predictor.parameters():
                 param.requires_grad = False
 
         if energy_predictor:
-            print(" > Freezing Energy Predictor...")
+            if verbose:
+                print(" > Freezing Energy Predictor...")
             for param in self.energy_predictor.parameters():
                 param.requires_grad = False
 
         if phoneme_level_prosody_predictor:
             if self.args.use_phoneme_level_prosody_encoder:
-                print(" > Freezing Phoneme Level Prosody Predictor...")
+                if verbose:
+                    print(" > Freezing Phoneme Level Prosody Predictor...")
                 for param in self.phoneme_prosody_predictor.parameters():
                     param.requires_grad = False
 
         if utterance_level_prosody_predictor:
             if self.args.use_utterance_level_prosody_encoder:
-                print(" > Freezing Utterance Level Prosody Predictor...")
+                if verbose:
+                    print(" > Freezing Utterance Level Prosody Predictor...")
                 for param in self.utterance_prosody_predictor.parameters():
                     param.requires_grad = False
 
@@ -2060,7 +2075,8 @@ class Vits(BaseTTS):
 
         if phoneme_level_prosody_encoder:
             if self.args.use_phoneme_level_prosody_encoder:
-                print(" > Freezing Phoneme Level Prosody Encoder...")
+                if verbose:
+                    print(" > Freezing Phoneme Level Prosody Encoder...")
                 for param in self.phoneme_prosody_encoder.parameters():
                     param.requires_grad = False
                 for param in self.p_bottle_out.parameters():
@@ -2070,7 +2086,8 @@ class Vits(BaseTTS):
 
         if utterance_level_prosody_encoder:
             if self.args.use_utterance_level_prosody_encoder:
-                print(" > Freezing Utterance Level Prosody Encoder...")
+                if verbose:
+                    print(" > Freezing Utterance Level Prosody Encoder...")
                 for param in self.utterance_prosody_encoder.parameters():
                     param.requires_grad = False
                 for param in self.u_bottle_out.parameters():
@@ -2079,7 +2096,8 @@ class Vits(BaseTTS):
                     param.requires_grad = False
 
         if all_except_dp:
-            print(" > Freezing all the modules of the model except duration predictor...")
+            if verbose:
+                print(" > Freezing all the modules of the model except duration predictor...")
             for name, param in self.named_parameters():
                 if "duration_predictor." in name or "disc." in name:
                     continue
@@ -2348,23 +2366,23 @@ class Vits(BaseTTS):
         u_prosody_pred = u_prosody_pred.sum(1, keepdim=True) / lengths.view(-1, 1, 1)
         return u_prosody_pred
 
-    def _expand_encoder_with_gaussian_upsampling(
-            self,
-            m_p: torch.FloatTensor,
-            logs_p: torch.FloatTensor,
-            o_ranges: torch.FloatTensor,
-            y_lengths: torch.IntTensor,
-            dr: torch.IntTensor,
-            x_mask: torch.IntTensor,
-            x_lengths: torch.LongTensor,
-        ):
-        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).to(m_p.dtype)
-        m_p_ex = self.gaussian_upsampling(x=m_p, durations=dr, vars=o_ranges, x_lengths=x_lengths)  # [B, T_de', C_en]
-        logs_p_ex = self.gaussian_upsampling(
-            x=logs_p, durations=dr, vars=o_ranges, x_lengths=x_lengths
-        )  # [B, T_de', C_en]
-        # attn = self.generate_attn(dr, x_mask, y_mask)  # [B, T_en, T_de']
-        return y_mask, m_p_ex, logs_p_ex
+    # def _expand_encoder_with_gaussian_upsampling(
+    #     self,
+    #     m_p: torch.FloatTensor,
+    #     logs_p: torch.FloatTensor,
+    #     o_ranges: torch.FloatTensor,
+    #     y_lengths: torch.IntTensor,
+    #     dr: torch.IntTensor,
+    #     x_mask: torch.IntTensor,
+    #     x_lengths: torch.LongTensor,
+    # ):
+    #     y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).to(m_p.dtype)
+    #     m_p_ex, gauss_attn= self.gaussian_upsampling(x=m_p, durations=dr, s=o_ranges, x_lengths=x_lengths)  # [B, T_de', C_en]
+    #     logs_p_ex, gauss_attn = self.gaussian_upsampling(
+    #         x=logs_p, durations=dr, s=o_ranges, x_lengths=x_lengths
+    #     )  # [B, T_de', C_en]
+    #     # attn = self.generate_attn(dr, x_mask, y_mask)  # [B, T_en, T_de']
+    #     return y_mask, m_p_ex, logs_p_ex, gauss_attn
 
     def forward(  # pylint: disable=dangerous-default-value
         self,
@@ -2526,27 +2544,27 @@ class Vits(BaseTTS):
 
         ##### --> EXPAND
         # range predictor
-        o_ranges = self.range_predictor(x=o_en.detach(), dr=aligner_hard.sum(3).squeeze(1), x_mask=x_mask)
+        # o_ranges = self.range_predictor(x=o_en.detach(), dr=aligner_hard.sum(3).squeeze(1), x_mask=x_mask)
 
         # expand encoder outputs
-        y_mask, m_p, logs_p = self._expand_encoder_with_gaussian_upsampling(
-            m_p=m_p,
-            logs_p=logs_p,
-            o_ranges=o_ranges,
-            y_lengths=y_lengths,
-            dr=aligner_hard.sum(3).squeeze(1),
-            x_mask=x_mask,
-            x_lengths=x_lengths,
-        )
+        # y_mask, m_p, logs_p, gauss_attn = self._expand_encoder_with_gaussian_upsampling(
+        #     m_p=m_p,
+        #     logs_p=logs_p,
+        #     o_ranges=o_ranges,
+        #     y_lengths=y_lengths,
+        #     dr=aligner_hard.sum(3).squeeze(1),
+        #     x_mask=x_mask,
+        #     x_lengths=x_lengths,
+        # )
 
         # expand prior
         if binarize_alignment:
-            # m_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, m_p])
-            # logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, logs_p])
+            m_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, m_p])
+            logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, logs_p])
             o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_hard, o_en])
         else:
-            # m_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, m_p])
-            # logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, logs_p])
+            m_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, m_p])
+            logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_soft, logs_p])
             o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_soft, o_en])
 
         ##### --> Pitch & Energy Predictors
@@ -2659,6 +2677,7 @@ class Vits(BaseTTS):
                 "aligner_hard": aligner_hard.squeeze(1),
                 "aligner_durations": aligner_durations,
                 "aligner_logprob": aligner_logprob,
+                # "gauss_attn": gauss_attn,
             }
         )
         return outputs
@@ -2668,6 +2687,206 @@ class Vits(BaseTTS):
         if "x_lengths" in aux_input and aux_input["x_lengths"] is not None:
             return aux_input["x_lengths"]
         return torch.tensor(x.shape[1:2]).to(x.device)
+
+    def forward_e2e(
+        self,
+        x: torch.tensor,
+        x_lengths: torch.tensor,
+        y: torch.tensor,
+        y_lengths: torch.tensor,
+        mel: torch.tensor,
+        pitch: torch.tensor,
+        energy: torch.tensor,
+        waveform: torch.tensor,
+        attn_priors: torch.tensor,
+        binarize_alignment: bool,
+        use_encoder: bool = True,
+        aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None},
+    ) -> Dict:
+        """Train the model at inference mode to tune it for the predictors and the vocoder."""
+        # TODO: try SoftDTW
+
+        self.freeze_layers(
+            posterior_encoder=True,
+            duration_predictor=True,
+            pitch_predictor=True,
+            energy_predictor=True,
+            aligner=True,
+            phoneme_level_prosody_predictor=True,
+            utterance_level_prosody_predictor=True,
+            text_encoder=True,
+            verbose=False
+        )
+
+        sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
+
+        if x_lengths is None:
+            x_lengths = self._set_x_lengths(x, aux_input)
+
+        if self.config.add_blank:
+            blank_mask = x == self.tokenizer.characters.blank_id
+            blank_mask[:, 0] = False
+
+        # speaker embedding
+        if self.args.use_speaker_embedding and sid is not None:
+            spk_emb = self.emb_g(sid).unsqueeze(-1)
+
+        # language embedding
+        lang_emb = None
+        if self.args.use_language_embedding and lid is not None:
+            lang_emb = self.emb_l(lid).unsqueeze(-1)
+
+        ### --> TEXT ENCODER
+
+        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
+        x_filler_mask = ~(x_mask.bool())
+
+        ### --> ALIGNER
+
+        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
+        spk_emb_bottle = self.aligner_spk_bottleneck(spk_emb)  # [B, C, 1]
+        spk_emb_bottle_ex = spk_emb_bottle.expand(-1, -1, x_emb.shape[2])
+        emo_emb_ex = emo_emb.expand(-1, -1, x_emb.shape[2])
+        x_emb_spk = torch.cat((x_emb, spk_emb_bottle_ex.detach()), 1)
+        x_emb_spk = torch.cat((x_emb_spk, emo_emb_ex.detach()), 1)
+        aligner_durations, aligner_soft, aligner_logprob, aligner_hard = self._forward_aligner(
+            x=x_emb_spk, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
+        )
+        dr_aligner = aligner_hard.sum(3).squeeze(1)
+
+        # TODO: not sure about using encoders vs predictors
+        if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
+            ##### --> Bottleneck Embeddings
+            spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
+
+        if self.args.use_utterance_level_prosody_encoder:
+            o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
+
+            ##### --> Utterance Prosody encoder
+            # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
+            u_prosody_pred = self.u_norm(
+                self.average_utterance_prosody(
+                    u_prosody_pred=self.utterance_prosody_predictor(
+                        x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
+                    ),
+                    lengths=x_lengths,
+                )
+            )
+
+            o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
+
+        if self.args.use_phoneme_level_prosody_encoder:
+            ##### --> Phoneme prosody encoder
+
+            o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
+
+            p_prosody_pred = self.p_norm(
+                self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
+            )
+
+            o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+
+        ### --> ATTENTION MAP
+        # attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
+        # attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
+
+        ### --> EXPAND
+        # o_ranges = self.range_predictor(x=o_en.detach(), dr=dr_aligner, x_mask=x_mask)
+
+        # expand encoder outputs
+        # y_mask, m_p, logs_p, gauss_attn = self._expand_encoder_with_gaussian_upsampling(
+            # m_p=m_p,
+        #     logs_p=logs_p,
+        #     o_ranges=o_ranges,
+        #     y_lengths=y_lengths,
+        #     dr=dr_aligner,
+        #     x_mask=x_mask,
+        #     x_lengths=x_lengths,
+        # )
+
+        m_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, m_p])
+        logs_p = torch.einsum("klmn, kjm -> kjn", [aligner_hard, logs_p])
+        o_en_ex = torch.einsum("klmn, kjm -> kjn", [aligner_hard, o_en])
+
+        ### --> PITCH & ENERGY PREDICTORS
+
+        # pitch predictor pass
+        o_pitch = None
+        if self.args.use_pitch:
+            o_pitch_emb, o_pitch = self._forward_pitch_predictor(
+                o_en=o_en_ex,
+                x_mask=y_mask,
+                g=spk_emb,
+                emo_emb=emo_emb,
+                pitch_transform=None,
+                x_lengths=y_lengths,
+            )
+
+        # energy predictor pass
+        o_energy = None
+        if self.args.use_energy_predictor:
+            o_energy_emb, o_energy = self._forward_energy_predictor(
+                o_en=o_en_ex,
+                x_mask=y_mask,
+                g=spk_emb,
+                emo_emb=emo_emb,
+                energy_transform=None,
+                x_lengths=y_lengths,
+            )
+
+        ### --> CONTEXT ENCODER
+
+        # context encoder pass
+        context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
+        o_context = self.context_encoder(
+            o_en_ex if self.args.condition_context_encoder_on_text else None,
+            y_lengths,
+            spk_emb=None,
+            emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None,
+            cond=context_cond,
+        )
+
+        ### --> FLOW DECODER
+
+        z_penc, _, _, y_mask = self.posterior_encoder(y, y_lengths, g=spk_emb)
+
+        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
+        z = self.flow(z_p, y_mask, g=spk_emb, g2=o_context * y_mask, reverse=True)
+
+        ### --> VOCODER
+        z_slice, slice_ids = rand_segments(z, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
+        z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
+
+        # upsampling if needed
+        z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
+        o, o1, o2 = self.waveform_decoder(z_slice, g=spk_emb)
+
+        wav_seg = segment(
+            waveform,
+            slice_ids * self.config.audio.hop_length,
+            spec_segment_size * self.config.audio.hop_length,
+            pad_short=True,
+        )
+
+        outputs = {
+            "model_outputs": o,
+            "o1": o1,
+            "o2": o2,
+            "pitch": o_pitch,
+            "energy": o_energy,
+            "z": z,
+            "z_penc": z_penc,
+            "z_p": z_p,
+            "slice_ids": slice_ids,
+            "m_p": m_p,
+            "logs_p": logs_p,
+            "y_mask": y_mask,
+            "waveform_seg": wav_seg,
+            "aligner_soft": aligner_soft.squeeze(1),
+            "aligner_hard": aligner_hard.squeeze(1),
+            # "gauss_attn": gauss_attn,
+        }
+        return outputs
 
     @torch.no_grad()
     def inference(
@@ -2803,21 +3022,21 @@ class Vits(BaseTTS):
 
         ### --> EXPAND
 
-        o_ranges = self.range_predictor(x=o_en.detach(), dr=dur.squeeze(1), x_mask=x_mask)
+        # o_ranges = self.range_predictor(x=o_en.detach(), dr=dur.squeeze(1), x_mask=x_mask)
 
         # expand encoder outputs
-        y_mask, m_p, logs_p = self._expand_encoder_with_gaussian_upsampling(
-            m_p=m_p,
-            logs_p=logs_p,
-            o_ranges=o_ranges,
-            y_lengths=y_lengths,
-            dr=dur.squeeze(1),
-            x_mask=x_mask,
-            x_lengths=x_lengths,
-        )
+        # y_mask, m_p, logs_p, gauss_attn = self._expand_encoder_with_gaussian_upsampling(
+        #     m_p=m_p,
+        #     logs_p=logs_p,
+        #     o_ranges=o_ranges,
+        #     y_lengths=y_lengths,
+        #     dr=dur.squeeze(1),
+        #     x_mask=x_mask,
+        #     x_lengths=x_lengths,
+        # )
 
-        # m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
-        # logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
+        m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
+        logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
         o_en_ex = torch.matmul(attn.transpose(1, 2), o_en.transpose(1, 2)).transpose(1, 2)
 
         ### --> PITCH & ENERGY PREDICTORS
@@ -2850,7 +3069,13 @@ class Vits(BaseTTS):
 
         # context encoder pass
         context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en_ex if self.args.condition_context_encoder_on_text else None, y_lengths, spk_emb=None, emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None, cond=context_cond)
+        o_context = self.context_encoder(
+            o_en_ex if self.args.condition_context_encoder_on_text else None,
+            y_lengths,
+            spk_emb=None,
+            emo_emb=emo_emb if self.args.condition_context_encoder_on_emotion else None,
+            cond=context_cond,
+        )
 
         ### --> FLOW DECODER
 
@@ -2948,23 +3173,22 @@ class Vits(BaseTTS):
         o_hat = self.waveform_decoder(z_hat * y_mask, g=g_tgt)
         return o_hat, y_mask, (z, z_p, z_hat)
 
-
     def forward_for_dp(
-            self,
-            x: torch.tensor,
-            x_lengths: torch.tensor,
-            y: torch.tensor,
-            y_lengths: torch.tensor,
-            mel: torch.tensor,
-            pitch: torch.tensor,
-            energy: torch.tensor,
-            waveform: torch.tensor,
-            attn_priors: torch.tensor,
-            binarize_alignment: bool,
-            use_encoder: bool = True,
-            is_eval: bool = False,
-            aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
-        ) -> Dict:
+        self,
+        x: torch.tensor,
+        x_lengths: torch.tensor,
+        y: torch.tensor,
+        y_lengths: torch.tensor,
+        mel: torch.tensor,
+        pitch: torch.tensor,
+        energy: torch.tensor,
+        waveform: torch.tensor,
+        attn_priors: torch.tensor,
+        binarize_alignment: bool,
+        use_encoder: bool = True,
+        is_eval: bool = False,
+        aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
+    ) -> Dict:
         """Forward pass of the model.
 
         Args:
@@ -3045,6 +3269,114 @@ class Vits(BaseTTS):
         )
         return outputs
 
+    def train_step_e2e(self, batch, criterion: nn.Module, optimizer_idx: int) -> Tuple[Dict, Dict]:
+        """Training only the duration predictor."""
+
+        spec_lens = batch["spec_lens"]
+        tokens = batch["tokens"]
+        token_lenghts = batch["token_lens"]
+        spec = batch["spec"]
+        energy = batch["energy"]
+        pitch = batch["pitch"]
+        d_vectors = batch["d_vectors"]
+        emotion_vectors = batch["emotion_vectors"]
+        speaker_ids = batch["speaker_ids"]
+        language_ids = batch["language_ids"]
+        waveform = batch["waveform"]
+        attn_priors = batch["attn_priors"]
+
+        if optimizer_idx == 0:
+            outputs = self.forward_e2e(
+                x=tokens,
+                x_lengths=token_lenghts,
+                y=spec,
+                y_lengths=spec_lens,
+                pitch=pitch,
+                energy=energy,
+                waveform=waveform,
+                attn_priors=attn_priors,
+                binarize_alignment=self.binarize_alignment,
+                mel=batch["mel"],
+                aux_input={
+                    "d_vectors": d_vectors,
+                    "speaker_ids": speaker_ids,
+                    "language_ids": language_ids,
+                    "emotion_vectors": emotion_vectors,
+                },
+            )
+
+            # cache tensors for the generator pass
+            self.model_outputs_cache = outputs  # pylint: disable=attribute-defined-outside-init
+
+            # compute scores
+            scores_disc_real, scores_disc_fake, _, _ = self.disc(
+                x=outputs["waveform_seg"],
+                x_hat=outputs["model_outputs"].detach(),
+                x1_hat=outputs["o1"].detach(),
+                x2_hat=outputs["o2"].detach(),
+            )
+
+            # compute loss
+            with autocast(enabled=False):  # use float32 for the criterion
+                loss_dict = criterion[optimizer_idx](
+                    scores_disc_real,
+                    scores_disc_fake,
+                )
+            return outputs, loss_dict
+
+        if optimizer_idx == 1:
+            mel = batch["mel"]
+
+            # compute melspec segment
+            with autocast(enabled=False):
+
+                if self.args.encoder_sample_rate:
+                    spec_segment_size = self.spec_segment_size * int(self.interpolate_factor)
+                else:
+                    spec_segment_size = self.spec_segment_size
+
+                mel_slice = segment(
+                    mel.float(), self.model_outputs_cache["slice_ids"], spec_segment_size, pad_short=True
+                )
+                mel_slice_hat = wav_to_mel(
+                    y=self.model_outputs_cache["model_outputs"].float(),
+                    n_fft=self.config.audio.fft_size,
+                    sample_rate=self.config.audio.sample_rate,
+                    num_mels=self.config.audio.num_mels,
+                    hop_length=self.config.audio.hop_length,
+                    win_length=self.config.audio.win_length,
+                    fmin=self.config.audio.mel_fmin,
+                    fmax=self.config.audio.mel_fmax,
+                    center=False,
+                )
+
+            # compute discriminator scores and features
+            _, scores_disc_fake, feats_disc_real, feats_disc_fake = self.disc(
+                x_hat=self.model_outputs_cache["model_outputs"],
+                x=self.model_outputs_cache["waveform_seg"],
+                x1_hat=self.model_outputs_cache["o1"],
+                x2_hat=self.model_outputs_cache["o2"],
+            )
+
+            # losses
+            loss_dict = {}
+            loss_z_penc = (
+                nn.functional.l1_loss(self.model_outputs_cache["z"], self.model_outputs_cache["z_penc"].detach()) / spec_lens.sum().float() * 10000
+            )
+            loss_dict["loss_z_penc"] = loss_z_penc
+
+            loss_mel = torch.nn.functional.l1_loss(mel_slice.detach(), mel_slice_hat) * self.config.mel_loss_alpha
+            loss_dict["loss_mel"] = loss_mel
+
+            loss_gen = VitsGeneratorLoss.generator_loss(scores_fake=scores_disc_fake)[0] * self.config.gen_loss_alpha
+            loss_dict["loss_gen"] = loss_gen
+
+            loss_feat = VitsGeneratorLoss.feature_loss(feats_disc_real, feats_disc_fake) * self.config.feat_loss_alpha
+            loss_dict["loss_feat"] = loss_feat
+
+            loss_dict["loss"] = loss_mel + loss_gen + loss_feat + loss_z_penc
+        return self.model_outputs_cache, loss_dict
+
     def train_step_dp(self, batch, criterion: nn.Module) -> Tuple[Dict, Dict]:
         """Training only the duration predictor."""
 
@@ -3082,22 +3414,11 @@ class Vits(BaseTTS):
         )
 
         loss_dict = {}
-        # if self.char_dur_loss_alpha > 0:
-        #     loss_char_dur = (
-        #         self.char_dur_loss(dur_output=outputs["log_duration_pred"], decoder_output_lens=spec_lens, input_lens=token_lenghts)
-        #         * self.config.char_dur_loss_alpha
-        #     )
-        #     loss_dict["loss_char_dur"] = loss_char_dur
-        #     loss += loss_char_dur
-        # loss_duration = torch.sum(outputs["loss_duration"].float()) * self.config.dur_loss_alpha
         loss_duration = outputs["loss_duration"].float() * self.config.dur_loss_alpha
-        # loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
-
         loss_dict["loss"] = loss_duration
         return outputs, loss_dict
 
-
-    def train_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int=0) -> Tuple[Dict, Dict]:
+    def train_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int = 0) -> Tuple[Dict, Dict]:
         """Perform a single training step. Run the model forward pass and compute losses.
 
         Args:
@@ -3111,6 +3432,9 @@ class Vits(BaseTTS):
 
         if self.config.train_dp:
             return self.train_step_dp(batch, criterion)
+
+        if self.config.train_e2e:
+            return self.train_step_e2e(batch, criterion, optimizer_idx)
 
         spec_lens = batch["spec_lens"]
 
@@ -3215,7 +3539,6 @@ class Vits(BaseTTS):
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
                     log_duration_pred=self.model_outputs_cache["log_duration_pred"].float(),
-                    loss_duration=self.model_outputs_cache["loss_duration"],
                     aligner_logprob=self.model_outputs_cache["aligner_logprob"].float(),
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
@@ -3224,6 +3547,12 @@ class Vits(BaseTTS):
                     alignment_soft=self.model_outputs_cache["aligner_soft"],
                     binary_loss_weight=self.binary_loss_weight,
                 )
+
+            # add duration loss
+            loss_dict["loss"] = (
+                self.model_outputs_cache["loss_duration"] * self.config.dur_loss_alpha + loss_dict["loss"]
+            )
+            loss_dict["loss_duration"] = self.model_outputs_cache["loss_duration"] * self.config.dur_loss_alpha
 
             # add pitch and energy losses
             loss_dict["loss"] = (
@@ -3309,10 +3638,13 @@ class Vits(BaseTTS):
         attn_hard = attn_hard[0].data.cpu().numpy().T
         attn_soft = outputs[1]["aligner_soft"]
         attn_soft = attn_soft[0].data.cpu().numpy().T
+        # attn_gauss = outputs[1]["gauss_attn"]
+        # attn_gauss = attn_gauss[0].data.cpu().numpy().T
         figures.update(
             {
                 "alignment_hard": plot_alignment(attn_hard, output_fig=False),
                 "alignment_soft": plot_alignment(attn_soft, output_fig=False),
+                # "alignment_gauss": plot_alignment(attn_gauss, output_fig=False),
             }
         )
         return figures, audios
@@ -3338,7 +3670,7 @@ class Vits(BaseTTS):
         logger.train_audios(steps, audios, self.ap.sample_rate)
 
     @torch.no_grad()
-    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int=0):
+    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int = 0):
         return self.train_step(batch, criterion, optimizer_idx)
 
     def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
@@ -3832,11 +4164,14 @@ class Vits(BaseTTS):
         """
         if self.config.train_dp:
             return get_optimizer(
-                self.config.optimizer, self.config.optimizer_params, self.config.lr_gen, parameters=self.duration_predictor.parameters()
+                self.config.optimizer,
+                self.config.optimizer_params,
+                self.config.lr_gen,
+                parameters=self.duration_predictor.parameters(),
             )
+
         # select generator parameters
         optimizer0 = get_optimizer(self.config.optimizer, self.config.optimizer_params, self.config.lr_disc, self.disc)
-
         gen_parameters = chain(params for k, params in self.named_parameters() if not k.startswith("disc."))
         optimizer1 = get_optimizer(
             self.config.optimizer, self.config.optimizer_params, self.config.lr_gen, parameters=gen_parameters
@@ -4223,8 +4558,22 @@ if __name__ == "__main__":
         x=input_dummy, x_lengths=input_lengths, aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb}
     )
 
-
     model.forward_for_dp(
+        x=input_dummy,
+        x_lengths=input_lengths,
+        y=spec,
+        y_lengths=spec_lengths,
+        mel=mel,
+        waveform=waveform,
+        energy=energy,
+        pitch=pitch,
+        attn_priors=None,
+        aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb},
+        binarize_alignment=False,
+    )
+
+
+    model.forward_e2e(
         x=input_dummy,
         x_lengths=input_lengths,
         y=spec,

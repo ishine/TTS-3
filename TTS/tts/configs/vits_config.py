@@ -110,7 +110,10 @@ class VitsConfig(BaseTTSConfig):
     # model specific params
     model_args: VitsArgs = field(default_factory=VitsArgs)
     audio: VitsAudioConfig = VitsAudioConfig()
+
+    # training modes
     train_dp: bool = False
+    train_e2e: bool = False
 
     # optimizer
     grad_clip: List[float] = field(default_factory=lambda: [1000, 1000])
