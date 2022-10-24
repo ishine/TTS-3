@@ -1974,6 +1974,7 @@ class Vits(BaseTTS):
         energy_predictor: bool = False,
         flow_decoder: bool = False,
         waveform_decoder: bool = False,
+        context_encoder:bool = False,
         aligner: bool = False,
         phoneme_level_prosody_encoder: bool = False,
         phoneme_level_prosody_predictor: bool = False,
@@ -2093,6 +2094,13 @@ class Vits(BaseTTS):
                 for param in self.u_bottle_out.parameters():
                     param.requires_grad = False
                 for param in self.u_norm.parameters():
+                    param.requires_grad = False
+
+        if context_encoder:
+            if self.args.use_context_encoder:
+                if verbose:
+                    print(" > Freezing Context Encoder...")
+                for param in self.context_encoder.parameters():
                     param.requires_grad = False
 
         if all_except_dp:
@@ -2707,11 +2715,13 @@ class Vits(BaseTTS):
         # TODO: try SoftDTW
 
         self.freeze_layers(
+            flow_decoder=True,
             posterior_encoder=True,
             duration_predictor=True,
             pitch_predictor=True,
             energy_predictor=True,
             aligner=True,
+            context_encoder=True,
             phoneme_level_prosody_predictor=True,
             utterance_level_prosody_predictor=True,
             text_encoder=True,
@@ -2855,7 +2865,6 @@ class Vits(BaseTTS):
 
         ### --> VOCODER
         z_slice, slice_ids = rand_segments(z, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
-        z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
 
         # upsampling if needed
         z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
@@ -2999,11 +3008,11 @@ class Vits(BaseTTS):
 
             o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
 
-            pos_encoding = positional_encoding(
-                self.args.hidden_channels,
-                max(o_en.shape[2], max(y_lengths)),
-                device=o_en.device,
-            )
+            # pos_encoding = positional_encoding(
+            #     self.args.hidden_channels,
+            #     max(o_en.shape[2], max(y_lengths)),
+            #     device=o_en.device,
+            # )
 
             # p_prosody_ref = self.p_norm(
             #     self.phoneme_prosody_encoder(
