@@ -158,38 +158,50 @@ class VitsDenoiser(nn.Module):
         win_length = model.config.audio.win_length
         self.stft = STFT(filter_length=filter_length, hop_length=int(filter_length / n_overlap), win_length=win_length)
         self.stft = self.stft.to(model.waveform_decoder.ups[0].weight.device)
-        if mode == "zeros":
-            mel_input = torch.zeros(
+        self.mode = mode
+        self.set_mode(model, mode)
+        self.generate_bias(model)
+
+    def set_mode(self, model, mode):
+        self.mode = mode
+        if self.mode == "zeros":
+            self.def_mel_input = torch.zeros(
                 (1, 192, 88),
                 dtype=model.waveform_decoder.ups[0].weight.dtype,
                 device=model.waveform_decoder.ups[0].weight.device,
             )
-            speaker_emb = torch.zeros(
+            self.def_spk_emb = torch.zeros(
                 (1, model.embedded_speaker_dim, 1),
                 dtype=model.waveform_decoder.ups[0].weight.dtype,
                 device=model.waveform_decoder.ups[0].weight.device,
             )
-        elif mode == "normal":
-            mel_input = torch.randn(
+        elif self.mode == "normal":
+            self.def_mel_input = torch.randn(
                 (1, 192, 88),
                 dtype=model.waveform_decoder.ups[0].weight.dtype,
                 device=model.waveform_decoder.ups[0].weight.device,
             )
-            speaker_emb = torch.randn(
+            self.def_spk_emb = torch.randn(
                 (1, model.embedded_speaker_dim, 1),
                 dtype=model.waveform_decoder.ups[0].weight.dtype,
                 device=model.waveform_decoder.ups[0].weight.device,
             )
         else:
-            raise Exception("Mode {} if not supported".format(mode))
+            raise ValueError(f"Invalid mode {mode}")
 
+    def generate_bias(self, model, spk_emb=None):
+        if spk_emb is None:
+            in_spk_emb = self.def_spk_emb
+        else:
+            in_spk_emb = spk_emb
         with torch.no_grad():
-            bias_audio = model.waveform_decoder(mel_input, g=speaker_emb)[0].float()[0]
+            bias_audio = model.waveform_decoder(self.def_mel_input, g=in_spk_emb)[0].float()[0]
             bias_spec, _ = self.stft.transform(bias_audio)
-
         self.register_buffer("bias_spec", bias_spec[:, :, 0][:, :, None])
 
-    def forward(self, audio, strength=0.1):
+    def forward(self, audio, strength=0.1, spk_emb=None, model=None):
+        if spk_emb is not None:
+            self.generate_bias(model, spk_emb=spk_emb.unsqueeze(2))
         audio_spec, audio_angles = self.stft.transform(audio.float())
         audio_spec_denoised = audio_spec - self.bias_spec * strength
         audio_spec_denoised = torch.clamp(audio_spec_denoised, 0.0)
