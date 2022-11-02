@@ -1262,6 +1262,7 @@ class VitsArgs(Coqpit):
     use_sdp: bool = True
     noise_scale: float = 1.0
     inference_noise_scale: float = 0.667
+    denoise_strength: float = 0.08
     length_scale: float = 1
     noise_scale_dp: float = 1.0
     inference_noise_scale_dp: float = 1.0
@@ -2893,6 +2894,9 @@ class Vits(BaseTTS):
         x_lengths=None,
         pitch_transform=None,
         energy_transform=None,
+        pitch=None,
+        energy=None,
+        duration=None,
         aux_input={"emotion_vectors": None, "d_vectors": None, "speaker_ids": None, "language_ids": None},
     ):  # pylint: disable=dangerous-default-value
         """
@@ -2939,47 +2943,57 @@ class Vits(BaseTTS):
 
         ### --> DURATION PREDICTOR
 
-        if self.args.use_sdp:
-            dur_log = self.duration_predictor(
-                o_en,
-                x_mask,
-                g=spk_emb if self.args.condition_dp_on_speaker else None,
-                reverse=True,
-                noise_scale=self.inference_noise_scale_dp,
-                lang_emb=lang_emb,
-            )
-        else:
-            dur_log = self.duration_predictor(o_en, spk_emb=spk_emb, emo_emb=emo_emb, lens=x_lengths)
+        if duration is None:
+            if self.args.use_sdp:
+                dur_log = self.duration_predictor(
+                    o_en,
+                    x_mask,
+                    g=spk_emb if self.args.condition_dp_on_speaker else None,
+                    reverse=True,
+                    noise_scale=self.inference_noise_scale_dp,
+                    lang_emb=lang_emb,
+                )
+            else:
+                dur_log = self.duration_predictor(o_en, spk_emb=spk_emb, emo_emb=emo_emb, lens=x_lengths)
 
-        ### --> DURATION FORMATTING
-        dur = (torch.exp(dur_log) - 1) * x_mask
-        if self.target_cps:
-            target_sr = (
-                self.args.encoder_sample_rate if self.args.encoder_sample_rate else self.args.encoder_sample_rate
-            )
-            model_output_in_sec = (self.config.audio.hop_length * dur.squeeze(1).sum(axis=1)) / target_sr
-            num_input_chars = x_lengths.clone().float()
-            num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum(1).float()
-            dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec)[:, None, None])
+            ### --> DURATION FORMATTING
+
+            dur = (torch.exp(dur_log) - 1) * x_mask
+            if self.target_cps:
+                target_sr = (
+                    self.args.encoder_sample_rate if self.args.encoder_sample_rate else self.args.encoder_sample_rate
+                )
+                model_output_in_sec = (self.config.audio.hop_length * dur.squeeze(1).sum(axis=1)) / target_sr
+                num_input_chars = x_lengths.clone().float()
+                num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum(1).float()
+                dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec)[:, None, None])
+            dur = dur * self.length_scale
+        else:
+            # take input duration as it is
+            dur = duration
 
         # check hack to fix fast jumps
         # dur[dur < dur.mean()] = dur.mean()
-        dur = dur * self.length_scale
+        float_dur = dur.clone()
         dur = torch.round(dur)
         dur[dur < 1] = 1
         dur = dur * x_mask
+        float_dur = float_dur * x_mask
 
         y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
         y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)  # [B, 1, T_dec]
 
         if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
+
             ##### --> Bottleneck Embeddings
+
             spk_emb_adaptors = self.adaptors_spk_bottleneck(spk_emb)  # [B, C, 1]
 
         if self.args.use_utterance_level_prosody_encoder:
             o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
 
             ##### --> Utterance Prosody encoder
+
             # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
             u_prosody_pred = self.u_norm(
                 self.average_utterance_prosody(
@@ -2993,21 +3007,11 @@ class Vits(BaseTTS):
             o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
 
         if self.args.use_phoneme_level_prosody_encoder:
+
             ##### --> Phoneme prosody encoder
 
             o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
 
-            # pos_encoding = positional_encoding(
-            #     self.args.hidden_channels,
-            #     max(o_en.shape[2], max(y_lengths)),
-            #     device=o_en.device,
-            # )
-
-            # p_prosody_ref = self.p_norm(
-            #     self.phoneme_prosody_encoder(
-            #         x=o_en.transpose(1, 2), src_mask=x_filler_mask.transpose(1, 2), mels=y, mel_lens=y_lengths, encoding=pos_encoding
-            #     )
-            # )
             p_prosody_pred = self.p_norm(
                 self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
             )
@@ -3015,23 +3019,11 @@ class Vits(BaseTTS):
             o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
 
         ### --> ATTENTION MAP
+
         attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
         attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
 
         ### --> EXPAND
-
-        # o_ranges = self.range_predictor(x=o_en.detach(), dr=dur.squeeze(1), x_mask=x_mask)
-
-        # expand encoder outputs
-        # y_mask, m_p, logs_p, gauss_attn = self._expand_encoder_with_gaussian_upsampling(
-        #     m_p=m_p,
-        #     logs_p=logs_p,
-        #     o_ranges=o_ranges,
-        #     y_lengths=y_lengths,
-        #     dr=dur.squeeze(1),
-        #     x_mask=x_mask,
-        #     x_lengths=x_lengths,
-        # )
 
         m_p = torch.matmul(attn.transpose(1, 2), m_p.transpose(1, 2)).transpose(1, 2)
         logs_p = torch.matmul(attn.transpose(1, 2), logs_p.transpose(1, 2)).transpose(1, 2)
@@ -3042,26 +3034,35 @@ class Vits(BaseTTS):
         # pitch predictor pass
         o_pitch = None
         if self.args.use_pitch:
-            o_pitch_emb, o_pitch = self._forward_pitch_predictor(
-                o_en=o_en_ex,
-                x_mask=y_mask,
-                g=spk_emb,
-                emo_emb=emo_emb,
-                pitch_transform=pitch_transform,
-                x_lengths=y_lengths,
-            )
+            if pitch is None:
+                o_pitch_emb, o_pitch = self._forward_pitch_predictor(
+                    o_en=o_en_ex,
+                    x_mask=y_mask,
+                    g=spk_emb,
+                    emo_emb=emo_emb,
+                    pitch_transform=pitch_transform,
+                    x_lengths=y_lengths,
+                )
+            else:
+                pitch = normalize_pitch(pitch, self.pitch_mean, self.pitch_std) if pitch is not None else None
+                o_pitch_emb = self.pitch_emb(pitch)
+                o_pitch = pitch
 
         # energy predictor pass
         o_energy = None
         if self.args.use_energy_predictor:
-            o_energy_emb, o_energy = self._forward_energy_predictor(
-                o_en=o_en_ex,
-                x_mask=y_mask,
-                g=spk_emb,
-                emo_emb=emo_emb,
-                energy_transform=energy_transform,
-                x_lengths=y_lengths,
-            )
+            if energy is None:
+                o_energy_emb, o_energy = self._forward_energy_predictor(
+                    o_en=o_en_ex,
+                    x_mask=y_mask,
+                    g=spk_emb,
+                    emo_emb=emo_emb,
+                    energy_transform=energy_transform,
+                    x_lengths=y_lengths,
+                )
+            else:
+                o_energy_emb = self.energy_emb(energy)
+                o_energy = energy
 
         ### --> CONTEXT ENCODER
 
@@ -3084,14 +3085,15 @@ class Vits(BaseTTS):
 
         # upsampling if needed
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
-        # o_context, _, _, _ = self.upsampling_z(o_context, y_lengths=y_lengths, y_mask=y_mask)
-
         o, _, _ = self.waveform_decoder((z * y_mask), g=spk_emb)
+
+        o_pitch = denormalize_pitch(o_pitch, self.pitch_mean, self.pitch_std)
 
         outputs = {
             "model_outputs": o,
             "alignments": attn.squeeze(1),
             "durations": dur,
+            "float_durations": float_dur,
             "pitch": o_pitch,
             "energy": o_energy,
             "z": z,

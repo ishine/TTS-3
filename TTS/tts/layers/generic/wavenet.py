@@ -2,7 +2,8 @@ import torch
 from torch import nn
 
 
-@torch.jit.script
+# Breaks ONNX export
+# @torch.jit.script
 def fused_add_tanh_sigmoid_multiply(input_a, input_b, input_b2, n_channels):
     n_channels_int = n_channels[0]
     in_act = input_a + input_b + input_b2
@@ -69,7 +70,7 @@ class WN(torch.nn.Module):
         if c_in_channels2 > 0:
             cond_layer2 = torch.nn.Conv1d(c_in_channels2, 2 * hidden_channels * num_layers, 1)
             self.cond_layer2 = torch.nn.utils.weight_norm(cond_layer2, name="weight")
-    
+
         # intermediate layers
         for i in range(num_layers):
             dilation = dilation_rate**i
