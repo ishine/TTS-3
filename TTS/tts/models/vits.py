@@ -4295,6 +4295,9 @@ class Vits(BaseTTS):
         emotion_vector=None,
         emotion_id=None,
         pitch_transform=None,
+        pitch_values=None,
+        energy_values=None,
+        duration_values=None,
         noise_scale=0.66,
         sdp_noise_scale=0.33,
         denoise_strength=0.08,
@@ -4338,12 +4341,17 @@ class Vits(BaseTTS):
 
         input_tensors = []
         input_lengths = []
+        input_phonemes = []
         for sentence in sentences:
 
             # --> TEXT NORMALIZATION & PHONEMIZATION
 
+            token_ids = self.tokenizer.text_to_ids(sentence, language=language_id)
+            phonemes = self.tokenizer.ids_to_text(token_ids)
+            input_phonemes.append(phonemes)
+
             input_tensor = np.asarray(
-                self.tokenizer.text_to_ids(sentence, language=language_id),
+                token_ids,
                 dtype=np.int32,
             )
             input_tensor = numpy_to_torch(input_tensor, torch.long, cuda=is_cuda)
@@ -4376,6 +4384,9 @@ class Vits(BaseTTS):
         outputs = self.inference(
             input_tensors,
             x_lengths=input_lengths,
+            pitch=pitch_values,
+            energy=energy_values,
+            duration=duration_values,
             aux_input={
                 "d_vectors": d_vector.expand(num_sentences, -1),
                 "speaker_ids": speaker_id,
@@ -4419,6 +4430,7 @@ class Vits(BaseTTS):
         return_dict = {
             "wav": wav,
             "input_tensors": input_tensors,
+            "input_phonemes": input_phonemes,
             "outputs": outputs,
         }
         return return_dict
