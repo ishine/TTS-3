@@ -620,20 +620,7 @@ class VitsGeneratorLoss(nn.Module):
         self.feat_loss_alpha = c.feat_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
         self.mel_loss_alpha = c.mel_loss_alpha
-        self.char_dur_loss_alpha = c.char_dur_loss_alpha
         self.spk_encoder_loss_alpha = c.speaker_encoder_loss_alpha
-        self.aligner_loss = ForwardSumLoss()
-        self.aligner_loss_alpha = c.aligner_loss_alpha
-        self.binary_alignment_loss_alpha = c.binary_alignment_loss_alpha
-
-        if c.model_args.use_pitch:
-            self.pitch_loss = MSELossMasked(False)
-            self.pitch_loss_alpha = c.pitch_loss_alpha
-
-        if c.model_args.use_energy_predictor:
-            self.energy_loss = MSELossMasked(False)
-            self.energy_loss_alpha = c.energy_loss_alpha
-
         self.stft = TorchSTFT(
             c.audio.fft_size,
             c.audio.hop_length,
@@ -645,14 +632,6 @@ class VitsGeneratorLoss(nn.Module):
             use_mel=True,
             do_amp_to_db=True,
         )
-
-    @staticmethod
-    def _binary_alignment_loss(alignment_hard, alignment_soft):
-        """Binary loss that forces soft alignments to match the hard alignments as
-        explained in `https://arxiv.org/pdf/2108.10447.pdf`.
-        """
-        log_sum = torch.log(torch.clamp(alignment_soft[alignment_hard == 1], min=1e-12)).sum()
-        return -log_sum / alignment_hard.sum()
 
     @staticmethod
     def feature_loss(feats_real, feats_generated):
@@ -698,15 +677,6 @@ class VitsGeneratorLoss(nn.Module):
     def cosine_similarity_loss(gt_spk_emb, syn_spk_emb):
         return -torch.nn.functional.cosine_similarity(gt_spk_emb, syn_spk_emb).mean()
 
-    @staticmethod
-    def char_dur_loss(dur_output, decoder_output_lens, input_lens):
-        dur_per_input_pred = (torch.exp(dur_output) - 1).sum(-1)
-        dur_per_input_target = decoder_output_lens.float()
-        char_dur_loss = (
-            nn.functional.l1_loss(dur_per_input_pred, dur_per_input_target, reduction="none") / input_lens.float()
-        ).mean()
-        return char_dur_loss
-
     def forward(
         self,
         mel_slice,
@@ -716,15 +686,10 @@ class VitsGeneratorLoss(nn.Module):
         m_p,
         logs_p,
         z_len,
-        token_len,
         scores_disc_fake,
         feats_disc_fake,
         feats_disc_real,
-        log_duration_pred,
-        aligner_logprob,
-        alignment_hard,
-        alignment_soft,
-        binary_loss_weight,
+        loss_duration,
         use_speaker_encoder_as_loss=False,
         gt_spk_emb=None,
         syn_spk_emb=None,
@@ -755,38 +720,19 @@ class VitsGeneratorLoss(nn.Module):
         )
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
-        loss_aligner = self.aligner_loss(aligner_logprob, token_len, z_len) * self.aligner_loss_alpha
-        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_aligner
-
-        if self.char_dur_loss_alpha > 0:
-            loss_char_dur = (
-                self.char_dur_loss(dur_output=log_duration_pred, decoder_output_lens=z_len, input_lens=token_len)
-                * self.char_dur_loss_alpha
-            )
-            return_dict["loss_char_dur"] = loss_char_dur
-            loss += loss_char_dur
+        loss_duration = torch.sum(loss_duration.float()) * self.dur_loss_alpha
+        loss = loss_kl + loss_feat + loss_mel + loss_gen + loss_duration
 
         if use_speaker_encoder_as_loss:
             loss_se = self.cosine_similarity_loss(gt_spk_emb, syn_spk_emb) * self.spk_encoder_loss_alpha
             loss = loss + loss_se
             return_dict["loss_spk_encoder"] = loss_se
-
-        if self.binary_alignment_loss_alpha > 0 and alignment_hard is not None:
-            binary_alignment_loss = self._binary_alignment_loss(alignment_hard, alignment_soft)
-            loss = loss + self.binary_alignment_loss_alpha * binary_alignment_loss
-            if binary_loss_weight:
-                return_dict["loss_binary_alignment"] = (
-                    self.binary_alignment_loss_alpha * binary_alignment_loss * binary_loss_weight
-                )
-            else:
-                return_dict["loss_binary_alignment"] = self.binary_alignment_loss_alpha * binary_alignment_loss
-
         # pass losses to the dict
         return_dict["loss_gen"] = loss_gen
         return_dict["loss_kl"] = loss_kl
         return_dict["loss_feat"] = loss_feat
         return_dict["loss_mel"] = loss_mel
-        return_dict["loss_aligner"] = loss_aligner
+        return_dict["loss_duration"] = loss_duration
         return_dict["loss"] = loss
         return return_dict
 
@@ -814,10 +760,15 @@ class VitsDiscriminatorLoss(nn.Module):
     def forward(self, scores_disc_real, scores_disc_fake):
         loss = 0.0
         return_dict = {}
-        loss_disc, _, _ = self.discriminator_loss(scores_real=scores_disc_real, scores_fake=scores_disc_fake)
+        loss_disc, loss_disc_real, _ = self.discriminator_loss(
+            scores_real=scores_disc_real, scores_fake=scores_disc_fake
+        )
         return_dict["loss_disc"] = loss_disc * self.disc_loss_alpha
         loss = loss + return_dict["loss_disc"]
         return_dict["loss"] = loss
+
+        for i, ldr in enumerate(loss_disc_real):
+            return_dict[f"loss_disc_real_{i}"] = ldr
         return return_dict
 
 

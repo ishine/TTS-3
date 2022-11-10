@@ -111,10 +111,6 @@ class VitsConfig(BaseTTSConfig):
     model_args: VitsArgs = field(default_factory=VitsArgs)
     audio: VitsAudioConfig = VitsAudioConfig()
 
-    # training modes
-    train_dp: bool = False
-    train_e2e_vocoder: bool = False
-
     # optimizer
     grad_clip: List[float] = field(default_factory=lambda: [1000, 1000])
     lr_gen: float = 0.0002
@@ -134,26 +130,11 @@ class VitsConfig(BaseTTSConfig):
     feat_loss_alpha: float = 1.0
     mel_loss_alpha: float = 45.0
     dur_loss_alpha: float = 1.0
-    pitch_loss_alpha: float = 1.0
-    energy_loss_alpha: float = 1.0
-    char_dur_loss_alpha: float = 0.01
-    u_prosody_loss_alpha: float = 1.0
-    p_prosody_loss_alpha: float = 1.0
     speaker_encoder_loss_alpha: float = 1.0
-    aligner_loss_alpha: float = 1.0
-    binary_alignment_loss_alpha: float = 1.0
-
-    # aligner params
-    binarize_alignment: bool = False
-    binarization_start_steps: int = 6000
-    binary_alignment_loss_warmup_epochs: int = 10
 
     # data loader params
     return_wav: bool = True
     compute_linear_spec: bool = True
-    use_attn_priors: bool = True
-    attn_prior_cache_path: str = None
-    f0_cache_path: str = None
 
     # sampler params
     use_weighted_sampler: bool = False  # TODO: move it to the base config
@@ -188,10 +169,6 @@ class VitsConfig(BaseTTSConfig):
     use_d_vector_file: bool = False
     d_vector_file: str = None
     d_vector_dim: int = None
-
-    use_weighted_sampler: bool = True  # TODO: move it to the base config
-    weighted_sampler_attrs: dict = field(default_factory=lambda: {"root_path": 1.0})
-    weighted_sampler_multipliers: dict = field(default_factory=lambda: {})
 
     def __post_init__(self):
         for key, val in self.model_args.items():
