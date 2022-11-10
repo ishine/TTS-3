@@ -26,15 +26,6 @@ def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
 
-def concat_not_none(x1, x2, dim=1):
-    if x1 is not None and x2 is not None:
-        return torch.cat((x1, x2), dim)
-    elif x1 is not None:
-        return x1
-    else:
-        return x2
-
-
 class TextEncoder(nn.Module):
     def __init__(
         self,
@@ -47,7 +38,6 @@ class TextEncoder(nn.Module):
         kernel_size: int,
         dropout_p: float,
         language_emb_dim: int = None,
-        padding_idx: int = None,
     ):
         """Text Encoder for VITS model.
 
@@ -65,7 +55,7 @@ class TextEncoder(nn.Module):
         self.out_channels = out_channels
         self.hidden_channels = hidden_channels
 
-        self.emb = nn.Embedding(n_vocab, hidden_channels, padding_idx=padding_idx)
+        self.emb = nn.Embedding(n_vocab, hidden_channels)
 
         nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
 
@@ -74,7 +64,7 @@ class TextEncoder(nn.Module):
 
         self.encoder = RelativePositionTransformer(
             in_channels=hidden_channels,
-            out_channels=self.out_channels,
+            out_channels=hidden_channels,
             hidden_channels=hidden_channels,
             hidden_channels_ffn=hidden_channels_ffn,
             num_heads=num_heads,
@@ -84,95 +74,30 @@ class TextEncoder(nn.Module):
             layer_norm_type="2",
             rel_attn_window_size=4,
         )
-        self.proj = nn.Conv1d(self.out_channels, self.out_channels * 2, 1)
 
-    def forward(self, x, x_lengths, lang_emb=None, emo_emb=None):
+        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
+
+    def forward(self, x, x_lengths, lang_emb=None):
         """
         Shapes:
             - x: :math:`[B, T]`
             - x_length: :math:`[B]`
         """
         assert x.shape[0] == x_lengths.shape[0]
-        x_emb = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
-        x_emb = torch.transpose(x_emb, 1, 2)  # [b, h, t]
+        x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
 
         # concat the lang emb in embedding chars
-        x_enc = x_emb
         if lang_emb is not None:
-            x_enc = torch.cat((x_enc, lang_emb.expand(x_enc.size(0), -1, x_enc.size(2))), dim=1)
+            x = torch.cat((x, lang_emb.transpose(2, 1).expand(x.size(0), x.size(1), -1)), dim=-1)
 
-        # TODO: emo_emb might be concat to x_emb to learn emotion based alignments.
-        # if emo_emb is not None:
-        #     x_enc = torch.cat((x_enc, emo_emb.expand(x_enc.size(0), -1, x_enc.size(2))), dim=1)
+        x = torch.transpose(x, 1, -1)  # [b, h, t]
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [b, 1, t]
 
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x_enc.size(2)), 1).to(x_emb.dtype)  # [b, 1, t]
-
-        o_en = self.encoder(x_enc * x_mask, x_mask)
-        stats = self.proj(o_en) * x_mask
+        x = self.encoder(x * x_mask, x_mask)
+        stats = self.proj(x) * x_mask
 
         m, logs = torch.split(stats, self.out_channels, dim=1)
-        return x_emb, o_en, m, logs, x_mask
-
-
-class ContextEncoder(nn.Module):
-    def __init__(
-        self,
-        in_channels,
-        cond_channels=0,
-        spk_emb_channels=0,
-        emo_emb_channels=0,
-        num_lstm_layers=1,
-        lstm_norm="spectral",
-    ):
-        super().__init__()
-
-        in_lstm_channels = spk_emb_channels + in_channels
-        hidden_lstm_channels = int((spk_emb_channels + in_channels) / 2)
-
-        if cond_channels > 0:
-            in_lstm_channels = cond_channels + in_channels + spk_emb_channels
-            hidden_lstm_channels = in_lstm_channels // 2
-
-        if emo_emb_channels > 0:
-            in_lstm_channels += emo_emb_channels
-
-        self.hidden_lstm_channels = hidden_lstm_channels
-
-        self.lstm = torch.nn.LSTM(
-            input_size=in_lstm_channels,
-            hidden_size=hidden_lstm_channels,
-            num_layers=num_lstm_layers,
-            batch_first=True,
-            bidirectional=True,
-        )
-
-        if lstm_norm is not None:
-            if "spectral" in lstm_norm:
-                lstm_norm_fn = torch.nn.utils.spectral_norm
-            elif "weight" in lstm_norm:
-                lstm_norm_fn = torch.nn.utils.weight_norm
-
-        self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0")
-        self.lstm = lstm_norm_fn(self.lstm, "weight_hh_l0_reverse")
-
-    def forward(self, x, x_len, spk_emb=None, emo_emb=None, cond=None):
-        if spk_emb is not None:
-            spk_emb = spk_emb.expand(-1, -1, x.shape[2])
-            x = concat_not_none(x, spk_emb)
-        if emo_emb is not None:
-            emo_emb = emo_emb.expand(-1, -1, x.shape[2])
-            x = concat_not_none(x, emo_emb)
-        if cond is not None:
-            x = concat_not_none(x, cond)
-
-        unfolded_out_lens_packed = nn.utils.rnn.pack_padded_sequence(
-            x.transpose(1, 2), x_len.to("cpu"), batch_first=True, enforce_sorted=False
-        )
-        self.lstm.flatten_parameters()
-        context, _ = self.lstm(unfolded_out_lens_packed)
-        context, _ = nn.utils.rnn.pad_packed_sequence(context, batch_first=True)
-        context = context.transpose(1, 2)
-        return context
+        return x, m, logs, x_mask
 
 
 class ResidualCouplingBlock(nn.Module):
@@ -185,7 +110,6 @@ class ResidualCouplingBlock(nn.Module):
         num_layers,
         dropout_p=0,
         cond_channels=0,
-        cond_channels2=0,
         mean_only=False,
     ):
         assert channels % 2 == 0, "channels should be divisible by 2"
@@ -203,7 +127,6 @@ class ResidualCouplingBlock(nn.Module):
             num_layers,
             dropout_p=dropout_p,
             c_in_channels=cond_channels,
-            c_in_channels2=cond_channels2,
         )
         # output layer
         # Initializing last layer to 0 makes the affine coupling layers
@@ -212,7 +135,7 @@ class ResidualCouplingBlock(nn.Module):
         self.post.weight.data.zero_()
         self.post.bias.data.zero_()
 
-    def forward(self, x, x_mask, g=None, g2=None, reverse=False):
+    def forward(self, x, x_mask, g=None, reverse=False):
         """
         Note:
             Set `reverse` to True for inference.
@@ -224,7 +147,7 @@ class ResidualCouplingBlock(nn.Module):
         """
         x0, x1 = torch.split(x, [self.half_channels] * 2, 1)
         h = self.pre(x0) * x_mask
-        h = self.enc(h, x_mask, g=g, g2=g2)
+        h = self.enc(h, x_mask, g=g)
         stats = self.post(h) * x_mask
         if not self.mean_only:
             m, log_scale = torch.split(stats, [self.half_channels] * 2, 1)
@@ -253,7 +176,6 @@ class ResidualCouplingBlocks(nn.Module):
         num_layers: int,
         num_flows=4,
         cond_channels=0,
-        cond_channels2=0,
     ):
         """Redisual Coupling blocks for VITS flow layers.
 
@@ -285,12 +207,11 @@ class ResidualCouplingBlocks(nn.Module):
                     dilation_rate,
                     num_layers,
                     cond_channels=cond_channels,
-                    cond_channels2=cond_channels2,
                     mean_only=True,
                 )
             )
 
-    def forward(self, x, x_mask, g=None, g2=None, reverse=False):
+    def forward(self, x, x_mask, g=None, reverse=False):
         """
         Note:
             Set `reverse` to True for inference.
@@ -302,12 +223,12 @@ class ResidualCouplingBlocks(nn.Module):
         """
         if not reverse:
             for flow in self.flows:
-                x, _ = flow(x, x_mask, g=g, g2=g2, reverse=reverse)
+                x, _ = flow(x, x_mask, g=g, reverse=reverse)
                 x = torch.flip(x, [1])
         else:
             for flow in reversed(self.flows):
                 x = torch.flip(x, [1])
-                x = flow(x, x_mask, g=g, g2=g2, reverse=reverse)
+                x = flow(x, x_mask, g=g, reverse=reverse)
         return x
 
 
