@@ -55,7 +55,7 @@ from TTS.tts.utils.visual import plot_alignment, plot_avg_pitch, plot_pitch, plo
 from TTS.utils.audio.torch_transforms import TorchSTFT
 from TTS.utils.io import load_fsspec
 from TTS.utils.samplers import BucketBatchSampler
-from TTS.vocoder.models.hifigan_generator import HifiganGenerator
+from TTS.vocoder.models.avocodo_generator import AvocodoGenerator
 from TTS.vocoder.utils.generic_utils import plot_results
 
 
@@ -1796,7 +1796,7 @@ class EcyourTTS(BaseTTS):
         self.gaussian_upsampling = GaussianUpsampling()
 
         # --> VOCODER
-        self.waveform_decoder = HifiganGenerator(
+        self.waveform_decoder = AvocodoGenerator(
             self.args.hidden_channels,
             1,
             self.args.resblock_type_decoder,
