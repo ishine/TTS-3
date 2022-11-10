@@ -211,6 +211,13 @@ If you don't specify any models, then it uses LJSpeech based English model.
         help="speaker ID of the reference_wav speaker (If not provided the embedding will be computed using the Speaker Encoder).",
         default=None,
     )
+    parser.add_argument(
+        "--progress_bar",
+        type=str2bool,
+        help="If true shows a progress bar for the model download. Defaults to True",
+        default=True,
+    )
+
     args = parser.parse_args()
 
     # print the description if either text or list_models is not set
@@ -225,7 +232,7 @@ If you don't specify any models, then it uses LJSpeech based English model.
 
     # load model manager
     path = Path(__file__).parent / "../.models.json"
-    manager = ModelManager(path)
+    manager = ModelManager(path, progress_bar=args.progress_bar)
 
     model_path = None
     config_path = None
