@@ -1997,6 +1997,7 @@ class EcyourTTS(BaseTTS):
         utterance_level_prosody_encoder: bool = False,
         all_except_dp: bool = False,
         all_except_vocoder: bool = False,
+        all_except_pitch_energy_preds: bool = False,
         verbose=True,
     ):
         """Freeze layers of the model. Call this before training"""
@@ -2132,6 +2133,14 @@ class EcyourTTS(BaseTTS):
                 print(" > Freezing all the modules of the model except vocoder ...")
             for name, param in self.named_parameters():
                 if "waveform_decoder." in name or "disc." in name:
+                    continue
+                param.requires_grad = False
+
+        if all_except_pitch_energy_preds:
+            if verbose:
+                print(" > Freezing all the modules of the model except pitch and energy predictors ...")
+            for name, param in self.named_parameters():
+                if "disc." in name or "pitch_predictor." in name or "energy_predictor." in name:
                     continue
                 param.requires_grad = False
 
