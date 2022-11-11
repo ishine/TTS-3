@@ -114,14 +114,14 @@ class DurationPredictorLSTM(nn.Module):
         )
 
     def forward(self, txt_enc, lens, spk_emb=None, emo_emb=None):
-        txt_enc = self.bottleneck_layer(txt_enc)
+        context = self.bottleneck_layer(txt_enc)
         if spk_emb is not None:
             spk_emb = self.spk_bottleneck_layer(spk_emb)
-            spk_emb_expanded = spk_emb.expand(-1, -1, txt_enc.shape[2])
-            context = torch.cat([txt_enc, spk_emb_expanded], dim=1)
+            spk_emb_expanded = spk_emb.expand(-1, -1, context.shape[2])
+            context = torch.cat([context, spk_emb_expanded], dim=1)
         if emo_emb is not None:
             emo_emb = self.emo_bottleneck_layer(emo_emb)
-            emo_emb_expanded = emo_emb.expand(-1, -1, txt_enc.shape[2])
+            emo_emb_expanded = emo_emb.expand(-1, -1, context.shape[2])
             context = torch.cat((context, emo_emb_expanded), 1)
         x_hat = self.feat_pred_fn(context, lens)
         return x_hat

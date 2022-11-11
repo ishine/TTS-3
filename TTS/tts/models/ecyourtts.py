@@ -57,7 +57,7 @@ from TTS.utils.io import load_fsspec
 from TTS.utils.samplers import BucketBatchSampler
 from TTS.vocoder.models.avocodo_generator import AvocodoGenerator
 from TTS.vocoder.utils.generic_utils import plot_results
-
+from TTS.tts.layers.generic.predictor_adain import PredictorAdaIN
 
 def beta_div(input, target, beta=2):
     r"""The `β-divergence loss
@@ -1338,6 +1338,7 @@ class EcyourTTSArgs(Coqpit):
     condition_context_encoder_on_text: bool = True
     use_flow_predicted_z: bool = False
     target_cps: int = 16
+    use_adain_pitch_and_energy_predictors: bool = False
 
 
 class RelativeMultiHeadAttention(nn.Module):
@@ -1629,12 +1630,17 @@ class EcyourTTS(BaseTTS):
             self.pitch_mean = 181.0
             self.pitch_std = 86.0
 
-            self.pitch_predictor = DurationPredictorLSTM(
-                in_channels=self.args.hidden_channels,
-                bottleneck_channels=16,  # TODO: make this configurable
-                spk_emb_channels=self.embedded_speaker_dim,
-                emo_emb_channels=self.embedded_emotion_dim,
-            )
+            if self.args.use_adain_pitch_and_energy_predictors:
+                self.pitch_predictor = PredictorAdaIN(
+                    self.args.hidden_channels, spk_emb_channels=self.embedded_speaker_dim, emo_emb_channels=self.embedded_emotion_dim, num_lstm_layers=3
+                )
+            else:
+                self.pitch_predictor = DurationPredictorLSTM(
+                    in_channels=self.args.hidden_channels,
+                    bottleneck_channels=16,  # TODO: make this configurable
+                    spk_emb_channels=self.embedded_speaker_dim,
+                    emo_emb_channels=self.embedded_emotion_dim,
+                )
 
             self.pitch_emb = nn.Conv1d(
                 1,
@@ -1646,12 +1652,17 @@ class EcyourTTS(BaseTTS):
 
         # --> ENERGY PREDICTOR
         if self.args.use_energy_predictor:
-            self.energy_predictor = DurationPredictorLSTM(
-                in_channels=self.args.hidden_channels,
-                bottleneck_channels=16,
-                spk_emb_channels=self.embedded_speaker_dim,
-                emo_emb_channels=self.embedded_emotion_dim,
-            )
+            if self.args.use_adain_pitch_and_energy_predictors:
+                self.energy_predictor = PredictorAdaIN(
+                    self.args.hidden_channels, spk_emb_channels=self.embedded_speaker_dim, emo_emb_channels=self.embedded_emotion_dim, num_lstm_layers=3
+                )
+            else:
+                self.energy_predictor = DurationPredictorLSTM(
+                    in_channels=self.args.hidden_channels,
+                    bottleneck_channels=16,
+                    spk_emb_channels=self.embedded_speaker_dim,
+                    emo_emb_channels=self.embedded_emotion_dim,
+                )
             self.energy_emb = nn.Conv1d(
                 1,
                 128,
@@ -2242,7 +2253,7 @@ class EcyourTTS(BaseTTS):
         """
         # o_pitch = self.pitch_predictor(o_en, x_mask, g=g)
         o_pitch = self.pitch_predictor(
-            txt_enc=o_en,
+            o_en,
             spk_emb=g.detach(),
             emo_emb=emo_emb.detach(),
             lens=x_lengths,
@@ -2286,7 +2297,7 @@ class EcyourTTS(BaseTTS):
         x_lengths: torch.IntTensor = None,
     ) -> torch.FloatTensor:
         o_energy = self.energy_predictor(
-            txt_enc=o_en,
+            o_en,
             spk_emb=g.detach(),
             emo_emb=emo_emb.detach(),
             lens=x_lengths,
