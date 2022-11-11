@@ -2295,11 +2295,47 @@ class EcyourTTS(BaseTTS):
                 print("Pitch with transform re-normalized:", o_pitch)
 
             # Replace pitch values < 0
-            zero_point = (0.0 - self.pitch_mean) / self.pitch_std
+            zero_point = normalize_pitch(0.0, self.pitch_mean, self.pitch_std)
             o_pitch[o_pitch < zero_point] = zero_point
+            # check if the range is right, if not fix it
+            # o_pitch = self.convert_to_valid_pitch_range(o_pitch, mode=2, verbose=True)
 
             o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
+
+    def convert_to_valid_pitch_range(self, o_pitch, mode=2, verbose=True):
+        # Replace pitch values < 0 to zero
+        zero_point_norm = normalize_pitch(0.0, self.pitch_mean, self.pitch_std)
+        o_pitch[o_pitch < zero_point_norm] = zero_point_norm
+        org_o_pitch = o_pitch.clone()
+        if self.config.audio.pitch_fmin:
+            half_pitch_fmin_norm = normalize_pitch(self.config.audio.pitch_fmin/2, self.pitch_mean, self.pitch_std)
+            pitch_fmin_norm = normalize_pitch(self.config.audio.pitch_fmin, self.pitch_mean, self.pitch_std)
+            # mode 1: set all pitch values low than half of pitch_fmin to 0.0 and move pitch_fmin all remains values that are lower than pitch_fmin 
+            if mode == 1:
+                # put all low than half of pitch min to 0.0
+                o_pitch[o_pitch <= half_pitch_fmin_norm] = zero_point_norm
+                # set to pitch_min all that is not zero and low than pitch min
+                o_pitch[torch.logical_and(o_pitch != zero_point_norm, o_pitch <= pitch_fmin_norm)] = pitch_fmin_norm
+
+            # mode 2: set all pitch values low than half of pitch_fmin to 0.0 and move the curve up to match the pitch_fmin
+            elif mode == 2:
+                # put all low than half of pitch min to 0.0
+                o_pitch[o_pitch < half_pitch_fmin_norm] = zero_point_norm
+                # move the curve up to match the pitch_fmin
+                zero_idxs = o_pitch <= zero_point_norm
+                min_value = o_pitch[~zero_idxs].min()
+                value = pitch_fmin_norm - min_value
+                if value > 0.0:
+                    # increase whole pitch values
+                    o_pitch = o_pitch + value
+                    # set the zero as zero again
+                    o_pitch[zero_idxs] = zero_point_norm
+
+        if not torch.equal(org_o_pitch, o_pitch) and verbose:
+            print(">> The pitch range was changed !")
+
+        return o_pitch
 
     def _forward_energy_predictor(
         self,
@@ -3265,7 +3301,7 @@ class EcyourTTS(BaseTTS):
             - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
         outputs = {}
-        sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
+        sid, spk_emb, avg_spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
 
         if self.config.add_blank:
             blank_mask = x == self.tokenizer.characters.blank_id
@@ -3278,6 +3314,9 @@ class EcyourTTS(BaseTTS):
             spk_emb = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
 
         spk_emb_predictors = spk_emb
+        if self.args.use_averaged_d_vector_on_predictors:
+            spk_emb_predictors = avg_spk_emb
+
         # language embedding
         lang_emb = None
         if self.args.use_language_embedding and lid is not None:
@@ -5064,3 +5103,17 @@ if __name__ == "__main__":
         attn_priors=None,
         aux_input={"d_vectors": spk_emb, "emotion_vectors": emo_emb},
     )
+
+    pitch = torch.FloatTensor([[-1, 30, 41, 60, 81, 90, 100, 150, 200, 300]])
+    print("Pitch:", pitch)
+    pitch = normalize_pitch(pitch, model.pitch_mean, model.pitch_std)
+    pitch_out = model.convert_to_valid_pitch_range(pitch, mode=2)
+    pitch_out = denormalize_pitch(pitch_out, model.pitch_mean, model.pitch_std)
+    print("After apply pitch range change method:", pitch_out)
+
+    pitch = torch.FloatTensor([[0.0, 80, 81, 90, 100, 150, 200, 300]])
+    print("Pitch:", pitch)
+    pitch = normalize_pitch(pitch, model.pitch_mean, model.pitch_std)
+    pitch_out = model.convert_to_valid_pitch_range(pitch, mode=2)
+    pitch_out = denormalize_pitch(pitch_out, model.pitch_mean, model.pitch_std)
+    print("After apply pitch range change method:", pitch_out)
