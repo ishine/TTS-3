@@ -1339,6 +1339,7 @@ class EcyourTTSArgs(Coqpit):
     use_flow_predicted_z: bool = False
     target_cps: int = 16
     use_adain_pitch_and_energy_predictors: bool = False
+    use_averaged_d_vector_on_predictors: bool = False
 
 
 class RelativeMultiHeadAttention(nn.Module):
@@ -1977,7 +1978,7 @@ class EcyourTTS(BaseTTS):
         pass
 
     def get_aux_input(self, aux_input: Dict):
-        sid, g, lid = self._set_cond_input(aux_input)
+        sid, g, _, lid, _, _ = self._set_cond_input(aux_input)
         return {"speaker_ids": sid, "style_wav": None, "d_vectors": g, "language_ids": lid}
 
     def freeze_layers(
@@ -2147,7 +2148,7 @@ class EcyourTTS(BaseTTS):
     @staticmethod
     def _set_cond_input(aux_input: Dict):
         """Set the speaker conditioning input based on the multi-speaker mode."""
-        sid, g, lid, emo_emb = None, None, None, None
+        sid, g, avg_g, lid, emo_emb = None, None, None, None, None
 
         if "speaker_ids" in aux_input and aux_input["speaker_ids"] is not None:
             sid = aux_input["speaker_ids"]
@@ -2159,6 +2160,11 @@ class EcyourTTS(BaseTTS):
             if g.ndim == 2:
                 g = g.unsqueeze_(0)
 
+        if "avg_d_vectors" in aux_input and aux_input["avg_d_vectors"] is not None:
+            avg_g = F.normalize(aux_input["avg_d_vectors"]).unsqueeze(-1)
+            if avg_g.ndim == 2:
+                avg_g = avg_g.unsqueeze_(0)
+
         if "emotion_vectors" in aux_input and aux_input["emotion_vectors"] is not None:
             emo_emb = F.normalize(aux_input["emotion_vectors"]).unsqueeze(-1)
             if emo_emb.ndim == 2:
@@ -2169,7 +2175,7 @@ class EcyourTTS(BaseTTS):
             if lid.ndim == 0:
                 lid = lid.unsqueeze_(0)
 
-        return sid, g, lid, emo_emb
+        return sid, g, avg_g, lid, emo_emb
 
     def _set_speaker_input(self, aux_input: Dict):
         d_vectors = aux_input.get("d_vectors", None)
@@ -2438,7 +2444,7 @@ class EcyourTTS(BaseTTS):
         attn_priors: torch.tensor,
         binarize_alignment: bool,
         use_encoder: bool = True,
-        aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None},
+        aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
     ) -> Dict:
         """Forward pass of the model.
 
@@ -2479,7 +2485,7 @@ class EcyourTTS(BaseTTS):
             - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
         outputs = {}
-        sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
+        sid, spk_emb, avg_spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
 
         if self.config.add_blank:
             blank_mask = x == self.tokenizer.characters.blank_id
@@ -2490,6 +2496,10 @@ class EcyourTTS(BaseTTS):
         # speaker embedding
         if self.args.use_speaker_embedding and sid is not None:
             spk_emb = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+
+        spk_emb_predictors = spk_emb
+        if self.args.use_averaged_d_vector_on_predictors:
+            spk_emb_predictors = avg_spk_emb
 
         # language embedding
         lang_emb = None
@@ -2516,7 +2526,7 @@ class EcyourTTS(BaseTTS):
 
         # duration predictor and duration loss
         outputs = self.forward_duration_predictor(
-            outputs, aligner_hard, o_en, x_mask, spk_emb, lang_emb, emo_emb, x_lengths
+            outputs, aligner_hard, o_en, x_mask, spk_emb_predictors, lang_emb, emo_emb, x_lengths
         )
 
         if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
@@ -2618,7 +2628,7 @@ class EcyourTTS(BaseTTS):
             if energy.size(2) != pitch.size(2):
                 pitch = pitch[:, :, : energy.size(2)]
             o_pitch_emb, o_pitch, loss_pitch = self._forward_pitch_predictor(
-                o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
+                o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb_predictors, emo_emb=emo_emb, x_lengths=y_lengths
             )
 
         # energy predictor pass
@@ -2626,7 +2636,7 @@ class EcyourTTS(BaseTTS):
         avg_energy = None
         if self.args.use_energy_predictor:
             o_energy_emb, o_energy, loss_energy = self._forward_energy_predictor(
-                o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
+                o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb_predictors, emo_emb=emo_emb, x_lengths=y_lengths
             )
 
         ##### ---> CONTEXT ENCODING
@@ -2734,7 +2744,7 @@ class EcyourTTS(BaseTTS):
         waveform: torch.tensor,
         attn_priors: torch.tensor,
         use_flow_predicted_z: bool = True,
-        aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None},
+        aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
     ) -> Dict:
         self.args.use_flow_predicted_z = True
         self.freeze_layers(all_except_vocoder=True, verbose=False)
@@ -2744,7 +2754,7 @@ class EcyourTTS(BaseTTS):
 
         with torch.no_grad():
             outputs = {}
-            sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
+            sid, spk_emb, avg_spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
 
             if self.config.add_blank:
                 blank_mask = x == self.tokenizer.characters.blank_id
@@ -2755,6 +2765,10 @@ class EcyourTTS(BaseTTS):
             # speaker embedding
             if self.args.use_speaker_embedding and sid is not None:
                 spk_emb = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+
+            spk_emb_predictors = spk_emb
+            if self.args.use_averaged_d_vector_on_predictors:
+                spk_emb_predictors = avg_spk_emb
 
             # language embedding
             lang_emb = None
@@ -2819,14 +2833,14 @@ class EcyourTTS(BaseTTS):
                 if energy.size(2) != pitch.size(2):
                     pitch = pitch[:, :, : energy.size(2)]
                 o_pitch_emb, o_pitch, _ = self._forward_pitch_predictor(
-                    o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
+                    o_en=o_en_ex, x_mask=y_mask, pitch=pitch, g=spk_emb_predictors, emo_emb=emo_emb, x_lengths=y_lengths
                 )
 
             # energy predictor pass
             o_energy = None
             if self.args.use_energy_predictor:
                 o_energy_emb, o_energy, _ = self._forward_energy_predictor(
-                    o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb, emo_emb=emo_emb, x_lengths=y_lengths
+                    o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb_predictors, emo_emb=emo_emb, x_lengths=y_lengths
                 )
 
             ##### ---> CONTEXT ENCODING
@@ -2941,7 +2955,7 @@ class EcyourTTS(BaseTTS):
             - m_p: :math:`[B, C, T_dec]`
             - logs_p: :math:`[B, C, T_dec]`
         """
-        sid, spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
+        sid, spk_emb, _, lid, emo_emb = self._set_cond_input(aux_input)
 
         if x_lengths is None:
             x_lengths = self._set_x_lengths(x, aux_input)
@@ -3302,6 +3316,7 @@ class EcyourTTS(BaseTTS):
         energy = batch["energy"]
         pitch = batch["pitch"]
         d_vectors = batch["d_vectors"]
+        avg_d_vectors = batch["avg_d_vectors"]
         emotion_vectors = batch["emotion_vectors"]
         speaker_ids = batch["speaker_ids"]
         language_ids = batch["language_ids"]
@@ -3321,6 +3336,7 @@ class EcyourTTS(BaseTTS):
                 mel=batch["mel"],
                 aux_input={
                     "d_vectors": d_vectors,
+                    "avg_d_vectors": avg_d_vectors,
                     "speaker_ids": speaker_ids,
                     "language_ids": language_ids,
                     "emotion_vectors": emotion_vectors,
@@ -3406,6 +3422,7 @@ class EcyourTTS(BaseTTS):
         energy = batch["energy"]
         pitch = batch["pitch"]
         d_vectors = batch["d_vectors"]
+        avg_d_vectors = batch["avg_d_vectors"]
         emotion_vectors = batch["emotion_vectors"]
         speaker_ids = batch["speaker_ids"]
         language_ids = batch["language_ids"]
@@ -3426,6 +3443,7 @@ class EcyourTTS(BaseTTS):
             mel=batch["mel"],
             aux_input={
                 "d_vectors": d_vectors,
+                "avg_d_vectors": avg_d_vectors,
                 "speaker_ids": speaker_ids,
                 "language_ids": language_ids,
                 "emotion_vectors": emotion_vectors,
@@ -3464,6 +3482,7 @@ class EcyourTTS(BaseTTS):
             energy = batch["energy"]
             pitch = batch["pitch"]
             d_vectors = batch["d_vectors"]
+            avg_d_vectors = batch["avg_d_vectors"]
             emotion_vectors = batch["emotion_vectors"]
             speaker_ids = batch["speaker_ids"]
             language_ids = batch["language_ids"]
@@ -3484,6 +3503,7 @@ class EcyourTTS(BaseTTS):
                 mel=batch["mel"],
                 aux_input={
                     "d_vectors": d_vectors,
+                    "avg_d_vectors": avg_d_vectors,
                     "speaker_ids": speaker_ids,
                     "language_ids": language_ids,
                     "emotion_vectors": emotion_vectors,
@@ -3947,6 +3967,7 @@ class EcyourTTS(BaseTTS):
         speaker_ids = None
         language_ids = None
         d_vectors = None
+        avg_d_vectors = None
         emo_vectors = None
 
         # get numerical speaker ids from speaker names
@@ -3962,6 +3983,9 @@ class EcyourTTS(BaseTTS):
             d_vector_mapping = self.speaker_manager.embeddings
             d_vectors = [d_vector_mapping[w]["embedding"] for w in batch["audio_unique_names"]]
             d_vectors = torch.FloatTensor(d_vectors)
+            if self.args.use_averaged_d_vector_on_predictors:
+                avg_d_vectors = [self.speaker_manager.get_mean_embedding(spk_id) for spk_id in batch["speaker_names"]]
+                avg_d_vectors = torch.FloatTensor(avg_d_vectors)
 
         # get emotion_vectors from audio file names
         if self.emotion_manager is not None and self.emotion_manager.embeddings and self.args.use_emotion_vector_file:
@@ -3978,6 +4002,7 @@ class EcyourTTS(BaseTTS):
 
         batch["language_ids"] = language_ids
         batch["d_vectors"] = d_vectors
+        batch["avg_d_vectors"] = avg_d_vectors
         batch["emotion_vectors"] = emo_vectors
         batch["speaker_ids"] = speaker_ids
         return batch
