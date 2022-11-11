@@ -406,9 +406,9 @@ class EcyourTTSF0Dataset(F0Dataset):
         y = y.squeeze().numpy()
         f0, voiced_mask, _ = pyin(
             y.astype(np.double),
-            audio_config.pitch_fmin,
-            audio_config.pitch_fmax,
-            current_sample_rate,
+            fmin=audio_config.pitch_fmin,
+            fmax=audio_config.pitch_fmax,
+            sr=current_sample_rate,
             frame_length=audio_config.win_length,
             win_length=audio_config.win_length // 2,
             hop_length=audio_config.hop_length,
@@ -3781,9 +3781,9 @@ class EcyourTTS(BaseTTS):
 
         pitch, voiced_mask, _ = pyin(
             y.astype(np.double),
-            self.config.audio.pitch_fmin,
-            self.config.audio.pitch_fmax,
-            self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+            fmin=self.config.audio.pitch_fmin,
+            fmax=self.config.audio.pitch_fmax,
+            sr=self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
             frame_length=self.config.audio.win_length,
             win_length=self.config.audio.win_length // 2,
             hop_length=self.config.audio.hop_length,
@@ -3880,9 +3880,9 @@ class EcyourTTS(BaseTTS):
 
             pitch, voiced_mask, _ = pyin(
                 y.astype(np.double),
-                self.config.audio.pitch_fmin,
-                self.config.audio.pitch_fmax,
-                self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+                fmin=self.config.audio.pitch_fmin,
+                fmax=self.config.audio.pitch_fmax,
+                sr=self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
                 frame_length=self.config.audio.win_length,
                 win_length=self.config.audio.win_length // 2,
                 hop_length=self.config.audio.hop_length,
