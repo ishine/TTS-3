@@ -3613,6 +3613,9 @@ class EcyourTTS(BaseTTS):
                 loss_dict["loss"] = loss_p_prosody + loss_dict["loss"]
                 loss_dict["loss_p_prosody"] = loss_p_prosody
 
+            if loss_dict["loss_pitch"] is not None and loss_dict["loss_energy"] is not None and loss_dict["loss_duration"] is not None:
+                loss_dict["loss_predictors"] = loss_dict["loss_pitch"] + loss_dict["loss_energy"] + loss_dict["loss_duration"] 
+
             # compute useful training stats
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
             loss_dict["avg_spec_length"] = batch["spec_lens"].float().mean()
