@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.utils import remove_spectral_norm
+
 
 def get_num_adain_params(model):
     """
@@ -15,6 +17,7 @@ def get_num_adain_params(model):
         if m.__class__.__name__ == "AdaptiveInstanceNorm1d":
             num_adain_params += 2 * m.num_features
     return num_adain_params
+
 
 def assign_adain_params(adain_params, model):
 
@@ -35,8 +38,9 @@ def assign_adain_params(adain_params, model):
             if adain_params.size(1) > 2 * m.num_features:
                 adain_params = adain_params[:, 2 * m.num_features :]
 
+
 class AdaptiveInstanceNorm1d(nn.Module):
-    """ Reference: https://github.com/microsoft/SpareNet/blob/876f37b99f77bb8d479d65acf32aebb4f4d6b1a8/models/sparenet_generator.py
+    """Reference: https://github.com/microsoft/SpareNet/blob/876f37b99f77bb8d479d65acf32aebb4f4d6b1a8/models/sparenet_generator.py
     input:
     - inp: (b, c, m)
     output:
@@ -61,9 +65,7 @@ class AdaptiveInstanceNorm1d(nn.Module):
         self.register_buffer("running_var", torch.ones(num_features))
 
     def forward(self, x):
-        assert (
-            self.weight is not None and self.bias is not None
-        ), "Please assign weight and bias before calling AdaIN!"
+        assert self.weight is not None and self.bias is not None, "Please assign weight and bias before calling AdaIN!"
         b, c = x.size(0), x.size(1)
         running_mean = self.running_mean.repeat(b)
         running_var = self.running_var.repeat(b)
@@ -169,7 +171,7 @@ class Conv1dAdaINBlock(nn.Module):
 
     def reset_parameters(self):
         for layer in self.conv_bn_blocks.children():
-            if hasattr(layer, 'reset_parameters'):
+            if hasattr(layer, "reset_parameters"):
                 layer.reset_parameters()
 
 
@@ -193,7 +195,15 @@ class ResidualConv1dAdaINBlock(nn.Module):
     """
 
     def __init__(
-        self, in_channels, out_channels, hidden_channels, kernel_size, dilations, style_dim=64, num_res_blocks=3, num_conv_blocks=2
+        self,
+        in_channels,
+        out_channels,
+        hidden_channels,
+        kernel_size,
+        dilations,
+        style_dim=64,
+        num_res_blocks=3,
+        num_conv_blocks=2,
     ):
 
         super().__init__()
@@ -236,16 +246,27 @@ class ResidualConv1dAdaINBlock(nn.Module):
 
     def reset_parameters(self):
         for layer in self.res_blocks.children():
-            if hasattr(layer, 'reset_parameters'):
+            if hasattr(layer, "reset_parameters"):
                 layer.reset_parameters()
         for layer in self.mlp.children():
-            if hasattr(layer, 'reset_parameters'):
+            if hasattr(layer, "reset_parameters"):
                 layer.reset_parameters()
 
 
 class PredictorAdaIN(nn.Module):
     # AdaIn predictor inspired on StyleTTS paper: https://arxiv.org/pdf/2205.15439.pdf
-    def __init__(self, in_dim, spk_emb_channels=0, emo_emb_channels=0, out_dim=1, hidden_channels=256, lstm_hidden_channels=512, num_conv_blocks=2, num_res_blocks=3, num_lstm_layers=3):
+    def __init__(
+        self,
+        in_dim,
+        spk_emb_channels=0,
+        emo_emb_channels=0,
+        out_dim=1,
+        hidden_channels=256,
+        lstm_hidden_channels=512,
+        num_conv_blocks=2,
+        num_res_blocks=3,
+        num_lstm_layers=3,
+    ):
         super(PredictorAdaIN, self).__init__()
         in_channels = in_dim + in_dim
         self.num_lstm_layers = num_lstm_layers
@@ -267,7 +288,7 @@ class PredictorAdaIN(nn.Module):
             kernel_size=3,
             num_res_blocks=num_res_blocks,
             num_conv_blocks=num_conv_blocks,
-            dilations=[1]*num_res_blocks,
+            dilations=[1] * num_res_blocks,
             style_dim=n_style_dim,
         )
 
@@ -324,33 +345,31 @@ class PredictorAdaIN(nn.Module):
         if self.projection:
             self.projection.reset_parameters()
 
+
 class BiLSTM(nn.Module):
     def __init__(self, in_dim, n_channels=512, num_lstm_layers=1):
         super(BiLSTM, self).__init__()
         self.num_lstm_layers = num_lstm_layers
         lstm_channels = int(n_channels // 2)
         if self.num_lstm_layers == 1:
-            self.bilstm = nn.LSTM(in_dim, lstm_channels, 1,
-                                    batch_first=True, bidirectional=True)
+            self.bilstm = nn.LSTM(in_dim, lstm_channels, 1, batch_first=True, bidirectional=True)
             lstm_norm_fn_pntr = nn.utils.spectral_norm
 
-            self.bilstm = lstm_norm_fn_pntr(self.bilstm, 'weight_hh_l0')
-            self.bilstm = lstm_norm_fn_pntr(self.bilstm, 'weight_hh_l0_reverse')
+            self.bilstm = lstm_norm_fn_pntr(self.bilstm, "weight_hh_l0")
+            self.bilstm = lstm_norm_fn_pntr(self.bilstm, "weight_hh_l0_reverse")
         else:
             self.bilstm = []
             num_channels = (lstm_channels * 2) // (2**self.num_lstm_layers)
             for i in range(self.num_lstm_layers):
                 if i == 0:
-                    layer = nn.LSTM(in_dim, num_channels, 1,
-                                    batch_first=True, bidirectional=True)
+                    layer = nn.LSTM(in_dim, num_channels, 1, batch_first=True, bidirectional=True)
                 else:
-                    layer = nn.LSTM(num_channels, num_channels, 1,
-                                        batch_first=True, bidirectional=True)
+                    layer = nn.LSTM(num_channels, num_channels, 1, batch_first=True, bidirectional=True)
 
                 num_channels = num_channels * 2
                 lstm_norm_fn_pntr = nn.utils.spectral_norm
-                layer = lstm_norm_fn_pntr(layer, 'weight_hh_l0')
-                layer = lstm_norm_fn_pntr(layer, 'weight_hh_l0_reverse')
+                layer = lstm_norm_fn_pntr(layer, "weight_hh_l0")
+                layer = lstm_norm_fn_pntr(layer, "weight_hh_l0_reverse")
                 self.bilstm.append(layer)
             self.bilstm = nn.Sequential(*self.bilstm)
 
@@ -362,11 +381,9 @@ class BiLSTM(nn.Module):
         lens_sorted = lens_sorted.long().cpu()
 
         context = context[ids_sorted]
-        context = nn.utils.rnn.pack_padded_sequence(
-            context, lens_sorted, batch_first=True)
+        context = nn.utils.rnn.pack_padded_sequence(context, lens_sorted, batch_first=True)
         context = fn(context)[0]
-        context = nn.utils.rnn.pad_packed_sequence(
-            context, batch_first=True)[0]
+        context = nn.utils.rnn.pad_packed_sequence(context, batch_first=True)[0]
 
         # map back to original indices
         context = context[unsort_ids]
@@ -374,7 +391,6 @@ class BiLSTM(nn.Module):
 
     def forward(self, context, lens):
         context = context.transpose(1, 2)
-        # self.bilstm.flatten_parameters()
         if self.num_lstm_layers == 1:
             self.bilstm.flatten_parameters()
             if lens is not None:
@@ -397,3 +413,14 @@ class BiLSTM(nn.Module):
         else:
             for layer in self.bilstm:
                 layer.reset_parameters()
+
+    def remove_spectral_norm(self):
+        if self.num_lstm_layers == 1:
+            remove_spectral_norm(self.bilstm, name="weight_hh_l0")
+            remove_spectral_norm(self.bilstm, name="weight_hh_l0_reverse")
+            self.bilstm.flatten_parameters()
+        else:
+            for layer in self.bilstm:
+                remove_spectral_norm(layer, name="weight_hh_l0")
+                remove_spectral_norm(layer, name="weight_hh_l0_reverse")
+                layer.flatten_parameters()

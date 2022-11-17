@@ -20,7 +20,7 @@ from librosa.filters import mel as librosa_mel_fn
 from torch import nn
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
-from torch.nn.utils import remove_weight_norm
+from torch.nn.utils import remove_spectral_norm, remove_weight_norm
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
@@ -35,6 +35,7 @@ from TTS.tts.layers.ecyourtts.networks import ContextEncoder, PosteriorEncoder, 
 from TTS.tts.layers.ecyourtts.stochastic_duration_predictor import StochasticDurationPredictor
 from TTS.tts.layers.generic.aligner import AlignmentNetwork
 from TTS.tts.layers.generic.duration_predictor_lstm import BottleneckLayerLayer, DurationPredictorLSTM
+from TTS.tts.layers.generic.predictor_adain import PredictorAdaIN
 from TTS.tts.layers.losses import ForwardSumLoss, MSELossMasked
 from TTS.tts.models.base_tts import BaseTTS
 from TTS.tts.utils.emotions import EmotionManager
@@ -57,7 +58,7 @@ from TTS.utils.io import load_fsspec
 from TTS.utils.samplers import BucketBatchSampler
 from TTS.vocoder.models.avocodo_generator import AvocodoGenerator
 from TTS.vocoder.utils.generic_utils import plot_results
-from TTS.tts.layers.generic.predictor_adain import PredictorAdaIN
+
 
 def beta_div(input, target, beta=2):
     r"""The `β-divergence loss
@@ -1633,7 +1634,10 @@ class EcyourTTS(BaseTTS):
 
             if self.args.use_adain_pitch_and_energy_predictors:
                 self.pitch_predictor = PredictorAdaIN(
-                    self.args.hidden_channels, spk_emb_channels=self.embedded_speaker_dim, emo_emb_channels=self.embedded_emotion_dim, num_lstm_layers=3
+                    self.args.hidden_channels,
+                    spk_emb_channels=self.embedded_speaker_dim,
+                    emo_emb_channels=self.embedded_emotion_dim,
+                    num_lstm_layers=3,
                 )
             else:
                 self.pitch_predictor = DurationPredictorLSTM(
@@ -1655,7 +1659,10 @@ class EcyourTTS(BaseTTS):
         if self.args.use_energy_predictor:
             if self.args.use_adain_pitch_and_energy_predictors:
                 self.energy_predictor = PredictorAdaIN(
-                    self.args.hidden_channels, spk_emb_channels=self.embedded_speaker_dim, emo_emb_channels=self.embedded_emotion_dim, num_lstm_layers=3
+                    self.args.hidden_channels,
+                    spk_emb_channels=self.embedded_speaker_dim,
+                    emo_emb_channels=self.embedded_emotion_dim,
+                    num_lstm_layers=3,
                 )
             else:
                 self.energy_predictor = DurationPredictorLSTM(
@@ -2309,9 +2316,9 @@ class EcyourTTS(BaseTTS):
         o_pitch[o_pitch < zero_point_norm] = zero_point_norm
         org_o_pitch = o_pitch.clone()
         if self.config.audio.pitch_fmin:
-            half_pitch_fmin_norm = normalize_pitch(self.config.audio.pitch_fmin/2, self.pitch_mean, self.pitch_std)
+            half_pitch_fmin_norm = normalize_pitch(self.config.audio.pitch_fmin / 2, self.pitch_mean, self.pitch_std)
             pitch_fmin_norm = normalize_pitch(self.config.audio.pitch_fmin, self.pitch_mean, self.pitch_std)
-            # mode 1: set all pitch values low than half of pitch_fmin to 0.0 and move pitch_fmin all remains values that are lower than pitch_fmin 
+            # mode 1: set all pitch values low than half of pitch_fmin to 0.0 and move pitch_fmin all remains values that are lower than pitch_fmin
             if mode == 1:
                 # put all low than half of pitch min to 0.0
                 o_pitch[o_pitch <= half_pitch_fmin_norm] = zero_point_norm
@@ -2876,7 +2883,12 @@ class EcyourTTS(BaseTTS):
             o_energy = None
             if self.args.use_energy_predictor:
                 o_energy_emb, o_energy, _ = self._forward_energy_predictor(
-                    o_en=o_en_ex, x_mask=y_mask, energy=energy, g=spk_emb_predictors, emo_emb=emo_emb, x_lengths=y_lengths
+                    o_en=o_en_ex,
+                    x_mask=y_mask,
+                    energy=energy,
+                    g=spk_emb_predictors,
+                    emo_emb=emo_emb,
+                    x_lengths=y_lengths,
                 )
 
             ##### ---> CONTEXT ENCODING
@@ -3094,7 +3106,7 @@ class EcyourTTS(BaseTTS):
         ### --> ATTENTION MAP
 
         attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
-        attn = generate_path(dur.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
+        attn = generate_path(dur.squeeze(1).long(), attn_mask.squeeze(1).transpose(1, 2))
 
         ### --> EXPAND
 
@@ -3442,10 +3454,14 @@ class EcyourTTS(BaseTTS):
             loss_mel = torch.nn.functional.l1_loss(mel_slice.detach(), mel_slice_hat) * self.config.mel_loss_alpha
             loss_dict["loss_mel"] = loss_mel
 
-            loss_gen = EcyourTTSGeneratorLoss.generator_loss(scores_fake=scores_disc_fake)[0] * self.config.gen_loss_alpha
+            loss_gen = (
+                EcyourTTSGeneratorLoss.generator_loss(scores_fake=scores_disc_fake)[0] * self.config.gen_loss_alpha
+            )
             loss_dict["loss_gen"] = loss_gen
 
-            loss_feat = EcyourTTSGeneratorLoss.feature_loss(feats_disc_real, feats_disc_fake) * self.config.feat_loss_alpha
+            loss_feat = (
+                EcyourTTSGeneratorLoss.feature_loss(feats_disc_real, feats_disc_fake) * self.config.feat_loss_alpha
+            )
             loss_dict["loss_feat"] = loss_feat
 
             loss_dict["loss"] = loss_mel + loss_gen + loss_feat  # + loss_z_penc
@@ -3652,8 +3668,14 @@ class EcyourTTS(BaseTTS):
                 loss_dict["loss"] = loss_p_prosody + loss_dict["loss"]
                 loss_dict["loss_p_prosody"] = loss_p_prosody
 
-            if loss_dict["loss_pitch"] is not None and loss_dict["loss_energy"] is not None and loss_dict["loss_duration"] is not None:
-                loss_dict["loss_predictors"] = loss_dict["loss_pitch"] + loss_dict["loss_energy"] + loss_dict["loss_duration"] 
+            if (
+                loss_dict["loss_pitch"] is not None
+                and loss_dict["loss_energy"] is not None
+                and loss_dict["loss_duration"] is not None
+            ):
+                loss_dict["loss_predictors"] = (
+                    loss_dict["loss_pitch"] + loss_dict["loss_energy"] + loss_dict["loss_duration"]
+                )
 
             # compute useful training stats
             loss_dict["avg_text_length"] = batch["token_lens"].float().mean()
@@ -3964,7 +3986,9 @@ class EcyourTTS(BaseTTS):
                 y.astype(np.double),
                 fmin=self.config.audio.pitch_fmin,
                 fmax=self.config.audio.pitch_fmax,
-                sr=self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+                sr=self.config.audio.sample_rate
+                if not self.args.encoder_sample_rate
+                else self.args.encoder_sample_rate,
                 frame_length=self.config.audio.win_length,
                 win_length=self.config.audio.win_length // 2,
                 hop_length=self.config.audio.hop_length,
@@ -4333,7 +4357,11 @@ class EcyourTTS(BaseTTS):
             assert not self.training
 
     def set_inference(self):
-        pass
+        remove_spectral_norm(self.duration_predictor.feat_pred_fn.bilstm, name="weight_hh_l0")
+        remove_spectral_norm(self.duration_predictor.feat_pred_fn.bilstm, name="weight_hh_l0_reverse")
+        self.duration_predictor.feat_pred_fn.bilstm.flatten_parameters()
+        self.pitch_predictor.bilstm.remove_spectral_norm()
+        self.energy_predictor.bilstm.remove_spectral_norm()
 
     @staticmethod
     def load_config(config_path: str):
@@ -4342,7 +4370,7 @@ class EcyourTTS(BaseTTS):
         if ext == ".json":
             with fsspec.open(config_path, "r", encoding="utf-8") as f:
                 filedata = f.read()
-                filedata = filedata.replace('Vits', 'EcyourTTS')  # compat with old configs
+                filedata = filedata.replace("Vits", "EcyourTTS")  # compat with old configs
                 data = json.loads(filedata)
         else:
             raise TypeError(f" [!] Unknown config file type {ext}")
@@ -4807,7 +4835,9 @@ class EcyourTTSCharacters(BaseCharacters):
             _letters = config.characters["characters"]
             _letters_ipa = config.characters["phonemes"]
             return (
-                EcyourTTSCharacters(graphemes=_letters, ipa_characters=_letters_ipa, punctuations=_punctuations, pad=_pad),
+                EcyourTTSCharacters(
+                    graphemes=_letters, ipa_characters=_letters_ipa, punctuations=_punctuations, pad=_pad
+                ),
                 config,
             )
         characters = EcyourTTSCharacters()
