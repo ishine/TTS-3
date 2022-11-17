@@ -154,9 +154,7 @@ def setup_encoder_model(config: "Coqpit"):
             use_layers_weighted_sum=config.model_params.get("use_layers_weighted_sum", False),
         )
     else:
-        raise RuntimeError(
-            f" [!] model type {model_name} is not supported !!"
-        )
+        raise RuntimeError(f" [!] model type {model_name} is not supported !!")
 
     return model
 

@@ -4,8 +4,9 @@ import torch
 import torch.nn.functional as F
 from librosa.util import pad_center, tiny
 from scipy.signal import get_window
-from torch.autograd import Variable
 from torch import nn
+from torch.autograd import Variable
+
 
 def window_sumsquare(window, n_frames, hop_length=200, win_length=800, n_fft=800, dtype=np.float32, norm=None):
     """

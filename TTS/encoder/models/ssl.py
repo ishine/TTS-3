@@ -1,16 +1,15 @@
-import torch
-from torch import nn
 import numpy as np
-import transformers
-from transformers import AutoModel, AutoFeatureExtractor
 import torch
+import transformers
+from torch import nn
+from transformers import AutoFeatureExtractor, AutoModel
 
 # from TTS.utils.audio import TorchSTFT
 from TTS.encoder.models.base_encoder import BaseEncoder
 
+
 class SSLEncoder(BaseEncoder):
-    """Implementation of an encoder based on Self-supervised (SSL) pretrained models (like Hubert and Wav2vec).
-    """
+    """Implementation of an encoder based on Self-supervised (SSL) pretrained models (like Hubert and Wav2vec)."""
 
     # pylint: disable=W0102
     def __init__(
@@ -33,7 +32,9 @@ class SSLEncoder(BaseEncoder):
         self.use_layers_weighted_sum = use_layers_weighted_sum
 
         self.ssl_model = AutoModel.from_pretrained(ssl_model_name_or_path, layerdrop=0.0)
-        self.ssl_feature_extractor = AutoFeatureExtractor.from_pretrained(ssl_model_name_or_path, feature_size=1, padding_value=0.0, do_normalize=True, return_attention_mask=True)
+        self.ssl_feature_extractor = AutoFeatureExtractor.from_pretrained(
+            ssl_model_name_or_path, feature_size=1, padding_value=0.0, do_normalize=True, return_attention_mask=True
+        )
         self.sampling_rate = self.ssl_feature_extractor.sampling_rate
 
         if freeze_feature_extractor:

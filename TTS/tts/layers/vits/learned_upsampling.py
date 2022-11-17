@@ -3,9 +3,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from TTS.tts.layers.generic.normalization import LayerNorm
 from TTS.tts.utils.helpers import sequence_mask
 
-from TTS.tts.layers.generic.normalization import LayerNorm
 
 class RangePredictor(nn.Module):
     """

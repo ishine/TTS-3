@@ -233,7 +233,6 @@ class AvocodoGenerator(torch.nn.Module):
         if not conv_post_weight_norm:
             remove_weight_norm(self.conv_post)
 
-
     def forward(self, x, g=None):
         """
         Args:
@@ -262,9 +261,9 @@ class AvocodoGenerator(torch.nn.Module):
                     z_sum += self.resblocks[i * self.num_kernels + j](o)
             o = z_sum / self.num_kernels
 
-            if i == 1: #self.num_upsamples - 3:
+            if i == 1:  # self.num_upsamples - 3:
                 o1 = self.out_proj_x1(o)
-            elif i == 2: #self.num_upsamples - 2:
+            elif i == 2:  # self.num_upsamples - 2:
                 o2 = self.out_proj_x2(o)
 
         o = F.leaky_relu(o)

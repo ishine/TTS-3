@@ -257,7 +257,7 @@ class MultiSubBandDiscriminator(torch.nn.Module):
         tsubband,
         n,
         m,
-        freq_init_ch
+        freq_init_ch,
     ):
 
         super(MultiSubBandDiscriminator, self).__init__()
@@ -392,7 +392,6 @@ class VitsDiscriminator(nn.Module):
 
         x_scores, x_hat_scores, x_feats, x_hat_feats = self.mcmbd(x, x_hat, x2_hat, x1_hat)
         x_scores2, x_hat_scores2, x_feats2, x_hat_feats2 = self.msbd(x, x_hat)
-
 
         x_scores = x_scores + x_scores2
         x_hat_scores = x_hat_scores + x_hat_scores2
