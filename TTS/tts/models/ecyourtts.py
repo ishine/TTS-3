@@ -4357,11 +4357,13 @@ class EcyourTTS(BaseTTS):
             assert not self.training
 
     def set_inference(self):
-        remove_spectral_norm(self.duration_predictor.feat_pred_fn.bilstm, name="weight_hh_l0")
-        remove_spectral_norm(self.duration_predictor.feat_pred_fn.bilstm, name="weight_hh_l0_reverse")
-        self.duration_predictor.feat_pred_fn.bilstm.flatten_parameters()
-        self.pitch_predictor.bilstm.remove_spectral_norm()
-        self.energy_predictor.bilstm.remove_spectral_norm()
+        ...
+        # TODO: check what breaks inference ❗
+        # remove_spectral_norm(self.duration_predictor.feat_pred_fn.bilstm, name="weight_hh_l0")
+        # remove_spectral_norm(self.duration_predictor.feat_pred_fn.bilstm, name="weight_hh_l0_reverse")
+        # self.duration_predictor.feat_pred_fn.bilstm.flatten_parameters()
+        # self.pitch_predictor.bilstm.remove_spectral_norm()
+        # self.energy_predictor.bilstm.remove_spectral_norm()
 
     @staticmethod
     def load_config(config_path: str):
