@@ -4613,8 +4613,11 @@ class EcyourTTS(BaseTTS):
 
             token_ids = self.tokenizer.text_to_ids(sentence, language=language_id)
             phonemes = self.tokenizer.ids_to_text(token_ids)
+            phonemes = "~" + phonemes + "~"
             input_phonemes.append(phonemes)
 
+            token_ids.append(self.tokenizer.pad_id)
+            token_ids.insert(0, self.tokenizer.pad_id)
             input_tensor = np.asarray(
                 token_ids,
                 dtype=np.int32,
@@ -4922,7 +4925,7 @@ class EcyourTTSDiscriminatorLoss(nn.Module):
             dr = dr.float()
             dg = dg.float()
             real_loss = torch.mean((1 - dr) ** 2)
-            fake_loss = torch.mean(dg**2)
+            fake_loss = torch.mean(dg ** 2)
             loss += real_loss + fake_loss
             real_losses.append(real_loss.item())
             fake_losses.append(fake_loss.item())
