@@ -2798,7 +2798,6 @@ class EcyourTTS(BaseTTS):
         use_flow_predicted_z: bool = True,
         aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
     ) -> Dict:
-        self.args.use_flow_predicted_z = True
         self.freeze_layers(all_except_vocoder=True, verbose=False)
         self.eval()
         self.waveform_decoder.train()
@@ -3266,6 +3265,132 @@ class EcyourTTS(BaseTTS):
         z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
         o_hat = self.waveform_decoder(z_hat * y_mask, g=g_tgt)
         return o_hat, y_mask, (z, z_p, z_hat)
+
+    def prosody_transfer(self, ref_waveform, ref_sr, text:str, speaker_id=None, target_d_vector=None):
+        """Prosody transfer from a reference speech to the output on the same text.
+
+        - Resample reference waveform
+        - Extract reference spectrogram (by wav_to_spec)
+        - Extract reference pitch and energy (by GT extractors)
+        - Extract reference duration (by aligner network)
+
+        """
+        is_cuda = next(self.parameters()).is_cuda
+
+        # get embeddings
+        d_vector = embedding_to_torch(self.speaker_manager.compute_embeddings(ref_waveform)).to(self.device)
+        emo_emb = embedding_to_torch(self.emotion_manager.get_embeddings_by_name("Neutral")[0]).to(self.device).unsqueeze(
+            -1
+        )
+        spk_emb = F.normalize(d_vector).unsqueeze(-1)
+        target_spk_emb = embedding_to_torch(d_vector, cuda=is_cuda)
+
+        # get token ids
+        text_inputs = np.asarray(
+            self.tokenizer.text_to_ids(text, language="en"),
+            dtype=np.int32,
+        )
+        text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=is_cuda)
+        text_inputs = text_inputs.unsqueeze(0)
+        x_lengths = torch.tensor([text_inputs.shape[1]])
+
+        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(text_inputs, x_lengths, lang_emb=None, emo_emb=emo_emb)
+
+        # resample reference waveform
+        ref_waveform_sampled = torchaudio.functional.resample(
+            ref_waveform[None, :],
+            orig_freq=ref_sr,
+            new_freq=self.config.audio.sample_rate,
+        ).squeeze(1)
+
+        # extract reference spectrogram
+        ref_spec = wav_to_spec(
+            ref_waveform_sampled,
+            self.config.audio.fft_size,
+            self.config.audio.hop_length,
+            self.config.audio.win_length,
+            center=False,
+        )
+        ref_spec = ref_spec.unsqueeze(0)
+        y_lengths = torch.tensor([ref_spec.shape[2]])
+
+        # extract reference pitch and energy
+        ref_pitch, voiced_mask, _ = pyin(
+            ref_waveform.numpy().astype(np.double),
+            fmin=self.config.audio.pitch_fmin,
+            fmax=self.config.audio.pitch_fmax,
+            sr=self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
+            frame_length=self.config.audio.win_length,
+            win_length=self.config.audio.win_length // 2,
+            hop_length=self.config.audio.hop_length,
+            pad_mode="reflect",
+            center=False,
+            n_thresholds=100,
+            beta_parameters=(2, 18),
+            boltzmann_parameter=2,
+            resolution=0.1,
+            max_transition_rate=35.92,
+            switch_prob=0.01,
+            no_trough_prob=0.01,
+        )
+        ref_pitch[~voiced_mask] = 0.0
+
+        ref_pitch = torch.tensor(ref_pitch).unsqueeze(0).unsqueeze(0)
+        ref_pitch = torch.nn.functional.interpolate(ref_pitch, size=y_lengths)
+        ref_pitch = torch.tensor(ref_pitch, dtype=torch.float32).to(self.device)
+
+        energy_mel_spec = wav_to_mel(
+            ref_waveform_sampled,
+            n_fft=self.config.audio.fft_size,
+            num_mels=self.config.audio.num_mels,
+            sample_rate=self.config.audio.sample_rate
+            if not self.args.encoder_sample_rate
+            else self.args.encoder_sample_rate,
+            hop_length=self.config.audio.hop_length,
+            win_length=self.config.audio.win_length,
+            fmin=self.config.audio.mel_fmin,
+            fmax=self.config.audio.mel_fmax,
+            center=False,
+        )
+        ref_energy = mel_to_energy(energy_mel_spec).cpu()
+
+        o_pitch_norm = normalize_pitch(ref_pitch, self.pitch_mean, self.pitch_std)
+
+        o_pitch_emb = self.pitch_emb(o_pitch_norm)
+        o_energy_emb = self.energy_emb(ref_energy)
+
+        # context encoder pass
+        context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
+        o_context = self.context_encoder(o_en, y_lengths, spk_emb=target_spk_emb, emo_emb=emo_emb, cond=context_cond)
+
+        # extract reference duration
+        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
+
+        spk_emb_bottle = self.aligner_spk_bottleneck(spk_emb)  # [B, C, 1]
+        spk_emb_bottle_ex = spk_emb_bottle.expand(-1, -1, x_emb.shape[2])
+        emo_emb_ex = emo_emb.expand(-1, -1, x_emb.shape[2])
+
+        x_emb_spk = torch.cat((x_emb, spk_emb_bottle_ex.detach()), 1)
+        x_emb_spk = torch.cat((x_emb_spk, emo_emb_ex.detach()), 1)
+
+        _, _, _, durations = self._forward_aligner(
+            x=x_emb_spk, y=ref_spec, x_mask=x_mask, y_mask=y_mask, attn_priors=None
+        )
+
+        # expand by duration
+        m_p = torch.einsum("klmn, kjm -> kjn", [durations, m_p])
+        logs_p = torch.einsum("klmn, kjm -> kjn", [durations, logs_p])
+        o_en = torch.einsum("klmn, kjm -> kjn", [durations, o_en])
+
+        # TTS
+        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
+        z = self.flow(z_p, y_mask, g=target_spk_emb, g2=o_context * y_mask, reverse=True)
+
+        # upsampling if neededstairs
+        z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
+
+        o = self.waveform_decoder((z * y_mask), g=target_spk_emb)
+        return {"wav": o}
 
     def forward_for_dp(
         self,
