@@ -20,9 +20,9 @@ from librosa.filters import mel as librosa_mel_fn
 from torch import nn
 from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
-from torch.nn.utils import remove_spectral_norm, remove_weight_norm
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
+from TTS.utils.audio.numpy_transforms import compute_f0
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
 from trainer.trainer_utils import get_optimizer, get_scheduler
 
@@ -147,6 +147,10 @@ def load_audio(file_path, sample_rate=None):
             x,
             orig_freq=sr,
             new_freq=sample_rate,
+            lowpass_filter_width=64,
+            rolloff=0.9475937167399596,
+            resampling_method="kaiser_window",
+            beta=14.769656459379492,
         )
         sr = sample_rate
     return x, sr
@@ -666,7 +670,7 @@ class StyleEmbedAttention(nn.Module):
 
         # score = softmax(QK^T / (d_k ** 0.5))
         scores_soft = torch.matmul(querys, keys.transpose(2, 3))  # [h, N, T_q, T_k]
-        scores_soft = scores_soft / (self.key_dim**0.5)
+        scores_soft = scores_soft / (self.key_dim ** 0.5)
         scores_soft = F.softmax(scores_soft, dim=3)
 
         # out = score * V
@@ -1940,8 +1944,13 @@ class EcyourTTS(BaseTTS):
         if self.args.encoder_sample_rate:
             self.interpolate_factor = self.config.audio["sample_rate"] / self.args.encoder_sample_rate
             self.audio_resampler = torchaudio.transforms.Resample(
-                orig_freq=self.config.audio["sample_rate"], new_freq=self.args.encoder_sample_rate
-            )  # pylint: disable=W0201
+                orig_freq=self.config.audio["sample_rate"],
+                new_freq=self.args.encoder_sample_rate,
+                lowpass_filter_width=64,
+                rolloff=0.9475937167399596,
+                resampling_method="kaiser_window",
+                beta=14.769656459379492,
+            )
 
     def on_epoch_start(self, trainer):  # pylint: disable=W0613
         """Freeze layers at the beginning of an epoch"""
