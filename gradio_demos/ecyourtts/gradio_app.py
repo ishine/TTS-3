@@ -4,11 +4,12 @@ import numpy as np
 import gradio as gr
 import torch
 import soundfile as sf
+import argparse
 from TTS.config.shared_configs import BaseDatasetConfig
 from TTS.tts.datasets import load_tts_samples
+from TTS.tts.models.ecyourtts import EcyourTTS
 from TTS.tts.utils.helpers import average_over_durations
 from TTS.utils.audio.numpy_transforms import save_wav
-from TTS.tts.models.ecyourtts import EcyourTTS
 from gradio_app_utils import controller_reader, controller_writer
 from matplotlib import pylab
 from pathlib import Path
@@ -16,16 +17,142 @@ from datetime import datetime
 import subprocess
 import librosa
 import librosa.display
+from pygit2 import Repository
+
+try:
+    import whisper
+    print(" > WHISPER IMPORTED for ASR.")
+except:
+    print(" > WHISPER is not available for ASR.")
+
+
+parser = argparse.ArgumentParser(prog = 'TTS demo')
+parser.add_argument('-p', '--port', type=int, default=5031, help='port to run the server on')
+args = parser.parse_args()
 
 torch.set_num_threads(12)
 
 source_path = Path(__file__).resolve()
 ROOT_PATH = source_path.parent
 
+MODEL = None
+MODEL_CONFIG = None
+
+
+ORIGINAL_LENGTH_SCALE = None
+SPEAKERS = None
+EMOTION_NAMES = None
+EMOTION_EMBEDDINGS = None
+# SPEAKER_FILES = ["/data/TTS/gradio_demos/ecyourtts/embeddings/speakers_studio.pth"]
+SPEAKER_FILES = ["/data/TTS/gradio_demos/ecyourtts/embeddings/speakers_v2.pth"]
+
+# SPEAKER_FILES = [
+#     "/raid/datasets/speaker_embeddings_new_key/speakers_vctk_libritts_esd_skyrim.pth",
+#     "/data/TTS/gradio_demos/speakers_v1.pth",
+#     "/raid/datasets/video_game_dataset/speakers.pth",
+# ]
+EMOTION_EMB_PATH = "/raid/datasets/emotion_embeddings/Large_Hubert/emotions_embeddings_ESD_with_GT_labels/emotions.pth"
+
+
+SPEAKER_WAV_PATH = os.path.join(ROOT_PATH, "stored_data/submitted_wavs")
+GENERATED_WAV_PATH = os.path.join(ROOT_PATH, "stored_data/generated_wavs")
+FLAGGED_PATH = os.path.join(ROOT_PATH, "stored_data/flagged")
+
+
+ENCODER_SR = 16_000
+TRAGET_DBFS = -27
+
+REQ_COUNTER = 0
+gr.close_all()
+
+os.makedirs(SPEAKER_WAV_PATH, exist_ok=True)
+os.makedirs(GENERATED_WAV_PATH, exist_ok=True)
+
+
 # v21.3voc
-model_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/Variant21/ECYourTTS_coqui_studio/ECYourTTS-v21.3_e2e_voc.5a28ac1739434e7c83680a4b404a41b2/models/checkpoint_4320000.pth"
-config_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/Variant21/ECYourTTS_coqui_studio/ECYourTTS-v21.3_e2e_voc.5a28ac1739434e7c83680a4b404a41b2/artifacts/model_config/model_config.json"
-port = 5030
+model_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/Variant21/ECYourTTS_coqui_studio/ECYourTTS-v21.3_e2e_voc_with_AdaIn_preds_avg_spk_emb.f07b91553a10480eb6bc2bc6885b986d/models/checkpoint_4460000.pth"
+config_path = "s3://coqui-ai-models/TTS/Checkpoints/YourTTS_with_pitch/Variant21/ECYourTTS_coqui_studio/ECYourTTS-v21.3_e2e_voc_with_AdaIn_preds_avg_spk_emb.f07b91553a10480eb6bc2bc6885b986d/artifacts/model_config/model_config.json"
+port = args.port
+
+
+def get_current_branch_name():
+    repo = Repository('.')
+    cur_branch_name = repo.head.shorthand
+    return cur_branch_name, repo
+
+
+def compute_emotion_embeddings():
+    global EMOTION_EMBEDDINGS, EMOTION_NAMES
+
+    from sklearn.preprocessing import normalize
+
+    EMOTION_EMBEDDINGS = {}
+    for en1 in EMOTION_NAMES:
+        emo_emb = MODEL.emotion_manager.get_mean_embedding(en1)
+        emo_emb_res = emo_emb
+        for en2 in [e for e in EMOTION_NAMES if e != en1]:
+            embs2 = MODEL.emotion_manager.get_mean_embedding(en2)
+            emo_emb_res = emo_emb_res - embs2
+        EMOTION_EMBEDDINGS[en1] = normalize((emo_emb + 0.2 * emo_emb_res)[None, :], norm="l2")[0]
+    torch.save(EMOTION_EMBEDDINGS, "/data/TTS/gradio_demos/ecyourtts/emotion_vecs_vector_algebra.pth")
+
+
+def load_speaker_encoder(encoder_model_path, encoder_config_path):
+    MODEL.speaker_manager.init_encoder(encoder_model_path, encoder_config_path, False)
+    MODEL.speaker_manager.load_embeddings_from_list_of_files(SPEAKER_FILES)
+
+
+def load_emotion_embeddings():
+    global EMOTION_NAMES, EMOTION_EMBEDDINGS
+
+    EMOTION_EMBEDDINGS = torch.load(EMOTION_EMB_PATH)
+    EMOTION_NAMES = MODEL.emotion_manager.emotion_names
+
+
+def load_model(model_path, config_path, branch_name=None):
+    global ORIGINAL_LENGTH_SCALE
+    global SPEAKERS
+    global EMOTION_NAMES
+    global MODEL
+    global MODEL_CONFIG
+
+    # remove white spaces
+    model_path = model_path.strip()
+    config_path = config_path.strip()
+    branch_name = branch_name.strip() if branch_name is not None else None
+
+    # checkout to the target branch if needed
+    cur_branch_name, repo = get_current_branch_name()
+    if branch_name is not None:
+
+        if branch_name != cur_branch_name:
+            print(f" > Switching to branch {branch_name}...")
+            branch = repo.lookup_branch(branch_name)
+            ref = repo.lookup_reference(branch.name)
+            print(f" > Current branch: {repo.head.shorthand}")
+            print(f" > Checkout branch: {ref}")
+            repo.checkout(ref)
+            print(" > Done!")
+
+    # load model
+    print(" > Loading MODEL...")
+    model_config = EcyourTTS.load_config(config_path)
+    model = EcyourTTS.init_from_config(model_config, verbose=True)
+    model.load_checkpoint(model_config, model_path, eval=True, strict=False)
+
+    MODEL = model
+    MODEL_CONFIG = model_config
+
+    # load speaker encoder and embeddings
+    load_speaker_encoder(encoder_model_path, encoder_config_path)
+    SPEAKERS = model.speaker_manager.speaker_names
+
+    # load emotion embeddings
+    load_emotion_embeddings()
+    compute_emotion_embeddings()  # ❗❗❗❗❗❗
+    ORIGINAL_LENGTH_SCALE = model.length_scale
+    print(" > Model loaded!")
+
 
 language_path = None
 
@@ -33,60 +160,8 @@ encoder_model_path = os.path.join(ROOT_PATH, "models/model_se.pth.tar")
 encoder_config_path = os.path.join(ROOT_PATH, "models/config_se.json")
 
 
-SPEAKER_WAV_PATH = os.path.join(ROOT_PATH, "stored_data/submitted_wavs")
-GENERATED_WAV_PATH = os.path.join(ROOT_PATH, "stored_data/generated_wavs")
-FLAGGED_PATH = os.path.join(ROOT_PATH, "stored_data/flagged")
-
-ENCODER_SR = 16_000
-TRAGET_DBFS = -27
-
-ERROR1 = os.path.join(ROOT_PATH, "data/no_record_error.wav")  # no voice recording
-ERROR2 = os.path.join(ROOT_PATH, "data/no_input_sentence.wav")  # no input sentence
-
-os.makedirs(SPEAKER_WAV_PATH, exist_ok=True)
-os.makedirs(GENERATED_WAV_PATH, exist_ok=True)
-
-REQ_COUNTER = 0
-
-gr.close_all()
-
-# pylint: disable=global-statement
-model_config = EcyourTTS.load_config(config_path)
-model = EcyourTTS.init_from_config(model_config, verbose=True)
-model.load_checkpoint(model_config, model_path, eval=True, strict=False)
-model.speaker_manager.init_encoder(encoder_model_path, encoder_config_path, False)
-# model.cuda()
-
-# reading custom set of speakers
-speakers_file = [
-    "/raid/datasets/speaker_embeddings_new_key/speakers_vctk_libritts_esd_skyrim.pth",
-    "/data/TTS/gradio_demos/speakers_v1.pth",
-    "/raid/datasets/video_game_dataset/speakers.pth",
-]
-speakers_file = ["/data/TTS/gradio_demos/ecyourtts/embeddings/speakers_studio.pth"]
-
-model.speaker_manager.load_embeddings_from_list_of_files(speakers_file)
-
-ORIGINAL_LENGTH_SCALE = model.length_scale
-SPEAKERS = model.speaker_manager.speaker_names
-EMOTION_EMB_PATH = "/raid/datasets/emotion_embeddings/Large_Hubert/emotions_embeddings_ESD_with_GT_labels/emotions.pth"
-
-# SPEAKERS += selected_spks
-
-emotion_embeddings = torch.load(EMOTION_EMB_PATH)
-EMOTION_NAMES = model.emotion_manager.emotion_names
-
-from sklearn.preprocessing import normalize
-
-emotion_embeddings = {}
-for en1 in EMOTION_NAMES:
-    emo_emb = model.emotion_manager.get_mean_embedding(en1)
-    emo_emb_res = emo_emb
-    for en2 in [e for e in EMOTION_NAMES if e != en1]:
-        embs2 = model.emotion_manager.get_mean_embedding(en2)
-        emo_emb_res = emo_emb_res - embs2
-    emotion_embeddings[en1] = normalize((emo_emb + 0.2 * emo_emb_res)[None, :], norm="l2")[0]
-torch.save(emotion_embeddings, "/data/TTS/gradio_demos/ecyourtts/emotion_vecs_vector_algebra.pth")
+if model_path:
+    load_model(model_path, config_path)
 
 esd_train_config = BaseDatasetConfig(
     formatter="esd",
@@ -227,7 +302,7 @@ def phoneme_to_frame_vals(values, durations):
     return avg_values
 
 
-def tts(
+def _tts(
     speaker_wav,
     uploaded_wav,
     text,
@@ -249,7 +324,8 @@ def tts(
     denoiser_mode,
     model_noise_scale,
     split_batching,
-    state_vars
+    state_vars,
+    control
 ):
 
     global REQ_COUNTER
@@ -259,11 +335,13 @@ def tts(
     if len(state_vars) == 0:
         state_vars["pitch_vals"] = None
         state_vars["energy_vals"] = None
+        state_vars["dur_vals"] = None
         state_vars["avg_pitch_vals"] = None
         state_vars["avg_energy_vals"] = None
     else:
         pitch_vals = state_vars["pitch_vals"]
         energy_vals = state_vars["energy_vals"]
+        dur_vals = state_vars["dur_vals"]
         avg_pitch_vals = state_vars["avg_pitch_vals"]
         avg_energy_vals = state_vars["avg_energy_vals"]
 
@@ -316,13 +394,13 @@ def tts(
     if not use_last_spkemb:
         if speaker_wav:
             _, wav_file = process_speaker_wav(speaker_wav, dbfs)
-            speaker_embedding = model.speaker_manager.compute_embedding_from_clip(wav_file)
+            speaker_embedding = MODEL.speaker_manager.compute_embedding_from_clip(wav_file)
         elif uploaded_wav:
             orig_wav, wav_file = process_speaker_wav(uploaded_wav, dbfs)
-            speaker_embedding = model.speaker_manager.compute_embedding_from_clip(wav_file)
+            speaker_embedding = MODEL.speaker_manager.compute_embedding_from_clip(wav_file)
         else:
             # compute spk_emb
-            speaker_embedding = model.speaker_manager.get_mean_embedding(
+            speaker_embedding = MODEL.speaker_manager.get_mean_embedding(
                 speaker_name, num_samples=None, randomize=False
             )
             # sample speaker embedding
@@ -330,44 +408,55 @@ def tts(
                 speaker_embedding = np.random.randn(speaker_embedding.shape[0]) * gmm_noise_scale + speaker_embedding
 
     # compute emo_emb
-    emotion_embedding = emotion_embeddings[emotion_name]
+    # emotion_embedding = model.emotion_manager.get_mean_embedding(emotion_name)
+    emotion_embedding = EMOTION_EMBEDDINGS[emotion_name]
 
     # parse in control values
     pitch_values = None
     energy_values = None
     duration_values = None
 
+    def get_char_frame_idx(duration_values):
+        char_idxs = []
+        for i in range(len(duration_values)):
+            char_idxs.append(char_idx)
+            char_idx += int(duration_values[i])
+        return char_idxs
 
-    if duration_control_input is not None and len(duration_control_input) > 0:
-        duration_values = controller_reader(duration_control_input)
-        duration_values = [t[1] for t in duration_values]
-        duration_values = torch.FloatTensor(duration_values)[None, None, :].to(model.device)
+    if control:
+        if duration_control_input is not None and len(duration_control_input) > 0:
+            duration_values = controller_reader(duration_control_input)
+            duration_values = [t[1] for t in duration_values]
+            duration_values = torch.FloatTensor(duration_values)[None, None, :].to(MODEL.device)
+            dur_diff = dur_vals - duration_values
+            dur_diff_mask = torch.abs(dur_diff) > 0
 
 
-    if pitch_control_input is not None and len(pitch_control_input) > 0:
-        avg_pitch_inp_vals = controller_reader(pitch_control_input)
-        avg_pitch_inp_vals = [t[1] for t in avg_pitch_inp_vals]
-        avg_pitch_inp_vals = torch.FloatTensor(avg_pitch_inp_vals)[None, None, :].to(model.device)
-        avg_pitch_vals[avg_pitch_vals == 0] = avg_pitch_inp_vals[avg_pitch_vals == 0]
-        pitch_mask = avg_pitch_inp_vals / avg_pitch_vals
-        pitch_mask.nan_to_num_()
-        pitch_mask = torch.repeat_interleave(pitch_mask, duration_values.flatten().int(), dim=2)
-        pitch_values = pitch_vals * pitch_mask
+        if pitch_control_input is not None and len(pitch_control_input) > 0:
+            avg_pitch_inp_vals = controller_reader(pitch_control_input)
+            avg_pitch_inp_vals = [t[1] for t in avg_pitch_inp_vals]
+            avg_pitch_inp_vals = torch.FloatTensor(avg_pitch_inp_vals)[None, None, :].to(MODEL.device)
+            avg_pitch_vals[avg_pitch_vals == 0] = avg_pitch_inp_vals[avg_pitch_vals == 0]
+            pitch_mask = avg_pitch_inp_vals / avg_pitch_vals
+            pitch_mask.nan_to_num_()
+            pitch_mask = torch.repeat_interleave(pitch_mask, duration_values.flatten().int(), dim=2)
+            pitch_values = pitch_vals * pitch_mask
 
-    if energy_control_input is not None and len(energy_control_input) > 0:
-        avg_energy_inp_vals = controller_reader(energy_control_input)
-        avg_energy_inp_vals = [t[1] for t in avg_energy_inp_vals]
-        avg_energy_inp_vals = torch.FloatTensor(avg_energy_inp_vals)[None, None, :].to(model.device)
-        avg_energy_vals[avg_energy_vals == 0] = avg_energy_inp_vals[avg_energy_vals == 0]
-        energy_mask = avg_energy_inp_vals / avg_energy_vals
-        energy_mask.nan_to_num_()
-        energy_mask = torch.repeat_interleave(energy_mask, duration_values.flatten().int(), dim=2)
-        energy_values = energy_vals * energy_mask
+
+        if energy_control_input is not None and len(energy_control_input) > 0:
+            avg_energy_inp_vals = controller_reader(energy_control_input)
+            avg_energy_inp_vals = [t[1] for t in avg_energy_inp_vals]
+            avg_energy_inp_vals = torch.FloatTensor(avg_energy_inp_vals)[None, None, :].to(MODEL.device)
+            avg_energy_vals[avg_energy_vals == 0] = avg_energy_inp_vals[avg_energy_vals == 0]
+            energy_mask = avg_energy_inp_vals / avg_energy_vals
+            energy_mask.nan_to_num_()
+            energy_mask = torch.repeat_interleave(energy_mask, duration_values.flatten().int(), dim=2)
+            energy_values = energy_vals * energy_mask
 
 
     # run the model
-    model.length_scale = ORIGINAL_LENGTH_SCALE / speed
-    output_dict = model.synthesize(
+    MODEL.length_scale = ORIGINAL_LENGTH_SCALE / speed
+    output_dict = MODEL.synthesize(
         text=text,
         speaker_id=None,
         language_id=None,
@@ -383,10 +472,11 @@ def tts(
         pitch_values=pitch_values,
         energy_values=energy_values,
         duration_values=duration_values,
+        # duration_diff_mask=dur_diff_mask,
         split_batch_sentences=False,
     )
     wav = output_dict["wav"][0]
-    save_wav(wav=wav, path=output_path, sample_rate=model_config.audio["sample_rate"])
+    save_wav(wav=wav, path=output_path, sample_rate=MODEL_CONFIG.audio["sample_rate"])
     print(f" > Output audio saved to - {output_path}")
 
     # parse out control values
@@ -403,7 +493,7 @@ def tts(
     # plot spectrogram
     fig1, ax = pylab.subplots()
     M = librosa.feature.melspectrogram(
-        y=np.array(wav), sr=model.config.audio.sample_rate, n_mels=model.config.audio.num_mels
+        y=np.array(wav), sr=MODEL.config.audio.sample_rate, n_mels=MODEL.config.audio.num_mels
     )
     M_db = librosa.power_to_db(M, ref=np.max)
     img = librosa.display.specshow(M_db, ax=ax, x_axis="time", y_axis="linear")
@@ -413,10 +503,10 @@ def tts(
     # plot original speaker spectrogram
     fig2 = None
     if orig_wav is not None:
-        orig_waveform, _ = librosa.load(orig_wav, sr=model_config.audio["sample_rate"])
+        orig_waveform, _ = librosa.load(orig_wav, sr=MODEL_CONFIG.audio["sample_rate"])
         fig2, ax = pylab.subplots()
         M = librosa.feature.melspectrogram(
-            y=orig_waveform, sr=model.config.audio.sample_rate, n_mels=model.config.audio.num_mels
+            y=orig_waveform, sr=MODEL.config.audio.sample_rate, n_mels=MODEL.config.audio.num_mels
         )
         M_db = librosa.power_to_db(M, ref=np.max)
         img = librosa.display.specshow(
@@ -429,7 +519,7 @@ def tts(
         fig2.colorbar(img, ax=ax, format="%+2.f dB")
 
     # plot figures for the first sentence
-    figures = model.plot_outputs(text, output_dict["wav"], output_dict["outputs"]["alignments"], output_dict["outputs"])
+    figures = MODEL.plot_outputs(text, output_dict["wav"], output_dict["outputs"]["alignments"], output_dict["outputs"])
 
     # update session states
     state_vars["pitch_vals"] = pitch_vals
@@ -455,9 +545,21 @@ def tts(
     )
 
 
+def tts_with_control(*args, **kwargs):
+    """Run TTS with controls"""
+    kwargs["control"] = True
+    return _tts(*args, **kwargs)
+
+
+def tts(*args, **kwargs):
+    """Run TTS with no controls"""
+    kwargs["control"] = False
+    return _tts(*args, **kwargs)
+
+
 def save_embedding(filename):
     global speaker_embedding
-    path = f"/data/TTS/gradio_demos/ecyourtts/embeddings/{filename}.npy"
+    path = f"/data/TTS/gradio_demos/your_tts/embeddings/{filename}.npy"
     print(" > Saving the embedding...")
     if os.path.exists(path):
         print(" > Embedding already exists!")
@@ -466,101 +568,264 @@ def save_embedding(filename):
     return "Done"
 
 
+# ---------------------------------------------------------------------------- #
+#                               PROSODY TRANSFER                               #
+# ---------------------------------------------------------------------------- #
+
+ASR_MODEL = None
+
+def whisper_inference(audio):
+    global ASR_MODEL
+
+    if ASR_MODEL is None:
+        print(" > Loading ASR model...")
+        ASR_MODEL = whisper.load_model("small")
+
+    audio = whisper.load_audio(audio)
+    audio = whisper.pad_or_trim(audio)
+
+    mel = whisper.log_mel_spectrogram(audio).to(ASR_MODEL.device)
+
+    _, probs = ASR_MODEL.detect_language(mel)
+
+    options = whisper.DecodingOptions(fp16 = False)
+    result = whisper.decode(ASR_MODEL, mel, options)
+
+    print(f" > Whisper output: {result.text}")
+    return result.text
+
+
+def prosody_transfer(text, recorded_wav, upload_wav, target_speaker_id, only_duration):
+    output_path = os.path.join(GENERATED_WAV_PATH, "pt_output.wav")
+
+    if recorded_wav is not None:
+        ref_audio = recorded_wav
+        _, ref_audio = process_speaker_wav(recorded_wav, TRAGET_DBFS)
+    else:
+        ref_audio = upload_wav
+        orig_wav, ref_audio = process_speaker_wav(upload_wav, TRAGET_DBFS)
+
+    if len(text) == 0:
+        text = whisper_inference(ref_audio)
+
+    output_dict = MODEL.prosody_transfer(text=text, ref_audio=ref_audio, speaker_id=target_speaker_id, only_duration=only_duration)
+    wav = output_dict["wav"][0, 0]
+    save_wav(wav=wav, path=output_path, sample_rate=MODEL_CONFIG.audio["sample_rate"])
+    print(f" > Output audio saved to - {output_path}")
+    return output_path, text
+
+
+# ---------------------------------------------------------------------------- #
+#                               GRADIO COMPONENTS                              #
+# ---------------------------------------------------------------------------- #
+
+
 def clear_controls():
     return None, None, None
 
 
 with gr.Blocks() as demo:
     state_vars = gr.State({})
-    with gr.Row():
-        with gr.Column() as col1:
-            # Input Components
-            mic_audio = gr.Audio(
-                source="microphone",
-                label="Step 1. Record your voice. - You can say or read anything you want -",
-                type="file",
-            )
-            upload_file = gr.File(file_count="single")
-            sentence_tb = gr.Textbox(
-                label="Step 2. Write a sentence - This is what the model reads - (Max. 500 characters)",
-                value="Once upon a time, the King’s youngest son became filled with the desire to go abroad, and see the world.",
-            )
-            speakers_dp = gr.Dropdown(SPEAKERS, value=SPEAKERS[0], label="Choose a speaker")
-            emotions_dp = gr.Dropdown(EMOTION_NAMES, label="Choose emotion", value="Neutral")
-            pitch_tb = gr.Textbox(label="Pitch values.")
-            energy_tb = gr.Textbox(label="Energy values.")
-            duration_tb = gr.Textbox(label="Pitch values.")
-            dbfs_num = gr.Number(value=-27, label="Target dBFS")
-            sample_speaker_cb = gr.Checkbox(label="Sample new speaker with GMM")
-            use_last_cb = gr.Checkbox(label="Use the last sampled embedding")
-            sample_noise_num = gr.Number(value=0.05, label="GMM noise scale")
-            pitch_flatten_cb = gr.Checkbox(label="Pitch Flatten (Pitch * 0)")
-            pitch_invert_cb = gr.Checkbox(label="Pitch Invert (Pitch * -1)")
-            pitch_amplify_num = gr.Number(value=1.0, label="Pitch Amplify (Pitch * Pitch Amplify)")
-            pitch_shift_num = gr.Number(value=0.0, label="Pitch Shift (Pitch + Pitch Shift in Hz)")
-            speed_num = gr.Number(value=1.0, label="Speed")
-            denoise_num = gr.Number(value=0.05, label="Denoise strength")
-            denoise_method_dp = gr.Dropdown(["zeros", "normal"], label="Denoiser method", value="zeros")
-            noise_scale_num = gr.Number(value=0.44, label="Model Noise Scale")
-            split_batching_cb = gr.Checkbox(label="Split batching. (Split into sentences and batch)", value=True)
-            tts_btn = gr.Button(label="Synthesize")
 
-        with gr.Column() as col2:
-             # Output Components
-            output_audio = gr.Audio(label="Output Speech.")
-            original_audio = gr.Audio(label="Original Speech.")
-            spec_plot = gr.Plot(label="Spectrogram")
-            orgspec_plot = gr.Plot(label="Org. Spectrogram")
-            uploaded_plot = gr.Audio(label="Uploaded Speech.")
-            durations_plot = gr.Plot(label="Durations")
-            gt_pitch_plot = gr.Plot(label="GT pitch")
-            pred_pitch_plot = gr.Plot(label="Predicted pitch")
-            pitch_avg_plot = gr.Plot(label="Pitch Avg GT")
 
-    tts_btn.click(
-        fn=tts,
-        inputs=[
-            mic_audio,
-            upload_file,
-            sentence_tb,
-            speakers_dp,
-            emotions_dp,
-            dbfs_num,
-            sample_speaker_cb,
-            use_last_cb,
-            sample_noise_num,
-            pitch_flatten_cb,
-            pitch_invert_cb,
-            pitch_amplify_num,
-            pitch_shift_num,
-            pitch_tb,
-            energy_tb,
-            speed_num,
-            duration_tb,
-            denoise_num,
-            denoise_method_dp,
-            noise_scale_num,
-            split_batching_cb,
-            state_vars,
-        ],
-        outputs=[
-            output_audio,
-            original_audio,
-            pitch_tb,
-            energy_tb,
-            duration_tb,
-            spec_plot,
-            orgspec_plot,
-            uploaded_plot,
-            durations_plot,
-            gt_pitch_plot,
-            pred_pitch_plot,
-            pitch_avg_plot,
-            state_vars
-        ],
-    )
+    # ------------------------------ Main Dashboard ------------------------------ #
 
-    sentence_tb.change(fn=clear_controls, inputs=None, outputs=[pitch_tb, energy_tb, duration_tb])
+
+    with gr.Tab("Synthesize"):
+        with gr.Row():
+            with gr.Column() as col1:
+                # Input Components
+                mic_audio = gr.Audio(
+                    source="microphone",
+                    label="Step 1. Record your voice. - You can say or read anything you want -",
+                    type="file",
+                )
+                upload_file = gr.File(file_count="single")
+                sentence_tb = gr.Textbox(
+                    label="Step 2. Write a sentence - This is what the model reads - (Max. 500 characters)",
+                    value="Once upon a time, the King’s youngest son became filled with the desire to go abroad, and see the world.",
+                )
+                speakers_dp = gr.Dropdown(SPEAKERS, value=SPEAKERS[0] if SPEAKERS else "", label="Choose a speaker")
+                emotions_dp = gr.Dropdown(EMOTION_NAMES, label="Choose emotion", value="Neutral")
+                pitch_tb = gr.Textbox(label="Pitch values.")
+                energy_tb = gr.Textbox(label="Energy values.")
+                duration_tb = gr.Textbox(label="Pitch values.")
+                dbfs_num = gr.Number(value=-27, label="Target dBFS")
+                sample_speaker_cb = gr.Checkbox(label="Sample new speaker with GMM")
+                use_last_cb = gr.Checkbox(label="Use the last sampled embedding")
+                sample_noise_num = gr.Number(value=0.05, label="GMM noise scale")
+                pitch_flatten_cb = gr.Checkbox(label="Pitch Flatten (Pitch * 0)")
+                pitch_invert_cb = gr.Checkbox(label="Pitch Invert (Pitch * -1)")
+                pitch_amplify_num = gr.Number(value=1.0, label="Pitch Amplify (Pitch * Pitch Amplify)")
+                pitch_shift_num = gr.Number(value=0.0, label="Pitch Shift (Pitch + Pitch Shift in Hz)")
+                speed_num = gr.Number(value=1.0, label="Speed")
+                denoise_num = gr.Number(value=0.05, label="Denoise strength")
+                denoise_method_dp = gr.Dropdown(["zeros", "normal"], label="Denoiser method", value="zeros")
+                noise_scale_num = gr.Number(value=0.44, label="Model Noise Scale")
+                split_batching_cb = gr.Checkbox(label="Split batching. (Split into sentences and batch)", value=True)
+                tts_btn = gr.Button(value="Run")
+                tts_control_btn = gr.Button(value="Run with controls")
+
+            with gr.Column() as col2:
+                # Output Components
+                output_audio = gr.Audio(label="Output Speech.")
+                original_audio = gr.Audio(label="Original Speech.")
+                spec_plot = gr.Plot(label="Spectrogram")
+                orgspec_plot = gr.Plot(label="Org. Spectrogram")
+                uploaded_plot = gr.Audio(label="Uploaded Speech.")
+                durations_plot = gr.Plot(label="Durations")
+                gt_pitch_plot = gr.Plot(label="GT pitch")
+                pred_pitch_plot = gr.Plot(label="Predicted pitch")
+                pitch_avg_plot = gr.Plot(label="Pitch Avg GT")
+
+        tts_btn.click(
+            fn=tts,
+            inputs=[
+                mic_audio,
+                upload_file,
+                sentence_tb,
+                speakers_dp,
+                emotions_dp,
+                dbfs_num,
+                sample_speaker_cb,
+                use_last_cb,
+                sample_noise_num,
+                pitch_flatten_cb,
+                pitch_invert_cb,
+                pitch_amplify_num,
+                pitch_shift_num,
+                pitch_tb,
+                energy_tb,
+                speed_num,
+                duration_tb,
+                denoise_num,
+                denoise_method_dp,
+                noise_scale_num,
+                split_batching_cb,
+                state_vars,
+            ],
+            outputs=[
+                output_audio,
+                original_audio,
+                pitch_tb,
+                energy_tb,
+                duration_tb,
+                spec_plot,
+                orgspec_plot,
+                uploaded_plot,
+                durations_plot,
+                gt_pitch_plot,
+                pred_pitch_plot,
+                pitch_avg_plot,
+                state_vars,
+            ],
+        )
+
+        tts_control_btn.click(
+            fn=tts_with_control,
+            inputs=[
+                mic_audio,
+                upload_file,
+                sentence_tb,
+                speakers_dp,
+                emotions_dp,
+                dbfs_num,
+                sample_speaker_cb,
+                use_last_cb,
+                sample_noise_num,
+                pitch_flatten_cb,
+                pitch_invert_cb,
+                pitch_amplify_num,
+                pitch_shift_num,
+                pitch_tb,
+                energy_tb,
+                speed_num,
+                duration_tb,
+                denoise_num,
+                denoise_method_dp,
+                noise_scale_num,
+                split_batching_cb,
+                state_vars,
+            ],
+            outputs=[
+                output_audio,
+                original_audio,
+                pitch_tb,
+                energy_tb,
+                duration_tb,
+                spec_plot,
+                orgspec_plot,
+                uploaded_plot,
+                durations_plot,
+                gt_pitch_plot,
+                pred_pitch_plot,
+                pitch_avg_plot,
+                state_vars
+            ],
+        )
+
+
+        sentence_tb.change(fn=clear_controls, inputs=None, outputs=[pitch_tb, energy_tb, duration_tb])
+
+
+    # ------------------------------ Model Load Tab ------------------------------ #
+
+
+    with gr.Tab("Load Model"):
+        with gr.Row():
+            with gr.Column() as col1:
+                model_checkpoint_path_tb = gr.Textbox(
+                    label="Model Path",
+                    value=model_path,
+                )
+                model_config_path_tb = gr.Textbox(
+                    label="Model Config",
+                    value=config_path,
+                )
+                branch_name = gr.Textbox(label="Branch Name", value=get_current_branch_name()[0], lines=1)
+                model_load_progress_tb = gr.Textbox(
+                    label="Loading Progress",
+                    value="",
+                )
+                load_model_btn = gr.Button(label="Load Model")
+
+        load_model_btn.click(load_model, inputs=[model_checkpoint_path_tb, model_config_path_tb, branch_name], outputs=[model_load_progress_tb])
+
+
+    # --------------------------- PROSODY TRANSFER TAB --------------------------- #
+
+
+    with gr.Tab("Prosody Transfer"):
+        with gr.Row():
+            with gr.Column() as pt_col1:
+                pt_text_tb = gr.Textbox(
+                    label="Input Text",
+                    value="",
+                )
+                pt_mic_audio_audio = gr.Audio(
+                    source="microphone",
+                    label="Record a reference",
+                    type="file",
+                )
+                pt_upload_file = gr.File(file_count="single")
+                pt_checkbox_dp = gr.Checkbox(label="Only duration")
+                pt_speakers_dp = gr.Dropdown(SPEAKERS, value=SPEAKERS[0] if SPEAKERS else "", label="Choose target speaker")
+                pt_run_btn = gr.Button(label="Run")
+
+            with gr.Column() as pt_col2:
+                # Output Components
+                pt_output_audio = gr.Audio(label="Output Speech.")
+                pt_asr_text_tb = gr.Textbox(label="Output Text. (If used ASR)")
+                # original_audio = gr.Audio(label="Original Speech.")
+                # spec_plot = gr.Plot(label="Spectrogram")
+                # orgspec_plot = gr.Plot(label="Org. Spectrogram")
+                # uploaded_plot = gr.Audio(label="Uploaded Speech.")
+                # durations_plot = gr.Plot(label="Durations")
+                # gt_pitch_plot = gr.Plot(label="GT pitch")
+                # pred_pitch_plot = gr.Plot(label="Predicted pitch")
+                # pitch_avg_plot = gr.Plot(label="Pitch Avg GT")
+        pt_run_btn.click(fn=prosody_transfer, inputs=[pt_text_tb, pt_mic_audio_audio, pt_upload_file, pt_speakers_dp, pt_checkbox_dp], outputs=[pt_output_audio, pt_asr_text_tb])
+
 
 if __name__ == "__main__":
     demo.launch(
