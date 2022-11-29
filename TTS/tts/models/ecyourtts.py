@@ -344,6 +344,29 @@ class EcyourTTSAudioConfig(Coqpit):
 ##############################
 
 
+def compute_pitch(y, sr, audio_config):
+    f0, voiced_mask, _ = pyin(
+        y.astype(np.double),
+        fmin=audio_config.pitch_fmin,
+        fmax=audio_config.pitch_fmax,
+        sr=sr,
+        frame_length=audio_config.win_length,
+        win_length=audio_config.win_length // 2,
+        hop_length=audio_config.hop_length,
+        pad_mode="reflect",
+        center=False,
+        n_thresholds=100,
+        beta_parameters=(2, 18),
+        boltzmann_parameter=2,
+        resolution=0.1,
+        max_transition_rate=35.92,
+        switch_prob=0.01,
+        no_trough_prob=0.01,
+    )
+    f0[~voiced_mask] = 0.0
+    return f0
+
+
 def get_attribute_balancer_weights(items: list, attr_name: str, multi_dict: dict = None):
     """Create inverse frequency weights for balancing the dataset.
     Use `multi_dict` to scale relative weights."""
@@ -409,25 +432,8 @@ class EcyourTTSF0Dataset(F0Dataset):
             mode="reflect",
         )
         y = y.squeeze().numpy()
-        f0, voiced_mask, _ = pyin(
-            y.astype(np.double),
-            fmin=audio_config.pitch_fmin,
-            fmax=audio_config.pitch_fmax,
-            sr=current_sample_rate,
-            frame_length=audio_config.win_length,
-            win_length=audio_config.win_length // 2,
-            hop_length=audio_config.hop_length,
-            pad_mode="reflect",
-            center=False,
-            n_thresholds=100,
-            beta_parameters=(2, 18),
-            boltzmann_parameter=2,
-            resolution=0.1,
-            max_transition_rate=35.92,
-            switch_prob=0.01,
-            no_trough_prob=0.01,
-        )
-        f0[~voiced_mask] = 0.0
+
+        f0 = compute_pitch(y, current_sample_rate, audio_config)
 
         if pitch_file:
             np.save(pitch_file, f0)
@@ -3213,7 +3219,12 @@ class EcyourTTS(BaseTTS):
 
     @torch.no_grad()
     def inference_voice_conversion(
-        self, reference_wav, speaker_id=None, d_vector=None, reference_speaker_id=None, reference_d_vector=None
+        self,
+        reference_wav,
+        speaker_id=None,
+        d_vector=None,
+        reference_speaker_id=None,
+        reference_d_vector=None,
     ):
         """Inference for voice conversion
 
@@ -3266,107 +3277,86 @@ class EcyourTTS(BaseTTS):
         o_hat = self.waveform_decoder(z_hat * y_mask, g=g_tgt)
         return o_hat, y_mask, (z, z_p, z_hat)
 
-    def prosody_transfer(self, ref_waveform, ref_sr, text:str, speaker_id=None, target_d_vector=None):
-        """Prosody transfer from a reference speech to the output on the same text.
+    @torch.no_grad()
+    def prosody_transfer(
+        self,
+        text: str,
+        ref_waveform=None,
+        ref_sr=None,
+        ref_audio=None,
+        speaker_id=None,
+        d_vector=None,
+        only_duration=False,
+        noise_scale=0.66,
+        sdp_noise_scale=0.33,
+    ):
+        """Prosody transfer from a reference speech to the output on the same text."""
 
-        - Resample reference waveform
-        - Extract reference spectrogram (by wav_to_spec)
-        - Extract reference pitch and energy (by GT extractors)
-        - Extract reference duration (by aligner network)
+        # Set parameters from arguments
+        self.inference_noise_scale = noise_scale
+        self.inference_noise_scale_dp = sdp_noise_scale
 
-        """
         is_cuda = next(self.parameters()).is_cuda
 
+        # resample input audio for different sampling rates
+        if ref_audio:
+            ref_waveform, ref_sr = load_audio(ref_audio, self.config.audio.sample_rate)
+
+        ref_waveform_speaker_encoder = torchaudio.functional.resample(
+            ref_waveform[None, :],
+            orig_freq=ref_sr,
+            new_freq=16000,
+        ).squeeze(1)
+
+        ref_waveform_encoder = torchaudio.functional.resample(
+            ref_waveform[None, :],
+            orig_freq=ref_sr,
+            new_freq=self.args.encoder_sample_rate,
+        ).squeeze(1)
+
+        if speaker_id:
+            d_vector = self.speaker_manager.get_mean_embedding(speaker_id, num_samples=None, randomize=False)
+
         # get embeddings
-        d_vector = embedding_to_torch(self.speaker_manager.compute_embeddings(ref_waveform)).to(self.device)
-        emo_emb = embedding_to_torch(self.emotion_manager.get_embeddings_by_name("Neutral")[0]).to(self.device).unsqueeze(
-            -1
+        ref_d_vector = embedding_to_torch(self.speaker_manager.compute_embeddings(ref_waveform_speaker_encoder)).to(
+            self.device
         )
-        spk_emb = F.normalize(d_vector).unsqueeze(-1)
-        target_spk_emb = embedding_to_torch(d_vector, cuda=is_cuda)
+        emo_emb = (
+            embedding_to_torch(self.emotion_manager.get_embeddings_by_name("Neutral")[0]).to(self.device).unsqueeze(-1)
+        )
+        ref_spk_emb = F.normalize(ref_d_vector).unsqueeze(-1)
+        target_spk_emb = embedding_to_torch(d_vector, cuda=is_cuda).unsqueeze(-1)
 
         # get token ids
         text_inputs = np.asarray(
             self.tokenizer.text_to_ids(text, language="en"),
             dtype=np.int32,
         )
+
         text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=is_cuda)
         text_inputs = text_inputs.unsqueeze(0)
-        x_lengths = torch.tensor([text_inputs.shape[1]])
+        x_lengths = torch.tensor([text_inputs.shape[1]]).to(self.device)
 
         x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(text_inputs, x_lengths, lang_emb=None, emo_emb=emo_emb)
+        x_filler_mask = ~(x_mask.bool())
 
-        # resample reference waveform
-        ref_waveform_sampled = torchaudio.functional.resample(
-            ref_waveform[None, :],
-            orig_freq=ref_sr,
-            new_freq=self.config.audio.sample_rate,
-        ).squeeze(1)
+        emo_emb_ex = emo_emb.expand(-1, -1, x_emb.shape[2])
 
         # extract reference spectrogram
         ref_spec = wav_to_spec(
-            ref_waveform_sampled,
+            ref_waveform_encoder,
             self.config.audio.fft_size,
             self.config.audio.hop_length,
             self.config.audio.win_length,
             center=False,
         )
-        ref_spec = ref_spec.unsqueeze(0)
+        ref_spec = ref_spec.to(self.device)
         y_lengths = torch.tensor([ref_spec.shape[2]])
 
-        # extract reference pitch and energy
-        ref_pitch, voiced_mask, _ = pyin(
-            ref_waveform.numpy().astype(np.double),
-            fmin=self.config.audio.pitch_fmin,
-            fmax=self.config.audio.pitch_fmax,
-            sr=self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
-            frame_length=self.config.audio.win_length,
-            win_length=self.config.audio.win_length // 2,
-            hop_length=self.config.audio.hop_length,
-            pad_mode="reflect",
-            center=False,
-            n_thresholds=100,
-            beta_parameters=(2, 18),
-            boltzmann_parameter=2,
-            resolution=0.1,
-            max_transition_rate=35.92,
-            switch_prob=0.01,
-            no_trough_prob=0.01,
-        )
-        ref_pitch[~voiced_mask] = 0.0
-
-        ref_pitch = torch.tensor(ref_pitch).unsqueeze(0).unsqueeze(0)
-        ref_pitch = torch.nn.functional.interpolate(ref_pitch, size=y_lengths)
-        ref_pitch = torch.tensor(ref_pitch, dtype=torch.float32).to(self.device)
-
-        energy_mel_spec = wav_to_mel(
-            ref_waveform_sampled,
-            n_fft=self.config.audio.fft_size,
-            num_mels=self.config.audio.num_mels,
-            sample_rate=self.config.audio.sample_rate
-            if not self.args.encoder_sample_rate
-            else self.args.encoder_sample_rate,
-            hop_length=self.config.audio.hop_length,
-            win_length=self.config.audio.win_length,
-            fmin=self.config.audio.mel_fmin,
-            fmax=self.config.audio.mel_fmax,
-            center=False,
-        )
-        ref_energy = mel_to_energy(energy_mel_spec).cpu()
-
-        o_pitch_norm = normalize_pitch(ref_pitch, self.pitch_mean, self.pitch_std)
-
-        o_pitch_emb = self.pitch_emb(o_pitch_norm)
-        o_energy_emb = self.energy_emb(ref_energy)
-
-        # context encoder pass
-        context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
-        o_context = self.context_encoder(o_en, y_lengths, spk_emb=target_spk_emb, emo_emb=emo_emb, cond=context_cond)
-
         # extract reference duration
-        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
+        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float().to(self.device)
 
-        spk_emb_bottle = self.aligner_spk_bottleneck(spk_emb)  # [B, C, 1]
+        spk_emb_bottle = self.aligner_spk_bottleneck(ref_spk_emb)  # [B, C, 1]
         spk_emb_bottle_ex = spk_emb_bottle.expand(-1, -1, x_emb.shape[2])
         emo_emb_ex = emo_emb.expand(-1, -1, x_emb.shape[2])
 
@@ -3377,119 +3367,153 @@ class EcyourTTS(BaseTTS):
             x=x_emb_spk, y=ref_spec, x_mask=x_mask, y_mask=y_mask, attn_priors=None
         )
 
-        # expand by duration
+        if self.args.use_phoneme_level_prosody_encoder or self.args.use_utterance_level_prosody_encoder:
+
+            ##### --> Bottleneck Embeddings
+
+            spk_emb_adaptors = self.adaptors_spk_bottleneck(target_spk_emb)  # [B, C, 1] . ❗❗ might be using ref_spk_emb
+
+        if self.args.use_utterance_level_prosody_encoder:
+            o_en1 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)  # [B, C, 1]
+
+            ##### --> Utterance Prosody encoder
+
+            # u_prosody_ref = self.u_norm(self.utterance_prosody_encoder(mels=y, mel_lens=y_lengths))  # TODO: use mel like the original imp
+            u_prosody_pred = self.u_norm(
+                self.average_utterance_prosody(
+                    u_prosody_pred=self.utterance_prosody_predictor(
+                        x=o_en1.transpose(1, 2), mask=x_filler_mask.transpose(1, 2)
+                    ),
+                    lengths=x_lengths,
+                )
+            )
+
+            o_en = o_en + self.u_bottle_out(u_prosody_pred).transpose(1, 2)
+
+        if self.args.use_phoneme_level_prosody_encoder:
+
+            ##### --> Phoneme prosody encoder
+
+            o_en2 = concat_embeddings(o_en, spk_emb_adaptors, emo_emb)
+
+            p_prosody_pred = self.p_norm(
+                self.phoneme_prosody_predictor(x=o_en2.transpose(1, 2), mask=x_filler_mask.transpose(1, 2))
+            )
+
+            o_en = o_en + self.p_bottle_out(p_prosody_pred).transpose(1, 2)
+
+        # extract reference pitch
+        if not only_duration:
+            ref_pitch = compute_pitch(
+                y=ref_waveform.numpy(),
+                sr=self.config.audio.sample_rate
+                if not self.args.encoder_sample_rate
+                else self.args.encoder_sample_rate,
+                audio_config=self.config.audio,
+            )
+            ref_pitch = torch.tensor(ref_pitch).unsqueeze(0).to(self.device)  # B x 1 x T_pitch
+            ref_pitch = torch.nn.functional.interpolate(ref_pitch, size=y_lengths).float()  # B x 1 x T_spec
+
+            # extract reference energy
+            energy_mel_spec = wav_to_mel(
+                ref_waveform_encoder,
+                n_fft=self.config.audio.fft_size,
+                num_mels=self.config.audio.num_mels,
+                sample_rate=self.config.audio.sample_rate
+                if not self.args.encoder_sample_rate
+                else self.args.encoder_sample_rate,
+                hop_length=self.config.audio.hop_length,
+                win_length=self.config.audio.win_length,
+                fmin=self.config.audio.mel_fmin,
+                fmax=self.config.audio.mel_fmax,
+                center=False,
+            )
+            ref_energy = mel_to_energy(energy_mel_spec).to(self.device)
+
+        # expand tensors by duration
         m_p = torch.einsum("klmn, kjm -> kjn", [durations, m_p])
         logs_p = torch.einsum("klmn, kjm -> kjn", [durations, logs_p])
-        o_en = torch.einsum("klmn, kjm -> kjn", [durations, o_en])
+        o_en_ex = torch.einsum("klmn, kjm -> kjn", [durations, o_en])
 
-        # TTS
+        # normalize pitch and energy for the target speaker by speaker specific stats
+        target_pitch_emb, target_pitch_norm = self._forward_pitch_predictor(
+            o_en=o_en_ex,
+            x_mask=y_mask,
+            g=target_spk_emb,
+            emo_emb=emo_emb,
+            pitch_transform=None,
+            x_lengths=y_lengths,
+        )
+
+        target_energy_emb, target_energy_denorm = self._forward_energy_predictor(
+            o_en=o_en_ex,
+            x_mask=y_mask,
+            g=target_spk_emb,
+            emo_emb=emo_emb,
+            energy_transform=None,
+            x_lengths=y_lengths,
+        )
+
+        if not only_duration:
+
+            # scale factor for the target speaker pitch and energy
+            # compute the change in pitch and energy for the reference speaker between the predicted and reference values
+            # use the change to scale the target speaker pitch and energy
+            _, ref_pitch_model_norm = self._forward_pitch_predictor(
+                o_en=o_en_ex,
+                x_mask=y_mask,
+                g=ref_spk_emb,
+                emo_emb=emo_emb,
+                pitch_transform=None,
+                x_lengths=y_lengths,
+            )
+
+            _, ref_energy_model_denorm = self._forward_energy_predictor(
+                o_en=o_en_ex,
+                x_mask=y_mask,
+                g=ref_spk_emb,
+                emo_emb=emo_emb,
+                energy_transform=None,
+                x_lengths=y_lengths,
+            )
+
+            # pitch correction for the target speaker
+            ref_pitch_model_denorm = denormalize_pitch(ref_pitch_model_norm, self.pitch_mean, self.pitch_std)
+            ref_pitch_coeff_mask = ref_pitch / ref_pitch_model_denorm
+            ref_pitch_coeff_mask[ref_pitch == 0] = 0.0
+            target_pitch_denorm = denormalize_pitch(target_pitch_norm, self.pitch_mean, self.pitch_std)
+            o_pitch_norm = normalize_pitch(target_pitch_denorm * ref_pitch_coeff_mask, self.pitch_mean, self.pitch_std)
+
+            # energy correction for the target speaker
+            ref_energy_coeff_mask = ref_energy / ref_energy_model_denorm
+            o_energy = target_energy_denorm * ref_energy_coeff_mask
+
+            # compute energy and pitch embeddings
+            zero_point = normalize_pitch(0.0, self.pitch_mean, self.pitch_std)
+            o_pitch_norm[o_pitch_norm < zero_point] = zero_point
+            o_pitch_emb = self.pitch_emb(o_pitch_norm)
+            o_energy_emb = self.energy_emb(o_energy)
+
+        else:
+            o_pitch_emb = target_pitch_emb
+            o_energy_emb = target_energy_emb
+
+        # context encoder pass
+        context_cond = torch.cat((o_energy_emb, o_pitch_emb), dim=1)  # [B, C * 2, T_en]
+        o_context = self.context_encoder.forward(o_en_ex, y_lengths, spk_emb=None, emo_emb=emo_emb, cond=context_cond)
+
+        ### --> FLOW DECODER
+
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * self.inference_noise_scale
         z = self.flow(z_p, y_mask, g=target_spk_emb, g2=o_context * y_mask, reverse=True)
 
-        # upsampling if neededstairs
+        ### --> VOCODER
+
+        # upsampling if needed
         z, _, _, y_mask = self.upsampling_z(z, y_lengths=y_lengths, y_mask=y_mask)
+        o, _, _ = self.waveform_decoder((z * y_mask), g=target_spk_emb)
 
-        o = self.waveform_decoder((z * y_mask), g=target_spk_emb)
         return {"wav": o}
-
-    def forward_for_dp(
-        self,
-        x: torch.tensor,
-        x_lengths: torch.tensor,
-        y: torch.tensor,
-        y_lengths: torch.tensor,
-        mel: torch.tensor,
-        pitch: torch.tensor,
-        energy: torch.tensor,
-        waveform: torch.tensor,
-        attn_priors: torch.tensor,
-        binarize_alignment: bool,
-        use_encoder: bool = True,
-        is_eval: bool = False,
-        aux_input={"d_vectors": None, "avg_d_vectors": None, "speaker_ids": None, "language_ids": None},
-    ) -> Dict:
-        """Forward pass of the model.
-
-        Args:
-            x (torch.tensor): Batch of input character sequence IDs.
-            x_lengths (torch.tensor): Batch of input character sequence lengths.
-            y (torch.tensor): Batch of linear spectrograms.
-            y_lengths (torch.tensor): Batch of input spectrogram lengths.
-            waveform (torch.tensor): Batch of ground truth waveforms per sample.
-            aux_input (dict, optional): Auxiliary inputs for multi-speaker and multi-lingual training.
-                Defaults to {"d_vectors": None, "speaker_ids": None, "language_ids": None}.
-
-        Returns:
-            Dict: model outputs keyed by the output name.
-
-        Shapes:
-            - x: :math:`[B, T_seq]`
-            - x_lengths: :math:`[B]`
-            - y: :math:`[B, C, T_spec]`
-            - y_lengths: :math:`[B]`
-            - waveform: :math:`[B, 1, T_wav]`
-            - d_vectors: :math:`[B, C, 1]`
-            - emotion_vectors: :math:`[B, C, 1]`
-            - speaker_ids: :math:`[B]`
-            - language_ids: :math:`[B]`
-
-        Return Shapes:
-            - model_outputs: :math:`[B, 1, T_wav]`
-            - alignments: :math:`[B, T_seq, T_dec]`
-            - z: :math:`[B, C, T_dec]`
-            - z_p: :math:`[B, C, T_dec]`
-            - m_p: :math:`[B, C, T_dec]`
-            - logs_p: :math:`[B, C, T_dec]`
-            - m_q: :math:`[B, C, T_dec]`
-            - logs_q: :math:`[B, C, T_dec]`
-            - waveform_seg: :math:`[B, 1, spec_seg_size * hop_length]`
-            - gt_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
-            - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
-        """
-        outputs = {}
-        sid, spk_emb, avg_spk_emb, lid, emo_emb = self._set_cond_input(aux_input)
-
-        if self.config.add_blank:
-            blank_mask = x == self.tokenizer.characters.blank_id
-            blank_mask[:, 0] = False
-
-        ##### --> EMBEDDINGS
-
-        # speaker embedding
-        if self.args.use_speaker_embedding and sid is not None:
-            spk_emb = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
-
-        spk_emb_predictors = spk_emb
-        if self.args.use_averaged_d_vector_on_predictors:
-            spk_emb_predictors = avg_spk_emb
-
-        # language embedding
-        lang_emb = None
-        if self.args.use_language_embedding and lid is not None:
-            lang_emb = self.emb_l(lid).unsqueeze(-1)
-
-        ##### --> TEXT ENCODING
-        x_emb, o_en, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb, emo_emb=emo_emb)
-        x_filler_mask = ~(x_mask.bool())
-
-        ##### --> ALIGNER
-        # x_emb_aligner = self.emb_aligner(x) * math.sqrt(self.args.hidden_channels)
-        # x_emb_aligner = x_emb_aligner.transpose(1, 2)  # [B, T, C] --> [B, C, T]
-        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
-        spk_emb_bottle = self.aligner_spk_bottleneck(spk_emb)  # [B, C, 1]
-        spk_emb_bottle_ex = spk_emb_bottle.expand(-1, -1, x_emb.shape[2])
-        emo_emb_ex = emo_emb.expand(-1, -1, x_emb.shape[2])
-        x_emb_spk = torch.cat((x_emb, spk_emb_bottle_ex.detach()), 1)
-        x_emb_spk = torch.cat((x_emb_spk, emo_emb_ex.detach()), 1)
-        aligner_durations, aligner_soft, aligner_logprob, aligner_hard = self._forward_aligner(
-            x=x_emb_spk, y=y, x_mask=x_mask, y_mask=y_mask, attn_priors=attn_priors
-        )
-
-        # duration predictor and duration loss
-        outputs = self.forward_duration_predictor(
-            outputs, aligner_hard, o_en, x_mask, spk_emb_predictors, lang_emb, emo_emb, x_lengths
-        )
-        return outputs
 
     def train_step_e2e_vocoder(self, batch, criterion: nn.Module, optimizer_idx: int) -> Tuple[Dict, Dict]:
         """Training only vocoder with e2e pass"""
@@ -4017,25 +4041,11 @@ class EcyourTTS(BaseTTS):
         )
         y = y.squeeze().numpy()
 
-        pitch, voiced_mask, _ = pyin(
-            y.astype(np.double),
-            fmin=self.config.audio.pitch_fmin,
-            fmax=self.config.audio.pitch_fmax,
+        pitch = compute_pitch(
+            y=y,
             sr=self.config.audio.sample_rate if not self.args.encoder_sample_rate else self.args.encoder_sample_rate,
-            frame_length=self.config.audio.win_length,
-            win_length=self.config.audio.win_length // 2,
-            hop_length=self.config.audio.hop_length,
-            pad_mode="reflect",
-            center=False,
-            n_thresholds=100,
-            beta_parameters=(2, 18),
-            boltzmann_parameter=2,
-            resolution=0.1,
-            max_transition_rate=35.92,
-            switch_prob=0.01,
-            no_trough_prob=0.01,
+            audio_config=self.config.audio,
         )
-        pitch[~voiced_mask] = 0.0
 
         input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(text, language="en"))
         input_text = input_text.replace("<BLNK>", "_")
@@ -4116,27 +4126,13 @@ class EcyourTTS(BaseTTS):
             )
             y = y.squeeze().numpy()
 
-            pitch, voiced_mask, _ = pyin(
-                y.astype(np.double),
-                fmin=self.config.audio.pitch_fmin,
-                fmax=self.config.audio.pitch_fmax,
+            pitch = compute_pitch(
+                y=y,
                 sr=self.config.audio.sample_rate
                 if not self.args.encoder_sample_rate
                 else self.args.encoder_sample_rate,
-                frame_length=self.config.audio.win_length,
-                win_length=self.config.audio.win_length // 2,
-                hop_length=self.config.audio.hop_length,
-                pad_mode="reflect",
-                center=False,
-                n_thresholds=100,
-                beta_parameters=(2, 18),
-                boltzmann_parameter=2,
-                resolution=0.1,
-                max_transition_rate=35.92,
-                switch_prob=0.01,
-                no_trough_prob=0.01,
+                audio_config=self.config.audio,
             )
-            pitch[~voiced_mask] = 0.0
 
             input_text = self.tokenizer.ids_to_text(self.tokenizer.text_to_ids(aux_inputs["text"], language="en"))
             input_text = input_text.replace("<BLNK>", "_")
@@ -4618,6 +4614,7 @@ class EcyourTTS(BaseTTS):
 
             token_ids.append(self.tokenizer.pad_id)
             token_ids.insert(0, self.tokenizer.pad_id)
+
             input_tensor = np.asarray(
                 token_ids,
                 dtype=np.int32,
@@ -5286,3 +5283,13 @@ if __name__ == "__main__":
     pitch_out = model.convert_to_valid_pitch_range(pitch, mode=2)
     pitch_out = denormalize_pitch(pitch_out, model.pitch_mean, model.pitch_std)
     print("After apply pitch range change method:", pitch_out)
+
+    ##############################
+    # PROSODY TRANSFER
+    ##############################
+    SPEAKERS = model.speaker_manager.speaker_names
+    ref_speaker_id = SPEAKERS[30]
+    target_speaker_id = SPEAKERS[20]
+    ref_audio = "/raid/datasets/libritts-clean-16khz-bwe-coqui_44khz/LibriTTS/train-clean-100/1069/133699/1069_133699_000067_000011.wav"
+    ref_text = "I have been to England before, but have never enjoyed it much."
+    output_dict = model.prosody_transfer(text=ref_text, ref_audio=ref_audio, speaker_id=target_speaker_id)
