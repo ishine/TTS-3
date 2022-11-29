@@ -4609,11 +4609,7 @@ class EcyourTTS(BaseTTS):
 
             token_ids = self.tokenizer.text_to_ids(sentence, language=language_id)
             phonemes = self.tokenizer.ids_to_text(token_ids)
-            phonemes = "~" + phonemes + "~"
             input_phonemes.append(phonemes)
-
-            token_ids.append(self.tokenizer.pad_id)
-            token_ids.insert(0, self.tokenizer.pad_id)
 
             input_tensor = np.asarray(
                 token_ids,
