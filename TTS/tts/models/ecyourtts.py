@@ -3064,7 +3064,15 @@ class EcyourTTS(BaseTTS):
                 )
                 model_output_in_sec = (self.config.audio.hop_length * dur.squeeze(1).sum(axis=1)) / target_sr
                 num_input_chars = x_lengths.clone().float()
+                # do not take into consideration the space token
                 num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(" ")).sum(1).float()
+                # do not take into consideration the blank token
+                if self.tokenizer.characters.blank_id is not None:
+                    num_input_chars = num_input_chars - (x == self.tokenizer.characters.blank_id).sum(1).float()
+                # do not take into consideration the eos and bos tokens
+                if self.tokenizer.characters.eos is not None and self.tokenizer.characters.bos is not None:
+                    num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(self.tokenizer.characters.eos)).sum(1).float()
+                    num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(self.tokenizer.characters.bos)).sum(1).float()
                 dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec)[:, None, None])
             dur = dur * self.length_scale
         else:
