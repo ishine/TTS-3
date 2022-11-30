@@ -42,11 +42,13 @@ class TTSTokenizer:
         phonemizer: Union["Phonemizer", Dict] = None,
         add_blank: bool = False,
         use_eos_bos=False,
+        add_word_boundary=False,
     ):
         self.text_cleaner = text_cleaner
         self.use_phonemes = use_phonemes
         self.add_blank = add_blank
         self.use_eos_bos = use_eos_bos
+        self.add_word_boundary = add_word_boundary
         self.characters = characters
         self.not_found_characters = []
         self.phonemizer = phonemizer
@@ -111,6 +113,8 @@ class TTSTokenizer:
             text = self.intersperse_blank_char(text, True)
         if self.use_eos_bos:
             text = self.pad_with_bos_eos(text)
+        if self.add_word_boundary:
+            text = self.add_word_boundaries(text)
         return self.encode(text)
 
     def ids_to_text(self, id_sequence: List[int]) -> str:
@@ -130,6 +134,22 @@ class TTSTokenizer:
         result = [char_to_use] * (len(char_sequence) * 2 + 1)
         result[1::2] = char_sequence
         return result
+
+    def add_word_boundaries(self, char_sequence: List[str]):
+        """Adds the word boundary character between words in a sequence.
+
+        Add a blank character before and after every space character.
+        """
+        blank_char = self.characters.blank if self.characters.blank else self.characters.pad
+        aux = []
+        for char in char_sequence:
+            if char == " ":
+                aux.append(blank_char)
+                aux.append(char)
+                aux.append(blank_char)
+            else:
+                aux.append(char)
+        return aux
 
     def print_logs(self, level: int = 0):
         indent = "\t" * level
@@ -200,7 +220,13 @@ class TTSTokenizer:
 
         return (
             TTSTokenizer(
-                config.use_phonemes, text_cleaner, characters, phonemizer, config.add_blank, config.enable_eos_bos_chars
+                config.use_phonemes,
+                text_cleaner,
+                characters,
+                phonemizer,
+                config.add_blank,
+                config.enable_eos_bos_chars,
+                config.add_word_boundary,
             ),
             new_config,
         )

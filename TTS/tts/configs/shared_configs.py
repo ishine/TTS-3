@@ -183,6 +183,9 @@ class BaseTTSConfig(BaseTrainingConfig):
         enable_eos_bos_chars (bool):
             enable / disable the use of eos and bos characters.
 
+        add_word_boundary (bool):
+            enable / disable the use of word boundaries characters.
+
         test_senteces_file (str):
             Path to a txt file that has sentences used at test time. The file must have a sentence per line.
 
@@ -291,6 +294,7 @@ class BaseTTSConfig(BaseTrainingConfig):
     compute_input_seq_cache: bool = False
     text_cleaner: str = None
     enable_eos_bos_chars: bool = False
+    add_word_boundary: bool = False
     test_sentences_file: str = ""
     phoneme_cache_path: str = None
     # vocabulary parameters

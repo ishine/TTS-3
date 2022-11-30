@@ -22,7 +22,6 @@ from torch.cuda.amp.autocast_mode import autocast
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
-from TTS.utils.audio.numpy_transforms import compute_f0
 from trainer.torch import DistributedSampler, DistributedSamplerWrapper
 from trainer.trainer_utils import get_optimizer, get_scheduler
 
@@ -53,6 +52,7 @@ from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.text.characters import BaseCharacters, _characters, _pad, _phonemes, _punctuations
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.tts.utils.visual import plot_alignment, plot_avg_pitch, plot_pitch, plot_spectrogram
+from TTS.utils.audio.numpy_transforms import compute_f0
 from TTS.utils.audio.torch_transforms import TorchSTFT
 from TTS.utils.io import load_fsspec
 from TTS.utils.samplers import BucketBatchSampler
@@ -676,7 +676,7 @@ class StyleEmbedAttention(nn.Module):
 
         # score = softmax(QK^T / (d_k ** 0.5))
         scores_soft = torch.matmul(querys, keys.transpose(2, 3))  # [h, N, T_q, T_k]
-        scores_soft = scores_soft / (self.key_dim ** 0.5)
+        scores_soft = scores_soft / (self.key_dim**0.5)
         scores_soft = F.softmax(scores_soft, dim=3)
 
         # out = score * V
@@ -3071,8 +3071,14 @@ class EcyourTTS(BaseTTS):
                     num_input_chars = num_input_chars - (x == self.tokenizer.characters.blank_id).sum(1).float()
                 # do not take into consideration the eos and bos tokens
                 if self.tokenizer.characters.eos is not None and self.tokenizer.characters.bos is not None:
-                    num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(self.tokenizer.characters.eos)).sum(1).float()
-                    num_input_chars = num_input_chars - (x == self.tokenizer.characters.char_to_id(self.tokenizer.characters.bos)).sum(1).float()
+                    num_input_chars = (
+                        num_input_chars
+                        - (x == self.tokenizer.characters.char_to_id(self.tokenizer.characters.eos)).sum(1).float()
+                    )
+                    num_input_chars = (
+                        num_input_chars
+                        - (x == self.tokenizer.characters.char_to_id(self.tokenizer.characters.bos)).sum(1).float()
+                    )
                 dur = dur / (self.target_cps / (num_input_chars / model_output_in_sec)[:, None, None])
             dur = dur * self.length_scale
         else:
@@ -4557,7 +4563,7 @@ class EcyourTTS(BaseTTS):
     def synthesize(
         self,
         text: str,
-        speaker_id: str,
+        speaker_id: str = None,
         language_id=None,
         d_vector=None,
         ref_waveform=None,
@@ -4926,7 +4932,7 @@ class EcyourTTSDiscriminatorLoss(nn.Module):
             dr = dr.float()
             dg = dg.float()
             real_loss = torch.mean((1 - dr) ** 2)
-            fake_loss = torch.mean(dg ** 2)
+            fake_loss = torch.mean(dg**2)
             loss += real_loss + fake_loss
             real_losses.append(real_loss.item())
             fake_losses.append(fake_loss.item())
