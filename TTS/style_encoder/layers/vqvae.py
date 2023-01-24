@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Function
 
-class VectorQuantizedVAE(nn.Module):
+class VQVAEStyleEncoder(nn.Module):
     def __init__(self, nmels_ref, dim, K=512):
         super().__init__()
         self.encoder = ReferenceEncoder(nmels_ref, dim)
