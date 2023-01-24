@@ -62,7 +62,8 @@ class StyleEncoderConfig(Coqpit):
 
     # VAE-Based Additional Configs
     K: int = 16 # Codebook size
-    
+    vqvae_commitment_beta: float = 0.25 # Depends on the scale of the reconstruction loss
+
     # VAEFLOW-SE Additional Configs
     vaeflow_intern_dim: int = 300
     vaeflow_number_of_flows: int = 16
