@@ -4,6 +4,7 @@ from torch import nn
 from TTS.style_encoder.layers.gst import GST
 from TTS.style_encoder.layers.re import ReferenceEncoder
 from TTS.style_encoder.layers.vae import VAEStyleEncoder
+from TTS.style_encoder.layers.vqvae import VQVAEStyleEncoder
 from TTS.style_encoder.layers.vaeflow import VAEFlowStyleEncoder
 from TTS.style_encoder.layers.diffusion import DiffStyleEncoder
 
@@ -45,6 +46,12 @@ class StyleEncoder(nn.Module):
                 embedding_dim = self.style_embedding_dim,
                 latent_dim = self.vae_latent_dim
             )
+        elif self.se_type == 'vqvae':
+            self.layer = VQVAEStyleEncoder(
+                nmels_ref= self.num_mel,
+                dim = self.style_embedding_dim,
+                K = self.codebook_size
+            )
         elif self.se_type == 'vaeflow':
             self.layer = VAEFlowStyleEncoder(
                 num_mel = self.num_mel,
@@ -80,6 +87,8 @@ class StyleEncoder(nn.Module):
             out = self.diff_forward(*inputs)
         elif self.se_type == 'vae':
             out = self.vae_forward(*inputs)
+        elif self.se_type == 'vqvae':
+            out = self.vqvae_forward(*inputs)
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_forward(*inputs)
         else:
@@ -95,6 +104,8 @@ class StyleEncoder(nn.Module):
             out = self.diff_inference(inputs, ref_mels = kwargs['style_mel'], infer_from = kwargs['diff_t'])
         elif self.se_type == 'vae':
             out = self.vae_inference(inputs, ref_mels= kwargs['style_mel'], z = kwargs['z'])
+        elif self.se_type == 'vqvae':
+            out = self.vqvae_inference(inputs, ref_mels= kwargs['style_mel'], K = kwargs['K'])
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_inference(inputs, ref_mels = kwargs['style_mel'], z = kwargs['z'])
         else:
@@ -235,6 +246,43 @@ class StyleEncoder(nn.Module):
                 return self._concat_embedding(inputs, vae_output['z'])
             else:
                 return self._add_speaker_embedding(inputs, vae_output['z'])
+
+    def vqvae_forward(self, inputs, ref_mels): 
+        vqvae_output = self.layer.forward(ref_mels)
+
+        if(self.use_nonlinear_proj):
+            vqvae_output = torch.tanh(self.nl_proj(vqvae_output))
+            vqvae_output = self.dropout(vqvae_output)
+
+        if(self.use_proj_linear):
+            vqvae_output = self.proj(vqvae_output)
+
+        if(self.agg_type == 'concat'):
+            return self._concat_embedding(inputs, vqvae_output['z_q_x_st']), {'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']} # Dict with extra entries
+        else:
+            return self._add_speaker_embedding(inputs, vqvae_output['z_q_x_st']), {'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}# Dict with extra entries
+    
+    def vqvae_inference(self, inputs, ref_mels, K=None):
+        if(K):
+            z = self.layer.codebook.weight[K].detach()
+            if(self.agg_type == 'concat'):
+                return self._concat_embedding(inputs, z)  # If an specific K is passed it uses it
+            else:
+                return self._add_speaker_embedding(inputs, z)
+        else:
+            vqvae_output = self.layer.forward(ref_mels)
+
+            if(self.use_nonlinear_proj):
+                vqvae_output = torch.tanh(self.nl_proj(vqvae_output))
+                vqvae_output = self.dropout(vqvae_output)
+                
+            if(self.use_proj_linear):
+                vqvae_output = self.proj(vqvae_output)
+
+        if(self.agg_type == 'concat'):
+            return self._concat_embedding(inputs, vqvae_output['z_q_x_st'])
+        else:
+            return self._add_speaker_embedding(inputs, vqvae_output['z_q_x_st'])
 
     def vaeflow_forward(self, inputs, ref_mels): 
         vaeflow_output = self.layer.forward(ref_mels)
