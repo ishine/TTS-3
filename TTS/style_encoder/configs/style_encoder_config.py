@@ -60,6 +60,9 @@ class StyleEncoderConfig(Coqpit):
     vae_loss_alpha: float = 1.0 # Default alpha value (term of KL loss)
     vae_cycle_period: int = 5000 # iteration period to apply a new annealing cycle
 
+    # VAE-Based Additional Configs
+    K: int = 16 # Codebook size
+    
     # VAEFLOW-SE Additional Configs
     vaeflow_intern_dim: int = 300
     vaeflow_number_of_flows: int = 16
@@ -88,7 +91,7 @@ class StyleEncoderConfig(Coqpit):
         """Check config fields"""
         c = asdict(self)
         super().check_values()
-        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae", "diffusion", "vaeflow"])
+        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae","vqvae" "diffusion", "vaeflow"])
         check_argument("agg_type", c, restricted=True, enum_list=["sum", "concat", "adain"])
         check_argument("num_mel", c, restricted=False)
         check_argument("style_embedding_dim", c, restricted=True, min_val=0, max_val=1000)
