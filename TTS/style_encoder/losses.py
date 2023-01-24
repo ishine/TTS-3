@@ -158,3 +158,15 @@ class VAEFlowStyleEncoderLoss(torch.nn.Module):
             return torch.mean(log_normal, dim)
         else:
             return torch.sum(log_normal, dim)
+
+class VQVAEStyleEncoderLoss(torch.nn.Module):
+    def __init__(self, c) -> None:
+        super().__init__()
+        self.config = c
+        self.step = 0
+
+    def forward(self, z_q_x, z_e_x):
+        loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
+        loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
+        self.step += 1  
+        return loss_vq + self.config.vqvae_commitment_beta * loss_commit
