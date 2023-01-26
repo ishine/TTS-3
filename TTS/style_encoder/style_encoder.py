@@ -199,6 +199,9 @@ class StyleEncoder(nn.Module):
                 if(self.use_proj_linear):
                     gst_outputs = self.proj(gst_outputs)
 
+
+            print(gst_outputs)
+            print(gst_outputs.shape)
             # if(self.agg_type == 'concat'):
             #     inputs = self._concat_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
             # elif(self.agg_type == 'adain'):
@@ -207,7 +210,6 @@ class StyleEncoder(nn.Module):
             #     inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
 
             # Initially for fine-grained you must only add them, cuz we assume they are same shape
-            print(inputs.shape, gst_outputs.shape)
 
             inputs = inputs + gst_outputs
 
