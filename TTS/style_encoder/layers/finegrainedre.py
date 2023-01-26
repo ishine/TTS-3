@@ -95,7 +95,7 @@ class ModifiedReferenceEncoder(nn.Module):
             x = bn(x)
             x = F.relu(x)
 
-        print(x.shape)
+        # print(x.shape)
         x = x.transpose(1, 2)
         # x: 4D tensor [batch_size, post_conv_width,
         #               num_channels==128, post_conv_height]
@@ -105,7 +105,7 @@ class ModifiedReferenceEncoder(nn.Module):
         # x: 3D tensor [batch_size, post_conv_width,
         #               num_channels*post_conv_height]
         self.recurrence.flatten_parameters()
-        print(x.shape)
+        # print(x.shape)
         memory , out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
 
