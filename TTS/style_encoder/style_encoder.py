@@ -207,8 +207,8 @@ class StyleEncoder(nn.Module):
             #     inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
 
             # Initially for fine-grained you must only add them, cuz we assume they are same shape
-            print(inputs, gst_outputs)
-            
+            print(inputs.shape, gst_outputs.shape)
+
             inputs = inputs + gst_outputs
 
             return inputs, gst_outputs
