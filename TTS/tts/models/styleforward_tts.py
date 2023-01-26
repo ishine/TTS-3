@@ -592,7 +592,6 @@ class StyleforwardTTS(BaseTTS):
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
         #Style embedding 
-        print(self.config.style_encoder_config.se_type)
         if(self.config.style_encoder_config.use_lookup):
             # print(self.emb_s(aux_input["style_ids"]).unsqueeze(1).shape, o_en.shape)
             o_en = encoder_outputs.permute(0,2,1)
@@ -602,7 +601,7 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = style_encoder_outputs.squeeze(1)
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
             se_inputs = [encoder_outputs.permute(0,2,1), y]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, x_lengths, y_lengths)
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
             o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
@@ -727,7 +726,7 @@ class StyleforwardTTS(BaseTTS):
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
             style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[1:2]).to(aux_input['style_mel'].device) # Check if its that way
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, x_lengths, style_mel_lengths)
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len = x_lengths, mel_len = style_mel_lengths)
             o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]

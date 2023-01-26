@@ -81,13 +81,13 @@ class StyleEncoder(nn.Module):
         else:
             raise NotImplementedError
 
-    def forward(self, inputs, aux_input):
+    def forward(self, inputs, **kwargs):
         if self.se_type == 'gst':
             out = self.gst_embedding(*inputs)
         elif self.se_type == 're':
             out = self.re_embedding(*inputs)
         elif self.se_type == 'finegrainedre':
-            out = self.finegrainedre_embedding(*inputs)
+            out = self.finegrainedre_embedding(*inputs, kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
             out = self.diff_forward(*inputs)
         elif self.se_type == 'vae':
@@ -104,7 +104,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 're':
             out = self.re_embedding(inputs, kwargs['style_mel'])
         elif self.se_type == 'finegrainedre':
-            out = self.finegrainedre_embedding(inputs, kwargs['style_mel'])
+            out = self.finegrainedre_embedding(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
             out = self.diff_inference(inputs, ref_mels = kwargs['style_mel'], infer_from = kwargs['diff_t'])
         elif self.se_type == 'vae':
