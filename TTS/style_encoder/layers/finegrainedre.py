@@ -24,7 +24,7 @@ class FineGrainedReferenceEncoder(nn.Module):
 
         # Bottleneck
         embedded_prosody = self.encoder_bottleneck(embedded_prosody)
-
+        print(embedded_prosody.shape)
         # Obtain k and v from prosody embedding
         key, value = torch.split(embedded_prosody, self.prosody_embedding_dim, dim=-1) # [N, Ty, prosody_embedding_dim] * 2
 
