@@ -190,7 +190,7 @@ class StyleEncoder(nn.Module):
             else:
                 # compute style tokens
                 # input_args = [style_input]
-                gst_outputs = self.layer(inputs, text_len, style_input, mel_len)  # pylint: disable=not-callable
+                gst_outputs, alignments = self.layer(inputs, text_len, style_input, mel_len)  # pylint: disable=not-callable
             
                 if(self.use_nonlinear_proj):
                     gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
@@ -200,10 +200,10 @@ class StyleEncoder(nn.Module):
                     gst_outputs = self.proj(gst_outputs)
 
 
-            print(gst_outputs)
-            print(len(gst_outputs))
-            for i in range(len(gst_outputs)):
-                print(gst_outputs[i].shape)
+            # print(gst_outputs)
+            # print(len(gst_outputs))
+            # for i in range(len(gst_outputs)):
+            #     print(gst_outputs[i].shape)
 
 
             inputs = inputs + gst_outputs
