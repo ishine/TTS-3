@@ -32,7 +32,7 @@ class FineGrainedReferenceEncoder(nn.Module):
         text_mask = get_mask_from_lengths(text_lengths).float().unsqueeze(-1) # [B, seq_len, 1]
         mels_mask = get_mask_from_lengths(mels_lengths).float().unsqueeze(-1) # [B, req_len, 1]
         attn_mask = torch.bmm(text_mask, mels_mask.transpose(-2, -1)) # [N, seq_len, ref_len]
-        print(text_mask.shape, mels_mask.shape, attn_mask.shape, embedded_text.shape, key.shape, value.shape)
+        # print(text_mask.shape, mels_mask.shape, attn_mask.shape, embedded_text.shape, key.shape, value.shape)
         # Attention
         style_embed, alignments = self.ref_attn(embedded_text, key, value, attn_mask)
 
@@ -94,6 +94,7 @@ class ModifiedReferenceEncoder(nn.Module):
         # x: 3D tensor [batch_size, post_conv_width,
         #               num_channels*post_conv_height]
         self.recurrence.flatten_parameters()
+        print(x.shape)
         memory , out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
 
