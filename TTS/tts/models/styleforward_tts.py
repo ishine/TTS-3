@@ -604,11 +604,6 @@ class StyleforwardTTS(BaseTTS):
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
             o_en = o_en.permute(0,2,1)
-        elif(self.config.style_encoder_config.se_type == 'vae'):
-            se_inputs = [encoder_outputs.permute(0,2,1), y]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
-            style_encoder_outputs = style_encoder_outputs['z'].squeeze(1)
-            o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
@@ -620,8 +615,12 @@ class StyleforwardTTS(BaseTTS):
 
         speaker_preds_from_style = None
         if(self.config.style_encoder_config.use_grl_on_speakers_in_style_embedding):
+            if(self.config.style_encoder_config.se_type == 'vae'):
+                # print(style_encoder_outputs['z'].shape) Checked that needed the squeeze below
+                grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs['z'].squeeze(1))
+            else:
+                grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs)
 
-            grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs)
             speaker_preds_from_style = self.speaker_classifier_using_style_embedding(grl_output)
 
         # duration predictor pass
@@ -657,14 +656,9 @@ class StyleforwardTTS(BaseTTS):
 
         ressynt_style_encoder_output = None
 
-        if(self.config.style_encoder_config.use_clip_loss):
-            if(self.config.style_encoder_config.se_type == 'vae'):
-                se_inputs = [encoder_outputs.permute(0,2,1), o_de]
-                _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
-                ressynt_style_encoder_output = ressynt_style_encoder_output['z'].squeeze(1)
-            else:
-                se_inputs = [encoder_outputs.permute(0,2,1), o_de]
-                _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
+        if(self.config.style_encoder_config.use_clip_loss): 
+            se_inputs = [encoder_outputs.permute(0,2,1), o_de]
+            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
 
         outputs = {
             "model_outputs": o_de,  # [B, T, C]
@@ -773,13 +767,8 @@ class StyleforwardTTS(BaseTTS):
 
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss):
-            if(self.config.style_encoder_config.se_type == 'vae'):
-                se_inputs = [o_en.permute(0,2,1), o_de]
-                _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
-                ressynt_style_encoder_output = ressynt_style_encoder_output['z'].squeeze(1)
-            else:
-                se_inputs = [o_en.permute(0,2,1), o_de]
-                _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
+            se_inputs = [o_en.permute(0,2,1), o_de]
+            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
 
         outputs = {
             "model_outputs": o_de,
