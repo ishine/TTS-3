@@ -23,11 +23,11 @@ class FineGrainedReferenceEncoder(nn.Module):
     def forward(self, embedded_text, text_lengths, mels, mels_lengths):
         embedded_prosody, _ = self.encoder(mels)
 
-        print(f'entry shapes: {embedded_text.shape}, {text_lengths.shape}, {mels.shape}, {mels_lengths.shape}')
+        # print(f'entry shapes: {embedded_text.shape}, {text_lengths.shape}, {mels.shape}, {mels_lengths.shape}')
 
         # Bottleneck
         embedded_prosody = self.encoder_bottleneck(embedded_prosody)
-        print(embedded_prosody.shape)
+        # print(embedded_prosody.shape)
         # Obtain k and v from prosody embedding
         key, value = torch.split(embedded_prosody, self.prosody_embedding_dim, dim=-1) # [N, Ty, prosody_embedding_dim] * 2
 
