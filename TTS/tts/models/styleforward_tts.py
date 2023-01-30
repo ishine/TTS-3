@@ -605,7 +605,7 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
             o_en = o_en.permute(0,2,1)
 
         style_preds = None
@@ -730,7 +730,7 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
             o_en = o_en.permute(0,2,1)
 
 
