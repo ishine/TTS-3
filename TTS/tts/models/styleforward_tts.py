@@ -617,7 +617,7 @@ class StyleforwardTTS(BaseTTS):
         if(self.config.style_encoder_config.use_grl_on_speakers_in_style_embedding):
             if(self.config.style_encoder_config.se_type == 'vae'):
                 print(style_encoder_outputs['z'].shape)
-                grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs['z'])
+                grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs['z'].squeeze(1))
             else:
                 grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs)
 

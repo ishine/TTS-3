@@ -64,7 +64,7 @@ class VAEStyleEncoder(nn.Module):
 
         z = self.reparametrize(mu, logvar)
 
-        # z = z.unsqueeze(1)
+        z = z.unsqueeze(1)
 
         if(self.use_nonlinear_proj):
             z = torch.tanh(self.proj(z))
