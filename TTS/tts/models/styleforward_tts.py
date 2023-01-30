@@ -652,7 +652,7 @@ class StyleforwardTTS(BaseTTS):
 
         if(self.config.style_encoder_config.use_clip_loss):
             se_inputs = [encoder_outputs.permute(0,2,1), o_de]
-            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
 
 
         outputs = {
@@ -763,7 +763,7 @@ class StyleforwardTTS(BaseTTS):
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss):
             se_inputs = [o_en.permute(0,2,1), o_de]
-            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
 
         outputs = {
             "model_outputs": o_de,
