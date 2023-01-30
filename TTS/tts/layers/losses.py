@@ -1078,6 +1078,22 @@ class StyleForwardTTSLoss(nn.Module):
             style_loss = self.criterion_se(style_encoder_output['mean'], style_encoder_output['log_var'])
             loss += style_loss * self.criterion_se.alpha_vae
             return_dict["style_encoder_loss"] = style_loss
+            
+            if self.style_encoder_config.use_guided_style:
+                # print(style_preds.shape, style_ids.shape)
+                style_guided_loss = self.criterion_guided(style_preds, style_ids) # Must squeeze cuz it was augmented for broadcasting
+                
+                # print(style_guided_loss, torch.argmax(style_preds, axis = -1), style_ids)
+                
+                loss += style_guided_loss
+                return_dict["style_guided_loss"] = style_guided_loss
+
+            if self.style_encoder_config.use_grl_on_speakers_in_style_embedding:
+                grl_speaker_in_style_loss = self.criterion_grl_speaker_in_style_embedding(speaker_preds_from_style, speaker_ids)
+                
+                loss += self.grl_speaker_in_style_embedding_alpha*grl_speaker_in_style_loss
+                
+                return_dict["grl_speaker_in_style_embedding"] = grl_speaker_in_style_loss
 
         # style encoder loss VAE based
         if self.style_encoder_config.se_type == 'vaeflow':
