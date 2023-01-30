@@ -256,7 +256,7 @@ class StyleEncoder(nn.Module):
         if(self.agg_type == 'concat'):
             return self._concat_embedding(inputs, vae_output['z']), {'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
         else:
-            return self._add_speaker_embedding(inputs, vae_output['z']), {'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
+            return self._add_speaker_embedding(inputs, vae_output['z']), {'z': vae_output['z'], 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
     
     def vae_inference(self, inputs, ref_mels, z=None):
         if(z):
