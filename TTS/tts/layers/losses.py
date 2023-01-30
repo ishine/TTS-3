@@ -1078,7 +1078,8 @@ class StyleForwardTTSLoss(nn.Module):
             style_loss = self.criterion_se(style_encoder_output['mean'], style_encoder_output['log_var'])
             loss += style_loss * self.criterion_se.alpha_vae
             return_dict["style_encoder_loss"] = style_loss
-            
+            return_dict['alpha_value'] = self.criterion_se.alpha_vae
+
             if self.style_encoder_config.use_guided_style:
                 # print(style_preds.shape, style_ids.shape)
                 style_guided_loss = self.criterion_guided(style_preds, style_ids) # Must squeeze cuz it was augmented for broadcasting
