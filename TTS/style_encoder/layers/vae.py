@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from finegrainedre import ModifiedReferenceEncoder # Reference encoder thats outputs all hidden states
 
 class VAEStyleEncoder(nn.Module):
     """NN module creating a fixed size prosody embedding from a spectrogram.
