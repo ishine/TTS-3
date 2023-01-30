@@ -8,11 +8,27 @@ Here we keep the "unicamp' branch as our main branch, while "main" branch remain
 
 We are an expressive TTS research group located at Unicamp and CPQD (Brazil). 
 
-# Implemented papers
+# Implementations
 
-### Modules
+## Expressive Models
+- Tacotron 2
+- Fastpitch
+
+## Style Encoders
+- Look-Up
+- Reference Encoder (Coarse/Fine-Grained)
+- GST
 - VAE
+- VAE+Flow
+- Diffusion
 
-### Style Encoders
-- VAE-based
-- Diff-based
+## Disentanglement Blocks
+- Style Classifier
+- Speaker Classifier + GRL (Gradient Reversal Layer)
+
+## Agregation Types
+- Sum, Concat or AdaIN
+
+## Enhancing Losses
+- Orthogonal Loss
+- CLIP Loss
