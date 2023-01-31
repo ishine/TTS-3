@@ -19,6 +19,7 @@ We are an expressive TTS research group located at Unicamp and CPQD (Brazil).
 - Reference Encoder (Coarse/Fine-Grained)
 - GST
 - VAE
+- VQ-VAE
 - VAE+Flow
 - Diffusion
 
