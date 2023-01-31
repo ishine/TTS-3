@@ -249,13 +249,14 @@ class StyleEncoder(nn.Module):
 
     def vqvae_forward(self, inputs, ref_mels): 
         vqvae_output = self.layer.forward(ref_mels)
+        
+        for key in vqvae_output:
+            if(self.use_nonlinear_proj):
+                vqvae_output[key] = torch.tanh(self.nl_proj(vqvae_output[key]))
+                vqvae_output[key] = self.dropout(vqvae_output[key])
 
-        if(self.use_nonlinear_proj):
-            vqvae_output = torch.tanh(self.nl_proj(vqvae_output))
-            vqvae_output = self.dropout(vqvae_output)
-
-        if(self.use_proj_linear):
-            vqvae_output = self.proj(vqvae_output)
+            if(self.use_proj_linear):
+                vqvae_output[key] = self.proj(vqvae_output[key])
 
         if(self.agg_type == 'concat'):
             return self._concat_embedding(inputs, vqvae_output['z_q_x_st']), {'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']} # Dict with extra entries
