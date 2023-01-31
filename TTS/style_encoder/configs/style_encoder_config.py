@@ -92,7 +92,7 @@ class StyleEncoderConfig(Coqpit):
         """Check config fields"""
         c = asdict(self)
         super().check_values()
-        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae","vqvae" "diffusion", "vaeflow"])
+        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae","vqvae", "diffusion", "vaeflow"])
         check_argument("agg_type", c, restricted=True, enum_list=["sum", "concat", "adain"])
         check_argument("num_mel", c, restricted=False)
         check_argument("style_embedding_dim", c, restricted=True, min_val=0, max_val=1000)
