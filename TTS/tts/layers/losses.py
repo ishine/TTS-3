@@ -1108,9 +1108,12 @@ class StyleForwardTTSLoss(nn.Module):
 
         # style encoder loss VQVAE based
         if self.style_encoder_config.se_type == 'vqvae':
-            style_loss = self.criterion_se(style_encoder_output['z_q_x'], style_encoder_output['z_e_x'])
+            loss_vq, loss_commit = self.criterion_se(style_encoder_output['z_q_x'], style_encoder_output['z_e_x'])
+            style_loss = loss_vq + self.criterion_se.beta_vqvae * loss_commit
             loss += style_loss
-            return_dict["style_encoder_loss"] = style_loss
+            return_dict["loss_vq"] = loss_vq
+            return_dict["loss_commit"] = loss_commit
+            return_dict["style_loss"] = style_loss
 
             if self.style_encoder_config.use_guided_style:
                 style_guided_loss = self.criterion_guided(style_preds, style_ids) # Must squeeze cuz it was augmented for broadcasting                
@@ -1119,9 +1122,7 @@ class StyleForwardTTSLoss(nn.Module):
 
             if self.style_encoder_config.use_grl_on_speakers_in_style_embedding:
                 grl_speaker_in_style_loss = self.criterion_grl_speaker_in_style_embedding(speaker_preds_from_style, speaker_ids)
-                
                 loss += self.grl_speaker_in_style_embedding_alpha*grl_speaker_in_style_loss
-                
                 return_dict["grl_speaker_in_style_embedding"] = grl_speaker_in_style_loss
 
         # style encoder loss VAE based
