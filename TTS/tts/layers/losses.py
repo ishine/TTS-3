@@ -1108,7 +1108,7 @@ class StyleForwardTTSLoss(nn.Module):
 
         # style encoder loss VQVAE based
         if self.style_encoder_config.se_type == 'vqvae':
-            loss_vq, loss_commit = self.criterion_se(style_encoder_output['z_q_x'], style_encoder_output['z_e_x'])
+            loss_vq, loss_commit = self.criterion_se(style_encoder_output['z_q'], style_encoder_output['z_e'])
             style_loss = loss_vq + self.criterion_se.beta_vqvae * loss_commit
             loss += style_loss
             return_dict["loss_vq"] = loss_vq
