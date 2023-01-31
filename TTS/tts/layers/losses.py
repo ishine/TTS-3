@@ -1079,7 +1079,7 @@ class StyleForwardTTSLoss(nn.Module):
 
         # style encoder loss diffusion based
         if self.style_encoder_config.se_type == 'diffusion':
-            style_loss = self.criterion_se(style_encoder_output['noise_pred'], style_encoder_output['noise_target'])
+            style_loss = self.criterion_se(style_encoder_output['noises']['noise_pred'], style_encoder_output['noises']['noise_target'])
             loss += style_loss * self.style_encoder_config.diff_loss_alpha
             return_dict["style_encoder_loss"] = style_loss
         
@@ -1136,13 +1136,13 @@ class StyleForwardTTSLoss(nn.Module):
                 # print(style_encoder_output.shape, encoder_output.shape)
                 # print(torch.matmul(style_encoder_output, encoder_output.permute(0,2,1)))
                 # content_dot_loss = torch.dot(style_encoder_output, encoder_output)
-                content_dot_loss = (style_encoder_output.unsqueeze(1)*encoder_output.permute(0,2,1)).sum(axis=-1).mean().abs() # Must be abs because dot product can be negative
+                content_dot_loss = (style_encoder_output['style_embedding'].unsqueeze(1)*encoder_output.permute(0,2,1)).sum(axis=-1).mean().abs() # Must be abs because dot product can be negative
                 # print(content_dot_loss)
                 loss += content_dot_loss
                 return_dict["content_orthogonal_loss"] = content_dot_loss
             if self.style_encoder_config.speaker_orthogonal_loss:
                 # print(style_encoder_output.shape, speaker_output.shape)
-                speaker_dot_loss = torch.inner(style_encoder_output, speaker_output.squeeze(-1)).mean().abs()
+                speaker_dot_loss = torch.inner(style_encoder_output['style_embedding'], speaker_output.squeeze(-1)).mean().abs()
                 # print(torch.inner(style_encoder_output, speaker_output.squeeze(-1)).shape)
                 loss += speaker_dot_loss
                 return_dict["speaker_orthogonal_loss"] = speaker_dot_loss
