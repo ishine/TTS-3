@@ -454,6 +454,8 @@ class StyleTacotronLoss(torch.nn.Module):
             self.criterion_se = VAEStyleEncoderLoss(self.style_encoder_config)
         if self.style_encoder_config.se_type == 'vaeflow':
             self.criterion_se = VAEFlowStyleEncoderLoss(self.style_encoder_config)
+        if self.style_encoder_config.se_type == 'vqvae':
+            self.criterion_se = VQVAEStyleEncoderLoss(self.style_encoder_config)
     
     
     def forward(
@@ -570,10 +572,16 @@ class StyleTacotronLoss(torch.nn.Module):
             loss += style_loss * self.criterion_se.alpha_vae
             return_dict["style_encoder_loss"] = style_loss
 
-        # style encoder loss VAE based
+        # style encoder loss VAE+Flow based
         if self.style_encoder_config.se_type == 'vaeflow':
             style_loss = self.criterion_se(style_encoder_output['z_0'], style_encoder_output['z_T'], style_encoder_output['mean'], style_encoder_output['log_var'])
             loss += style_loss * self.criterion_se.alpha_vae
+            return_dict["style_encoder_loss"] = style_loss
+
+        # style encoder loss VQVAE based
+        if self.style_encoder_config.se_type == 'vqvae':
+            style_loss = self.criterion_se(style_encoder_output['z_q_x'], style_encoder_output['z_e_x'])
+            loss += style_loss
             return_dict["style_encoder_loss"] = style_loss
 
         return_dict["loss"] = loss
