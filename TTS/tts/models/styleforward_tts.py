@@ -192,6 +192,7 @@ class StyleforwardTTS(BaseTTS):
                 self.style_classify_layer = nn.Linear(style_embedding_dim,self.num_style)
         
         if(config.style_encoder_config.use_grl_on_speakers_in_style_embedding): #Already assuming that we can have different GRL in different layers
+            style_embedding_dim = config.style_encoder_config.proj_dim if config.style_encoder_config.use_proj_linear else config.style_encoder_config.style_embedding_dim
             self.speaker_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_speakers)
             self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
         
@@ -454,6 +455,7 @@ class StyleforwardTTS(BaseTTS):
         pitch: torch.FloatTensor = None,
         dr: torch.IntTensor = None,
         pitch_control: torch.FloatTensor = None,
+        pitch_replace: torch.FloatTensor = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         """Pitch predictor forward pass.
 
@@ -482,12 +484,15 @@ class StyleforwardTTS(BaseTTS):
             # Put the control over phonemes      
             if(pitch_control is not None):
                 print('entrou no pitch control: ', pitch_control, avg_pitch)
-                avg_pitch = avg_pitch*pitch_control
+                avg_pitch = avg_pitch*pitch_control # TODO, check if its necessary, cuz while training we dont intend to control pitch
             o_pitch_emb = self.pitch_emb(avg_pitch)
             return o_pitch_emb, o_pitch, avg_pitch
         if(pitch_control is not None):
-            print('entrou no pitch control: ', pitch_control, o_pitch)
-            o_pitch = o_pitch + pitch_control
+            print('Pitch changed by args!')
+            o_pitch = o_pitch + pitch_control # I don't remember why is it residual instead of replace, stay as TODO
+        if(pitch_replace is not None):
+            print("Pitch replaced by args!")
+            o_pitch = pitch_replace
         o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
@@ -595,9 +600,13 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en + style_encoder_outputs # [B, 1, C]
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs = style_encoder_outputs.squeeze(1)
+        elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
+            se_inputs = [encoder_outputs.permute(0,2,1), y]
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
+            o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
             o_en = o_en.permute(0,2,1)
 
         style_preds = None
@@ -606,7 +615,12 @@ class StyleforwardTTS(BaseTTS):
 
         speaker_preds_from_style = None
         if(self.config.style_encoder_config.use_grl_on_speakers_in_style_embedding):
-            grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs)
+            if(self.config.style_encoder_config.se_type == 'vae'):
+                # print(style_encoder_outputs['z'].shape) Checked that needed the squeeze below
+                grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs['z'].squeeze(1))
+            else:
+                grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs)
+
             speaker_preds_from_style = self.speaker_classifier_using_style_embedding(grl_output)
 
         # duration predictor pass
@@ -642,10 +656,9 @@ class StyleforwardTTS(BaseTTS):
 
         ressynt_style_encoder_output = None
 
-        if(self.config.style_encoder_config.use_clip_loss):
+        if(self.config.style_encoder_config.use_clip_loss): 
             se_inputs = [encoder_outputs.permute(0,2,1), o_de]
-            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
-
+            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
 
         outputs = {
             "model_outputs": o_de,  # [B, T, C]
@@ -671,7 +684,7 @@ class StyleforwardTTS(BaseTTS):
         return outputs
 
     @torch.no_grad()
-    def inference(self, x, aux_input={"d_vectors": None, "speaker_ids": None, "cond_speaker_ids" : None, 'style_mel': None, "style_ids": None,'pitch_control': None}):  # pylint: disable=unused-argument
+    def inference(self, x, aux_input={"d_vectors": None, "speaker_ids": None, "cond_speaker_ids" : None, 'style_mel': None, "style_ids": None,'pitch_control': None, 'pitch_replace': None}):  # pylint: disable=unused-argument
         """Model's inference pass.
 
         Args:
@@ -715,9 +728,14 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = self.emb_s(aux_input["style_ids"].unsqueeze(1)) 
             o_en = o_en + style_encoder_outputs # [B, 1, C]
             o_en = o_en.permute(0,2,1)
+        elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
+            se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
+            style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[2:3]).to(aux_input['style_mel'].device) # Check if its that way, before [1:2], but style mel comes with shape [bs, n_mel, mel_len] and we want mel_mel
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len = x_lengths, mel_len = style_mel_lengths)
+            o_en = o_en.permute(0,2,1)
         else:
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
             o_en = o_en.permute(0,2,1)
 
 
@@ -731,25 +749,26 @@ class StyleforwardTTS(BaseTTS):
             # Remove conditional speaker embedding, and add the provided speaker, we provide pitch predicted by cond_speaker in order to generate the pitch embedding
             # for target speaker and avoid speaker leakage (empirical results)
             if(cond_g is not None):
-                o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = aux_input['pitch_control'])
+                o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask)
 
                 o_en = o_en - cond_g_emb.expand(o_en.size(0), o_en.size(1), -1) + g_emb.expand(o_en.size(0), o_en.size(1), -1)
 
-                o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = o_pitch)
+                o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_replace = o_pitch)
 
                 o_en = o_en + o_pitch_emb
 
             else:
-                o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = aux_input['pitch_control'])
+                o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = aux_input['pitch_control'], pitch_replace=aux_input['pitch_replace'])
                 o_en = o_en + o_pitch_emb
         
 
         # decoder pass
         o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None)
 
+        ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss):
             se_inputs = [o_en.permute(0,2,1), o_de]
-            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs, aux_input["style_ids"])
+            _, ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)
 
         outputs = {
             "model_outputs": o_de,
