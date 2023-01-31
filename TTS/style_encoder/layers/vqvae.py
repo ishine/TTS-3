@@ -18,7 +18,7 @@ class VQVAEStyleEncoder(nn.Module):
     def forward(self, x):
         z_e_x = self.encoder(x)
         z_q_x_st, z_q_x = self.codebook.straight_through(z_e_x)
-        return {'z_e':z_e_x, 'z_q':z_q_x, 'z_q_st':z_q_x_st}
+        return {'z_e':z_e_x.squeeze(2).squeeze(2), 'z_q':z_q_x.squeeze(2).squeeze(2), 'z_q_x_st':z_q_x_st.squeeze(2).squeeze(2)} # Changing all three outputs from img formatting to coqui style embedding formatting
 
 class VQEmbedding(nn.Module):
     def __init__(self, K, D):
