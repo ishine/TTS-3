@@ -603,11 +603,11 @@ class StyleforwardTTS(BaseTTS):
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
-            o_en = style_encoder_outputs['style_embedding'].permute(0,2,1)
+            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
-            o_en = style_encoder_outputs['style_embedding'].permute(0,2,1)
+            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
         # Style Classifier
         style_preds = None
