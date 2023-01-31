@@ -61,7 +61,7 @@ class StyleEncoderConfig(Coqpit):
     vae_cycle_period: int = 5000 # iteration period to apply a new annealing cycle
 
     # VAE-Based Additional Configs
-    K: int = 16 # Codebook size
+    codebook_size: int = 16 # Codebook size
     vqvae_commitment_beta: float = 0.25 # Depends on the scale of the reconstruction loss
 
     # VAEFLOW-SE Additional Configs
