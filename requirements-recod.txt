@@ -25,6 +25,6 @@ unidic-lite==1.0.8
 # gruut+supported langs
 gruut[cs,de,es,fr,it,nl,pt,ru,sv]==1.2.1
 fsspec>=2021.04.0
-pyworld==0.3.1
+pyworld==0.3.0
 webrtcvad==2.0.10
 torchaudio==0.12.1
