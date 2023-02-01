@@ -331,7 +331,6 @@ class StyleEncoder(nn.Module):
             inputs = self._add_speaker_embedding(inputs, vaeflow_embedding) 
         return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding.squeeze(1), 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
-
     def vaeflow_inference(self, inputs, ref_mels, z=None):
         if(z): # If an specific z is passed it uses it
             if(self.agg_type == 'concat'):
@@ -356,43 +355,39 @@ class StyleEncoder(nn.Module):
             else:
                 inputs = self._add_speaker_embedding(inputs, vaeflow_embedding)
         
-            return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding, 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
-
+            return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding.squeeze(1), 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
     def diff_forward(self, inputs, ref_mels):
             diff_output = self.layer.forward(ref_mels)
-
+            diff_embedding = diff_output['style']
             if(self.use_nonlinear_proj):
-                diff_output = torch.tanh(self.nl_proj(diff_output))
-                diff_output = self.dropout(diff_output)
+                diff_embedding = torch.tanh(self.nl_proj(diff_embedding))
+                diff_embedding = self.dropout(diff_embedding)
 
             if(self.use_proj_linear):
-                diff_output = self.proj(diff_output)
+                diff_embedding = self.proj(diff_embedding)
 
             if(self.agg_type == 'concat'):
-                inputs =  self._concat_embedding(inputs, diff_output['style']), diff_output['noises']
+                inputs =  self._concat_embedding(inputs, diff_embedding)
             else:
-                inputs =  self._add_speaker_embedding(inputs, diff_output['style']), diff_output['noises']
-
-            return {'styled_inputs': inputs, 'style_embedding': diff_output['style'], 'noises': diff_output['noises']}
-
+                inputs =  self._add_speaker_embedding(inputs, diff_embedding)
+            return {'styled_inputs': inputs, 'style_embedding': diff_embedding.squeeze(1), 'noises': diff_output['noises']}
 
     def diff_inference(self, inputs, ref_mels, infer_from):
             diff_output = self.layer.inference(ref_mels, infer_from)
-            
+            diff_embedding = diff_output['style']
             if(self.use_nonlinear_proj):
-                diff_output = torch.tanh(self.nl_proj(diff_output))
-                diff_output = self.dropout(diff_output)
-               
+                diff_embedding = torch.tanh(self.nl_proj(diff_embedding))
+                diff_embedding = self.dropout(diff_embedding)
+
             if(self.use_proj_linear):
-                diff_output = self.proj(diff_output)
+                diff_embedding = self.proj(diff_embedding)
 
             if(self.agg_type == 'concat'):
-                inputs = self._concat_embedding(inputs, diff_output['style'])
+                inputs =  self._concat_embedding(inputs, diff_embedding)
             else:
-                inputs = self._add_speaker_embedding(inputs, diff_output['style'])
-
-            return {'styled_inputs': inputs, 'style_embedding': diff_output['style'], 'noises': diff_output['noises']}
+                inputs =  self._add_speaker_embedding(inputs, diff_embedding)
+            return {'styled_inputs': inputs, 'style_embedding': diff_embedding.squeeze(1), 'noises': diff_output['noises']}
 
     ##########################
     ###### Aggregations ######
