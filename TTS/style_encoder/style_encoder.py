@@ -220,20 +220,21 @@ class StyleEncoder(nn.Module):
 
     def vae_forward(self, inputs, ref_mels): 
         vae_output = self.layer.forward(ref_mels)
+        vae_embedding = vae_output['z']
 
         if(self.use_nonlinear_proj):
-            vae_output = torch.tanh(self.nl_proj(vae_output))
-            vae_output = self.dropout(vae_output)
+            vae_embedding = torch.tanh(self.nl_proj(vae_embedding))
+            vae_embedding = self.dropout(vae_embedding)
 
         if(self.use_proj_linear):
-            vae_output = self.proj(vae_output)
+            vae_embedding = self.proj(vae_embedding)
 
         if(self.agg_type == 'concat'):
-            inputs = self._concat_embedding(inputs, vae_output['z'])
+            inputs = self._concat_embedding(inputs, vae_embedding)
         else:
-            inputs = self._add_speaker_embedding(inputs, vae_output['z'])
+            inputs = self._add_speaker_embedding(inputs, vae_embedding)
     
-        return {'styled_inputs': inputs, 'style_embedding': vae_output['z'], 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
+        return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
     def vae_inference(self, inputs, ref_mels, z=None):
         if(z): # If an specific z is passed it uses it
@@ -245,20 +246,21 @@ class StyleEncoder(nn.Module):
 
         else:
             vae_output = self.layer.forward(ref_mels)
+            vae_embedding = vae_output['z']
 
             if(self.use_nonlinear_proj):
-                vae_output = torch.tanh(self.nl_proj(vae_output))
-                vae_output = self.dropout(vae_output)
+                vae_embedding = torch.tanh(self.nl_proj(vae_embedding))
+                vae_embedding = self.dropout(vae_embedding)
                 
             if(self.use_proj_linear):
-                vae_output = self.proj(vae_output)
+                vae_embedding = self.proj(vae_embedding)
 
             if(self.agg_type == 'concat'):
-                inputs = self._concat_embedding(inputs, vae_output['z'])
+                inputs = self._concat_embedding(inputs, vae_embedding)
             else:
-                inputs =  self._add_speaker_embedding(inputs, vae_output['z'])
+                inputs =  self._add_speaker_embedding(inputs, vae_embedding)
 
-            return {'styled_inputs': inputs, 'style_embedding': vae_output['z'], 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
+            return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
     def vqvae_forward(self, inputs, ref_mels): 
         vqvae_output = self.layer.forward(ref_mels)
