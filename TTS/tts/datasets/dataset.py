@@ -745,7 +745,7 @@ class PitchExtractor:
 
             print(f"{speaker} pitch mean = {pitch_mean} std = {pitch_std}")
 
-            pitch_stats = {speaker: {"mean": pitch_mean, 
+            pitch_stats[speaker] = {"mean": pitch_mean, 
                         "std": pitch_std}}
 
         np.save(os.path.join(cache_path, "pitch_stats"), pitch_stats, allow_pickle=True)
