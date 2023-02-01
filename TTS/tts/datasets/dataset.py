@@ -757,6 +757,9 @@ class PitchExtractor:
         print(stats)
 
         try:
+            self.mean = {}
+            self.std = {}
+            
             for key in stats.keys():
                 self.mean[key] = stats[key]["mean"].astype(np.float32)
                 self.std[key] = stats[key]["std"].astype(np.float32)
