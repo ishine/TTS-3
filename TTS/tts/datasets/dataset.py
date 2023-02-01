@@ -277,7 +277,7 @@ class TTSDataset(Dataset):
         pitch = None
         if self.compute_f0:
             pitch = self.pitch_extractor.load_or_compute_pitch(self.ap, wav_file, self.f0_cache_path, self.ds_name)
-            pitch = self.pitch_extractor.normalize_pitch(pitch.astype(np.float32))
+            pitch = self.pitch_extractor.normalize_pitch(pitch.astype(np.float32), speaker_name)
 
         sample = {
             "raw_text": raw_text,
@@ -639,17 +639,17 @@ class PitchExtractor:
         mean, std = np.mean(nonzeros), np.std(nonzeros)
         return mean, std
 
-    def normalize_pitch(self, pitch):
+    def normalize_pitch(self, pitch, speaker_name):
         zero_idxs = np.where(pitch == 0.0)[0]
-        pitch = pitch - self.mean
-        pitch = pitch / self.std
+        pitch = pitch - self.mean[speaker_name]
+        pitch = pitch / self.std[speaker_name]
         pitch[zero_idxs] = 0.0
         return pitch
 
-    def denormalize_pitch(self, pitch):
+    def denormalize_pitch(self, pitch, speaker_name):
         zero_idxs = np.where(pitch == 0.0)[0]
-        pitch *= self.std
-        pitch += self.mean
+        pitch *= self.std[speaker_name]
+        pitch += self.mean[speaker_name]
         pitch[zero_idxs] = 0.0
         return pitch
 
@@ -671,12 +671,25 @@ class PitchExtractor:
         ap = args[1]
         cache_path = args[2]
         ds_name = args[3]
-        _, wav_file, *_ = item
+        try:
+            _, wav_file, speaker_name, *_ = item
+        except:
+            _, wav_file, *_ = item
+
         pitch_file = PitchExtractor.create_pitch_file_path(wav_file, cache_path, ds_name)
         if not os.path.exists(pitch_file):
             pitch = PitchExtractor._compute_and_save_pitch(ap, wav_file, pitch_file)
             return pitch
         return None
+    
+    @staticmethod
+    def _get_speaker(args):
+        item = args[0]
+        try:
+            _, _, speaker_name, *_ = item
+            return speaker_name
+        except:
+            return None
 
     def compute_pitch(self, ap, cache_path, num_workers=0):
         """Compute the input sequences with multi-processing.
@@ -688,8 +701,10 @@ class PitchExtractor:
             print(" | > Computing pitch features ...")
         if num_workers == 0:
             pitch_vecs = []
+            speakers_vecs = []
             for _, item in enumerate(tqdm.tqdm(self.items)):
                 pitch_vecs += [self._pitch_worker([item, ap, cache_path, self.ds_name])]
+                speakers_vecs += [self._pitch_worker([item])]
         else:
             with Pool(num_workers) as p:
                 pitch_vecs = list(
@@ -698,12 +713,30 @@ class PitchExtractor:
                         total=len(self.items),
                     )
                 )
-        pitch_mean, pitch_std = self.compute_pitch_stats(pitch_vecs)
-        pitch_stats = {"mean": pitch_mean, "std": pitch_std}
+
+                speakers_vecs = list(
+                    tqdm.tqdm(
+                        p.imap(PitchExtractor._get_speaker, [[item] for item in self.items]),
+                        total=len(self.items),
+                    )
+                )
+
+        pitch_stats = {}
+
+        for speaker in np.unique(speakers_vecs):
+
+            pitch_vecs_filtered = np.array(pitch_vecs_filtered)[np.array(speakers_vecs) == speaker]
+
+            pitch_mean, pitch_std = self.compute_pitch_stats(pitch_vecs_filtered)
+            pitch_stats = {'speaker': {"mean": pitch_mean, 
+                        "std": pitch_std}}
+
         np.save(os.path.join(cache_path, "pitch_stats"), pitch_stats, allow_pickle=True)
 
     def load_pitch_stats(self, cache_path):
         stats_path = os.path.join(cache_path, "pitch_stats.npy")
         stats = np.load(stats_path, allow_pickle=True).item()
-        self.mean = stats["mean"].astype(np.float32)
-        self.std = stats["std"].astype(np.float32)
+
+        for key in stats.keys():
+            self.mean[key] = stats[key]["mean"].astype(np.float32)
+            self.std[key] = stats[key]["std"].astype(np.float32)
