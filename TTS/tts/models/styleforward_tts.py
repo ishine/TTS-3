@@ -188,11 +188,11 @@ class StyleforwardTTS(BaseTTS):
 
             if(config.style_encoder_config.use_guided_style):
                 print(f"Using style guided training with {self.num_style} styles")
-                style_embedding_dim = config.style_encoder_config.proj_dim if config.style_encoder_config.use_proj_linear else config.style_encoder_config.style_embedding_dim
+                style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
                 self.style_classify_layer = nn.Linear(style_embedding_dim,self.num_style)
         
         if(config.style_encoder_config.use_grl_on_speakers_in_style_embedding): #Already assuming that we can have different GRL in different layers
-            style_embedding_dim = config.style_encoder_config.proj_dim if config.style_encoder_config.use_proj_linear else config.style_encoder_config.style_embedding_dim
+            style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
             self.speaker_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_speakers)
             self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
         
