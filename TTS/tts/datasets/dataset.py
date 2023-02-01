@@ -734,11 +734,17 @@ class PitchExtractor:
 
         pitch_stats = {}
 
+        print(f"Pitch calculated for {np.nunique(speakers_vecs)} speakers.")
+
         for speaker in np.unique(speakers_vecs):
 
+            print(f"Calculatin {speaker} pitch stats...")
             pitch_vecs_filtered = np.array(pitch_vecs)[np.array(speakers_vecs) == speaker]
 
             pitch_mean, pitch_std = self.compute_pitch_stats(pitch_vecs_filtered)
+
+            print(f"{speaker} pitch mean = {pitch_mean} std = {pitch_std}")
+
             pitch_stats = {speaker: {"mean": pitch_mean, 
                         "std": pitch_std}}
 
