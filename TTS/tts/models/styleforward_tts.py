@@ -599,7 +599,7 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
             o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
             o_en = o_en.permute(0,2,1)
-            style_encoder_outputs = style_encoder_outputs.squeeze(1)
+            style_encoder_outputs['style_embedding'].squeeze_(1)
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
