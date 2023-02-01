@@ -734,7 +734,7 @@ class PitchExtractor:
 
         pitch_stats = {}
 
-        print(f"Pitch calculated for {np.nunique(speakers_vecs)} speakers.")
+        print(f"Pitch calculated for {len(np.unique(speakers_vecs))} speakers.")
 
         for speaker in np.unique(speakers_vecs):
 
