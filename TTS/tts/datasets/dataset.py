@@ -739,7 +739,7 @@ class PitchExtractor:
             pitch_vecs_filtered = np.array(pitch_vecs_filtered)[np.array(speakers_vecs) == speaker]
 
             pitch_mean, pitch_std = self.compute_pitch_stats(pitch_vecs_filtered)
-            pitch_stats = {'speaker': {"mean": pitch_mean, 
+            pitch_stats = {speaker: {"mean": pitch_mean, 
                         "std": pitch_std}}
 
         np.save(os.path.join(cache_path, "pitch_stats"), pitch_stats, allow_pickle=True)
