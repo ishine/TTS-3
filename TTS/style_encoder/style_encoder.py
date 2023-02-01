@@ -128,7 +128,10 @@ class StyleEncoder(nn.Module):
     #######################
     ###### Specifics ######
     #######################
-
+    
+    # Styled Inputs = [B, L, STY_DIM]
+    # Style Embedding = [B, STY_DIM]
+    
     def re_embedding(self, inputs, style_input):
         if style_input is None:
             # ignore style token and return zero tensor
