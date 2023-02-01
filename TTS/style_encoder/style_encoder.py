@@ -52,8 +52,8 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 'vae':
             self.layer = VAEStyleEncoder(
                 num_mel = self.num_mel,
-                embedding_dim = self.style_embedding_dim,
-                latent_dim = self.vae_latent_dim
+                ref_embedding_dim = self.style_embedding_dim, # allow flexibility
+                style_embedding_dim = self.style_embedding_dim
             )
         elif self.se_type == 'vqvae':
             self.layer = VQVAEStyleEncoder(
@@ -64,8 +64,8 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 'vaeflow':
             self.layer = VAEFlowStyleEncoder(
                 num_mel = self.num_mel,
+                ref_emb_dim = self.style_embedding_dim,
                 style_emb_dim = self.style_embedding_dim,
-                latent_dim = self.vae_latent_dim,
                 intern_dim = self.vaeflow_intern_dim,
                 number_of_flows = self.vaeflow_number_of_flows
             )

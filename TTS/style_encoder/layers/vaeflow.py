@@ -3,39 +3,39 @@ import torch.nn.functional as F
 from torch import nn
 
 class VAEFlowStyleEncoder(nn.Module):
-    def __init__(self, num_mel, style_emb_dim, latent_dim, intern_dim, number_of_flows):
+    def __init__(self, num_mel, ref_emb_dim, style_emb_dim, intern_dim, number_of_flows):
         super(VAEFlowStyleEncoder, self).__init__()
 
         self.num_mel = num_mel
+        self.ref_emb_dim = ref_emb_dim
         self.style_emb_dim = style_emb_dim
-        self.latent_dim = latent_dim
         self.intern_dim = intern_dim
         self.number_of_flows = number_of_flows
 
         # encoder: q(z | x)
-        self.ref_encoder = ReferenceEncoder(num_mel, style_emb_dim)
+        self.ref_encoder = ReferenceEncoder(num_mel, ref_emb_dim)
 
         self.q_z_layers_pre = nn.ModuleList()
         self.q_z_layers_gate = nn.ModuleList()
 
-        self.q_z_layers_pre.append(nn.Linear(self.style_emb_dim, self.intern_dim))
-        self.q_z_layers_gate.append(nn.Linear(self.style_emb_dim, self.intern_dim))
+        self.q_z_layers_pre.append(nn.Linear(self.ref_emb_dim, self.intern_dim))
+        self.q_z_layers_gate.append(nn.Linear(self.ref_emb_dim, self.intern_dim))
 
         self.q_z_layers_pre.append(nn.Linear(self.intern_dim, self.intern_dim))
         self.q_z_layers_gate.append(nn.Linear(self.intern_dim, self.intern_dim))
 
-        self.q_z_mean = nn.Linear(self.intern_dim, self.latent_dim)
-        self.q_z_logvar = nn.Linear(self.intern_dim, self.latent_dim)
+        self.q_z_mean = nn.Linear(self.intern_dim, self.style_emb_dim)
+        self.q_z_logvar = nn.Linear(self.intern_dim, self.style_emb_dim)
 
         # Householder flow
         self.v_layers = nn.ModuleList()
         # T > 0
         if self.number_of_flows > 0:
             # T = 1
-            self.v_layers.append(nn.Linear(intern_dim, self.latent_dim))
+            self.v_layers.append(nn.Linear(intern_dim, self.style_emb_dim))
             # T > 1
             for i in range(1, self.number_of_flows):
-                self.v_layers.append(nn.Linear(self.latent_dim, self.latent_dim))
+                self.v_layers.append(nn.Linear(self.style_emb_dim, self.style_emb_dim))
 
         self.sigmoid = nn.Sigmoid()
         self.Gate = Gate()

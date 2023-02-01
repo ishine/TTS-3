@@ -60,7 +60,6 @@ class StyleEncoderConfig(Coqpit):
     gst_num_style_tokens: int = 10
 
     # VAE-Based General Configs
-    vae_latent_dim: int = 128 # Dim of mean and logvar
     use_cyclical_annealing: bool = True # Whether use or not annealing (recommended true), only linear implemented
     vae_loss_alpha: float = 1.0 # Default alpha value (term of KL loss)
     vae_cycle_period: int = 5000 # iteration period to apply a new annealing cycle
@@ -106,7 +105,6 @@ class StyleEncoderConfig(Coqpit):
         check_argument("gst_style_input_weights", c, restricted=False)
         check_argument("gst_num_heads", c, restricted=True, min_val=2, max_val=10)
         check_argument("gst_num_style_tokens", c, restricted=True, min_val=1, max_val=1000)
-        check_argument("vae_latent_dim", c, restricted=True, min_val=0, max_val=1000)
         check_argument("vaeflow_intern_dim", c, restricted=True, min_val=0, max_val=1000)
         check_argument("vaeflow_number_of_flows", c, restricted=True, min_val=0, max_val=1000)
         check_argument("diff_num_timesteps", c, restricted=True, min_val=0, max_val=5000)

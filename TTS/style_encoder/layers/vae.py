@@ -9,7 +9,7 @@ class VAEStyleEncoder(nn.Module):
     outputs: [batch_size, embedding_dim]
     """
 
-    def __init__(self, num_mel, embedding_dim, latent_dim, use_nonlinear_proj = False):
+    def __init__(self, num_mel, ref_embedding_dim, style_embedding_dim, use_nonlinear_proj):
 
         super().__init__()
         self.num_mel = num_mel
@@ -26,16 +26,16 @@ class VAEStyleEncoder(nn.Module):
 
         post_conv_height = self.calculate_post_conv_height(num_mel, 3, 2, 1, num_layers)
         self.recurrence = nn.GRU(
-            input_size=filters[-1] * post_conv_height, hidden_size=embedding_dim, batch_first=True
+            input_size=filters[-1] * post_conv_height, hidden_size=ref_embedding_dim, batch_first=True
         )
 
-        self.mu = nn.Linear(embedding_dim, latent_dim)
-        self.logvar = nn.Linear(embedding_dim, latent_dim)
+        self.mu = nn.Linear(ref_embedding_dim, style_embedding_dim)
+        self.logvar = nn.Linear(ref_embedding_dim, style_embedding_dim)
 
         self.use_nonlinear_proj = use_nonlinear_proj
 
         if(self.use_nonlinear_proj):
-            self.proj = nn.Linear(latent_dim, latent_dim)
+            self.proj = nn.Linear(style_embedding_dim, style_embedding_dim)
             nn.init.xavier_normal_(self.proj.weight) # Good init for projection
             self.proj.bias.data.zero_() # Not random bias to "move" z
 
