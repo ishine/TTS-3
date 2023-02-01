@@ -9,7 +9,7 @@ class VAEStyleEncoder(nn.Module):
     outputs: [batch_size, embedding_dim]
     """
 
-    def __init__(self, num_mel, ref_embedding_dim, style_embedding_dim, use_nonlinear_proj):
+    def __init__(self, num_mel, ref_embedding_dim, style_embedding_dim):
 
         super().__init__()
         self.num_mel = num_mel
