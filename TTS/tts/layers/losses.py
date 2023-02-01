@@ -1164,6 +1164,7 @@ class StyleForwardTTSLoss(nn.Module):
 
 
         if(self.style_encoder_config.use_clip_loss):
+            print(style_encoder_output['style_embedding'].shape)
             if(self.style_encoder_config.se_type == 'vae'):
                 clip_loss = self.criterion_clip(style_encoder_output['style_embedding'].squeeze(1), ressynt_style_encoder_output['style_embedding'].squeeze(1))
             else:
