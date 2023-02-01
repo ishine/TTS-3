@@ -219,7 +219,7 @@ class StyleEncoder(nn.Module):
             else:
                 inputs = self._add_speaker_embedding(inputs, gst_outputs)
 
-            return {'styled_inputs': inputs, 'style_embedding': gst_outputs}   
+            return {'styled_inputs': inputs, 'style_embedding': gst_outputs.squeeze(1)}   
 
     def vae_forward(self, inputs, ref_mels): 
         vae_output = self.layer.forward(ref_mels)
@@ -283,7 +283,7 @@ class StyleEncoder(nn.Module):
         else:
             inputs = self._add_speaker_embedding(inputs, vqvae_output['z_q_x_st'].unsqueeze(1))
         
-        return {'styled_inputs': inputs, 'style_embedding': vqvae_output['z_q_x_st'].unsqueeze(1), 'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}
+        return {'styled_inputs': inputs, 'style_embedding': vqvae_output['z_q_x_st'], 'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}
 
     def vqvae_inference(self, inputs, ref_mels, K=None):
         if(K): # If an specific K is passed it uses it
