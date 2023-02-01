@@ -748,6 +748,8 @@ class PitchExtractor:
         stats_path = os.path.join(cache_path, "pitch_stats.npy")
         stats = np.load(stats_path, allow_pickle=True).item()
 
+        print(stats)
+
         try:
             for key in stats.keys():
                 self.mean[key] = stats[key]["mean"].astype(np.float32)
