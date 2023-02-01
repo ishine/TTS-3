@@ -641,15 +641,26 @@ class PitchExtractor:
 
     def normalize_pitch(self, pitch, speaker_name):
         zero_idxs = np.where(pitch == 0.0)[0]
-        pitch = pitch - self.mean[speaker_name]
-        pitch = pitch / self.std[speaker_name]
+        try:
+            pitch = pitch - self.mean[speaker_name]
+            pitch = pitch / self.std[speaker_name]
+        except:
+            pitch = pitch - self.mean
+            pitch = pitch / self.std
+
         pitch[zero_idxs] = 0.0
         return pitch
 
     def denormalize_pitch(self, pitch, speaker_name):
         zero_idxs = np.where(pitch == 0.0)[0]
-        pitch *= self.std[speaker_name]
-        pitch += self.mean[speaker_name]
+
+        try:
+            pitch *= self.std[speaker_name]
+            pitch += self.mean[speaker_name]
+        except:
+            pitch *= self.std
+            pitch += self.mean
+
         pitch[zero_idxs] = 0.0
         return pitch
 
@@ -737,6 +748,11 @@ class PitchExtractor:
         stats_path = os.path.join(cache_path, "pitch_stats.npy")
         stats = np.load(stats_path, allow_pickle=True).item()
 
-        for key in stats.keys():
-            self.mean[key] = stats[key]["mean"].astype(np.float32)
-            self.std[key] = stats[key]["std"].astype(np.float32)
+        try:
+            for key in stats.keys():
+                self.mean[key] = stats[key]["mean"].astype(np.float32)
+                self.std[key] = stats[key]["std"].astype(np.float32)
+
+        except:
+                self.mean = stats["mean"].astype(np.float32)
+                self.std = stats["std"].astype(np.float32)
