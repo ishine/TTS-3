@@ -18,7 +18,7 @@ class StyleEncoder(nn.Module):
             setattr(self, key, config[key])
             
         if(self.use_nonlinear_proj):
-            self.nl_proj = nn.Linear(self.style_embedding_dim, self.style_embedding_dim)
+            self.nl_proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
             nn.init.xavier_normal_(self.nl_proj.weight) # Good init for projection
 
         self.dropout = nn.Dropout(p=0.5)
