@@ -312,25 +312,24 @@ class StyleEncoder(nn.Module):
             else:
                 inputs = self._add_speaker_embedding(inputs, vqvae_output['z_q_x_st'].unsqueeze(1))
         
-            return {'styled_inputs': inputs, 'style_embedding': vqvae_output['z_q_x_st'].unsqueeze(1), 'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}
+            return {'styled_inputs': inputs, 'style_embedding': vqvae_output['z_q_x_st'], 'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}
 
     def vaeflow_forward(self, inputs, ref_mels): 
         vaeflow_output = self.layer.forward(ref_mels)
+        vaeflow_embedding = vaeflow_output['z_T']
 
         if(self.use_nonlinear_proj):
-            # vaeflow_output = self.nl_proj(vaeflow_output)
-            vaeflow_output = torch.tanh(self.nl_proj(vaeflow_output))
-            vaeflow_output = self.dropout(vaeflow_output)
+            vaeflow_embedding = torch.tanh(self.nl_proj(vaeflow_embedding))
+            vaeflow_embedding = self.dropout(vaeflow_embedding)
 
         if(self.use_proj_linear):
-            vaeflow_output = self.proj(vaeflow_output)
+            vaeflow_embedding = self.proj(vaeflow_embedding)
 
         if(self.agg_type == 'concat'):
-            inputs = self._concat_embedding(inputs, vaeflow_output['z_T'])
+            inputs = self._concat_embedding(inputs, vaeflow_embedding)
         else:
-            inputs = self._add_speaker_embedding(inputs, vaeflow_output['z_T']) 
-
-        return {'styled_inputs': inputs, 'style_embedding': vaeflow_output['z_T'], 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
+            inputs = self._add_speaker_embedding(inputs, vaeflow_embedding) 
+        return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding.squeeze(1), 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
 
     def vaeflow_inference(self, inputs, ref_mels, z=None):
@@ -343,20 +342,21 @@ class StyleEncoder(nn.Module):
 
         else:
             vaeflow_output = self.layer.forward(ref_mels)
+            vaeflow_embedding = vaeflow_output['z_T']
 
             if(self.use_nonlinear_proj):
-                vaeflow_output = torch.tanh(self.nl_proj(vaeflow_output))
-                vaeflow_output = self.dropout(vaeflow_output)
+                vaeflow_embedding = torch.tanh(self.nl_proj(vaeflow_embedding))
+                vaeflow_embedding = self.dropout(vaeflow_embedding)
                 
             if(self.use_proj_linear):
-                vaeflow_output = self.proj(vaeflow_output)
+                vaeflow_embedding = self.proj(vaeflow_embedding)
 
             if(self.agg_type == 'concat'):
-                inputs = self._concat_embedding(inputs, vaeflow_output['z_T'])
+                inputs = self._concat_embedding(inputs, vaeflow_embedding)
             else:
-                inputs = self._add_speaker_embedding(inputs, vaeflow_output['z_T'])
+                inputs = self._add_speaker_embedding(inputs, vaeflow_embedding)
         
-            return {'styled_inputs': inputs, 'style_embedding': vaeflow_output['z_T'], 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
+            return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding, 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
 
     def diff_forward(self, inputs, ref_mels):
