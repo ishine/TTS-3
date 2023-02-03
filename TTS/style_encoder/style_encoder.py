@@ -159,7 +159,7 @@ class StyleEncoder(nn.Module):
             
         return {'styled_inputs': inputs, 'style_embedding': gst_outputs}
 
-    def re_embedding_inferece(self, inputs, style_input):
+    def re_embedding_inference(self, inputs, style_input):
         if style_input is None:
             # ignore style token and return zero tensor
             gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
