@@ -305,9 +305,10 @@ def synthesis(
         
         if cond_speaker_id is not None:
             cond_speaker_id = id_to_torch(cond_speaker_id, cuda=use_cuda)
-
-        if not isinstance(style_mel, dict):
-            style_mel = numpy_to_torch(style_mel, torch.float, cuda=use_cuda)[0].T
+        
+        if(style_wav is not None):
+            if not isinstance(style_mel, dict):
+                style_mel = numpy_to_torch(style_mel, torch.float, cuda=use_cuda)[0].T
         if torch.is_tensor(style_representation):
             style_mel = style_representation
         text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=use_cuda)
