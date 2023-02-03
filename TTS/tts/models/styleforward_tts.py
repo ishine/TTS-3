@@ -736,8 +736,8 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), style_mel = aux_input['style_mel'], z = aux_input['z'])
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
-            se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            style_encoder_outputs = self.style_encoder_layer.inference(se_inputs)
+            # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
+            style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), style_mel = aux_input['style_mel'])
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
 
