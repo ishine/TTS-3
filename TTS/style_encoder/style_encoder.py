@@ -168,7 +168,7 @@ class StyleEncoder(nn.Module):
             else:
                 # compute style tokens
                 # input_args = [style_input]
-                print(text_len.shape, mel_len.shape, style_input.shape)
+                # print(text_len.shape, mel_len.shape, style_input.shape)
                 gst_outputs, alignments = self.layer(inputs, text_len, style_input, mel_len)  # pylint: disable=not-callable
             
                 if(self.use_nonlinear_proj):
@@ -195,6 +195,7 @@ class StyleEncoder(nn.Module):
             else:
                 # compute style tokens
                 # input_args = [style_input]
+                print(text_len.shape, mel_len.shape, style_input.shape)
                 gst_outputs, alignments = self.layer(inputs, text_len, style_input.unsqueeze(0), mel_len)  # pylint: disable=not-callable
             
                 if(self.use_nonlinear_proj):
