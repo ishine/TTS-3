@@ -727,9 +727,9 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs['style_embedding'].squeeze(1)
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
-            se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
+            # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
             style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[2:3]).to(aux_input['style_mel'].device) # Check if its that way, before [1:2], but style mel comes with shape [bs, n_mel, mel_len] and we want mel_mel
-            style_encoder_outputs = self.style_encoder_layer.inference(se_inputs, text_len = x_lengths, mel_len = style_mel_lengths)
+            style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1),style_mel = aux_input['style_mel'], text_len = x_lengths, mel_len = style_mel_lengths)
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'vae'):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
