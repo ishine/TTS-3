@@ -281,7 +281,7 @@ def synthesis(
     style_mel = None
     custom_symbols = None
     if style_wav:
-        style_mel = compute_style_mel(style_wav, ap, cuda=use_cuda).T
+        style_mel = compute_style_mel(style_wav, ap, cuda=use_cuda)[0].T
     elif CONFIG.has("gst") and CONFIG.gst and not style_wav:
         if CONFIG.gst.gst_style_input_weights:
             style_mel = CONFIG.gst.gst_style_input_weights
