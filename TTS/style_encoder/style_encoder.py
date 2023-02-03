@@ -221,30 +221,26 @@ class StyleEncoder(nn.Module):
 
             return {'styled_inputs': inputs, 'style_embedding': gst_outputs.squeeze(1)}   
 
-    # def vae_forward(self, inputs, ref_mels): 
+    def vae_forward(self, inputs, ref_mels): 
 
-    #     vae_output = self.layer.forward(ref_mels)
-    #     vae_embedding = vae_output['z']
+        vae_output = self.layer.forward(ref_mels)
+        vae_embedding = vae_output['z']
 
-    #     if(self.use_nonlinear_proj):
-    #         vae_embedding = torch.tanh(self.nl_proj(vae_embedding))
-    #         vae_embedding = self.dropout(vae_embedding)
+        if(self.use_nonlinear_proj):
+            vae_embedding = torch.tanh(self.nl_proj(vae_embedding))
+            vae_embedding = self.dropout(vae_embedding)
 
-    #     if(self.use_proj_linear):
-    #         vae_embedding = self.proj(vae_embedding)
+        if(self.use_proj_linear):
+            vae_embedding = self.proj(vae_embedding)
 
-    #     if(self.agg_type == 'concat'):
-    #         inputs = self._concat_embedding(inputs, vae_embedding.unsqueeze(1))
-    #     else:
-    #         inputs = self._add_speaker_embedding(inputs, vae_embedding.unsqueeze(1))
+        if(self.agg_type == 'concat'):
+            inputs = self._concat_embedding(inputs, vae_embedding.unsqueeze(1))
+        else:
+            inputs = self._add_speaker_embedding(inputs, vae_embedding.unsqueeze(1))
     
-    #     return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
+        return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
-    # Old vae inference
     def vae_forward(self, inputs, ref_mels, z=None):
-
-        print(inputs.shape, ref_mels.shape)
-
         if(z): # If an specific z is passed it uses it
             if(self.agg_type == 'concat'):
                 inputs =  self._concat_embedding(inputs, z)  
