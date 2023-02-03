@@ -260,9 +260,9 @@ class StyleEncoder(nn.Module):
                 vae_embedding = self.proj(vae_embedding)
 
             if(self.agg_type == 'concat'):
-                inputs = self._concat_embedding(inputs, vae_embedding)
+                inputs = self._concat_embedding(inputs, vae_embedding.unsqueeze(1))
             else:
-                inputs =  self._add_speaker_embedding(inputs, vae_embedding)
+                inputs =  self._add_speaker_embedding(inputs, vae_embedding.unsqueeze(1))
 
             return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
