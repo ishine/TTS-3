@@ -136,7 +136,7 @@ class StyleEncoder(nn.Module):
         if style_input is None:
             # ignore style token and return zero tensor
             gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
-        elif style_input.shape[-1] == self.style_embedding_dim:
+        elif style_input.shape == torch.Size([1, self.style_embedding_dim]):
             gst_outputs = style_input
         else:
             # compute style tokens
@@ -163,7 +163,7 @@ class StyleEncoder(nn.Module):
             if style_input is None:
                 # ignore style token and return zero tensor
                 gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
-            elif style_input.shape[-1] == self.style_embedding_dim:
+            elif style_input.shape == torch.Size([1, self.style_embedding_dim]):
                 gst_outputs = style_input
             else:
                 # compute style tokens
