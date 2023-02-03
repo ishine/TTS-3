@@ -112,7 +112,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 're':
             out = self.re_embedding(inputs, kwargs['style_mel'])
         elif self.se_type == 'finegrainedre':
-            out = self.finegrainedre_embedding(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
+            out = self.finegrainedre_embedding_inference(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
             out = self.diff_inference(inputs, ref_mels = kwargs['style_mel'], infer_from = kwargs['diff_t'])
         elif self.se_type == 'vae':
@@ -169,6 +169,32 @@ class StyleEncoder(nn.Module):
                 # compute style tokens
                 # input_args = [style_input]
                 gst_outputs, alignments = self.layer(inputs, text_len, style_input, mel_len)  # pylint: disable=not-callable
+            
+                if(self.use_nonlinear_proj):
+                    gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
+                    gst_outputs = self.dropout(gst_outputs)
+                
+                if(self.use_proj_linear):
+                    gst_outputs = self.proj(gst_outputs)
+
+            # print(gst_outputs)
+            # print(len(gst_outputs))
+            # for i in range(len(gst_outputs)):
+            #     print(gst_outputs[i].shape)
+
+            inputs = inputs + gst_outputs
+            return {'styled_inputs': inputs, 'style_embedding': gst_outputs} 
+
+    def finegrainedre_embedding_inference(self, inputs, style_input, text_len, mel_len):
+            if style_input is None:
+                # ignore style token and return zero tensor
+                gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
+            elif style_input.shape == torch.Size([1, self.style_embedding_dim]):
+                gst_outputs = style_input
+            else:
+                # compute style tokens
+                # input_args = [style_input]
+                gst_outputs, alignments = self.layer(inputs, text_len, style_input.unsqueeze(0), mel_len)  # pylint: disable=not-callable
             
                 if(self.use_nonlinear_proj):
                     gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
