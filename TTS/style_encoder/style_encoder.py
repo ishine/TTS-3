@@ -112,7 +112,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 're':
             out = self.re_embedding(inputs, kwargs['style_mel'])
         elif self.se_type == 'finegrainedre':
-            out = self.finegrainedre_embedding(inputs, kwargs['text_len'], kwargs['style_mel'], kwargs['mel_len'])
+            out = self.finegrainedre_embedding(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
             out = self.diff_inference(inputs, ref_mels = kwargs['style_mel'], infer_from = kwargs['diff_t'])
         elif self.se_type == 'vae':
