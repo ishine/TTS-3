@@ -733,7 +733,7 @@ class StyleforwardTTS(BaseTTS):
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'vae'):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            style_encoder_outputs = self.style_encoder_layer.forward(o_en.permute(0,2,1), z = aux_input['style_mel'])
+            style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), z = aux_input['style_mel'])
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
