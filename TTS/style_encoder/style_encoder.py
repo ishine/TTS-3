@@ -242,6 +242,9 @@ class StyleEncoder(nn.Module):
 
     # Old vae inference
     def vae_forward(self, inputs, ref_mels, z=None):
+
+        print(inputs.shape, ref_mels.shape)
+
         if(z): # If an specific z is passed it uses it
             if(self.agg_type == 'concat'):
                 inputs =  self._concat_embedding(inputs, z)  
