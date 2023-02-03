@@ -681,7 +681,7 @@ class StyleforwardTTS(BaseTTS):
         return outputs
 
     @torch.no_grad()
-    def inference(self, x, aux_input={"d_vectors": None, "speaker_ids": None, "cond_speaker_ids" : None, 'style_mel': None, "style_ids": None,'pitch_control': None, 'pitch_replace': None}):  # pylint: disable=unused-argument
+    def inference(self, x, aux_input={"d_vectors": None, "speaker_ids": None, "cond_speaker_ids" : None, 'style_mel': None, "style_ids": None,'pitch_control': None, 'pitch_replace': None, 'z': None}):  # pylint: disable=unused-argument
         """Model's inference pass.
 
         Args:
@@ -733,7 +733,7 @@ class StyleforwardTTS(BaseTTS):
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'vae'):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), z = aux_input['style_mel'])
+            style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), ref_mels = aux_input['style_mel'], z = aux_input['z'])
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
