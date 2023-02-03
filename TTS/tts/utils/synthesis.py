@@ -307,7 +307,7 @@ def synthesis(
             cond_speaker_id = id_to_torch(cond_speaker_id, cuda=use_cuda)
         
         # print(style_representation.shape)
-        if torch.is_tensor(style_representation):
+        if style_representation is not None:
             style_mel = style_representation
         text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=use_cuda)
         text_inputs = text_inputs.unsqueeze(0)
