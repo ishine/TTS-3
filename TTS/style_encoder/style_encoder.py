@@ -240,7 +240,7 @@ class StyleEncoder(nn.Module):
     
         return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
-    def vae_forward(self, inputs, ref_mels, z=None):
+    def vae_inference(self, inputs, ref_mels, z=None):
         if(z): # If an specific z is passed it uses it
             if(self.agg_type == 'concat'):
                 inputs =  self._concat_embedding(inputs, z)  
