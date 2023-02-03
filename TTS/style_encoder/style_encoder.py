@@ -250,7 +250,7 @@ class StyleEncoder(nn.Module):
             return {'styled_inputs': inputs, 'style_embedding': z}
 
         else:
-            vae_output = self.layer.forward(ref_mels)
+            vae_output = self.layer.forward(ref_mels.unsqueeze(0))
             vae_embedding = vae_output['z']
 
             if(self.use_nonlinear_proj):
@@ -261,9 +261,9 @@ class StyleEncoder(nn.Module):
                 vae_embedding = self.proj(vae_embedding)
 
             if(self.agg_type == 'concat'):
-                inputs = self._concat_embedding(inputs, vae_embedding.unsqueeze(1))
+                inputs = self._concat_embedding(inputs, vae_embedding)
             else:
-                inputs =  self._add_speaker_embedding(inputs, vae_embedding.unsqueeze(1))
+                inputs =  self._add_speaker_embedding(inputs, vae_embedding)
 
             return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
