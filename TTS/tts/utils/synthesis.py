@@ -281,7 +281,7 @@ def synthesis(
     style_mel = None
     custom_symbols = None
     if style_wav:
-        style_mel = compute_style_mel(style_wav, ap, cuda=use_cuda)[0].T
+        style_mel = compute_style_mel(style_wav, ap, cuda=use_cuda).T
     elif CONFIG.has("gst") and CONFIG.gst and not style_wav:
         if CONFIG.gst.gst_style_input_weights:
             style_mel = CONFIG.gst.gst_style_input_weights
@@ -306,7 +306,7 @@ def synthesis(
         if cond_speaker_id is not None:
             cond_speaker_id = id_to_torch(cond_speaker_id, cuda=use_cuda)
         
-        print(style_representation.shape)
+        # print(style_representation.shape)
         if torch.is_tensor(style_representation):
             style_mel = style_representation
         text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=use_cuda)
