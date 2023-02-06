@@ -787,7 +787,7 @@ class StyleforwardTTS(BaseTTS):
         }
         return outputs
 
-    def train_step(self, batch: dict, criterion: nn.Module):
+    def train_step(self, batch: dict, criterion: nn.Module, step = None):
         text_input = batch["text_input"]
         text_lengths = batch["text_lengths"]
         mel_input = batch["mel_input"]
@@ -830,7 +830,8 @@ class StyleforwardTTS(BaseTTS):
                 speaker_output = outputs['speaker_outputs'],
                 style_preds = outputs['style_preds'],
                 speaker_preds_from_style = outputs['speaker_preds_from_style'],
-                ressynt_style_encoder_output = outputs['ressynt_style_encoder_output']
+                ressynt_style_encoder_output = outputs['ressynt_style_encoder_output'],
+                step = step
             )
             # compute duration error
             durations_pred = outputs["durations"]

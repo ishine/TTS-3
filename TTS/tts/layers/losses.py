@@ -1045,7 +1045,8 @@ class StyleForwardTTSLoss(nn.Module):
         speaker_output=None,
         style_preds=None,
         speaker_preds_from_style=None,
-        ressynt_style_encoder_output=None
+        ressynt_style_encoder_output=None,
+        step = None
     ):
         loss = 0
         return_dict = {}
@@ -1088,6 +1089,8 @@ class StyleForwardTTSLoss(nn.Module):
         
         # style encoder loss VAE based
         if self.style_encoder_config.se_type == 'vae':
+            if(step is not None):
+                self.criterion_se.step = step
             style_loss = self.criterion_se(style_encoder_output['mean'], style_encoder_output['log_var'])
             loss += style_loss * self.criterion_se.alpha_vae
             return_dict["style_encoder_loss"] = style_loss
