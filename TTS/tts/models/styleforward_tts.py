@@ -889,8 +889,8 @@ class StyleforwardTTS(BaseTTS):
         logger.train_figures(steps, figures)
         logger.train_audios(steps, audios, ap.sample_rate)
 
-    def eval_step(self, batch: dict, criterion: nn.Module):
-        return self.train_step(batch, criterion)
+    def eval_step(self, batch: dict, criterion: nn.Module, step = None):
+        return self.train_step(batch, criterion, step)
 
     def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
         ap = assets["audio_processor"]
