@@ -844,7 +844,7 @@ class Trainer:
 
     @staticmethod
     def _model_eval_step(
-        batch: Dict, model: nn.Module, criterion: nn.Module, optimizer_idx: int = None
+        batch: Dict, model: nn.Module, criterion: nn.Module, optimizer_idx: int = None, step: int = None
     ) -> Tuple[Dict, Dict]:
         """
         Perform a evaluation forward pass. Compute model outputs and losses with no gradients.
@@ -861,6 +861,8 @@ class Trainer:
         input_args = [batch, criterion]
         if optimizer_idx is not None:
             input_args.append(optimizer_idx)
+        if step is not None:
+            input_args.append(step)
         if hasattr(model, "module"):
             return model.module.eval_step(*input_args)
         return model.eval_step(*input_args)
@@ -879,12 +881,12 @@ class Trainer:
             outputs = []
             loss_dict = {}
             if not isinstance(self.optimizer, list):
-                outputs, loss_dict = self._model_eval_step(batch, self.model, self.criterion)
+                outputs, loss_dict = self._model_eval_step(batch, self.model, self.criterion, step = self.total_steps_done)
             else:
                 outputs = [None] * len(self.optimizer)
                 for idx, _ in enumerate(self.optimizer):
                     criterion = self.criterion
-                    outputs_, loss_dict_new = self._model_eval_step(batch, self.model, criterion, idx)
+                    outputs_, loss_dict_new = self._model_eval_step(batch, self.model, criterion, idx, step = self.total_steps_done)
                     outputs[idx] = outputs_
 
                     if loss_dict_new is not None:
