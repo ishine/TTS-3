@@ -664,7 +664,10 @@ class StyleforwardTTS(BaseTTS):
         # Ressynthesis stuff
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss): 
-            se_inputs = [encoder_outputs.permute(0,2,1), o_de]
+            if(self.config.style_encoder_config.se_type=='modifiedre'):
+                se_inputs = [encoder_outputs.permute(0,2,1), o_de, g]
+            else:
+                se_inputs = [encoder_outputs.permute(0,2,1), o_de]
             ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
         outputs = {
@@ -783,7 +786,10 @@ class StyleforwardTTS(BaseTTS):
 
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss):
-            se_inputs = [o_en.permute(0,2,1), o_de]
+            if(self.config.style_encoder_config.se_type=='modifiedre'):
+                se_inputs = [encoder_outputs.permute(0,2,1), o_de, g]
+            else:
+                se_inputs = [encoder_outputs.permute(0,2,1), o_de]
             ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
         outputs = {
