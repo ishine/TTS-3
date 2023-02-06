@@ -150,6 +150,7 @@ class StyleEncoder(nn.Module):
         else:
             # compute style tokens
             input_args = [style_input]
+            print(inputs)
             gst_outputs = self.layer(inputs, style_input, speaker_embedding) 
         
             if(self.use_nonlinear_proj):
