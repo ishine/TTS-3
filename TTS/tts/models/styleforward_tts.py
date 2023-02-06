@@ -594,10 +594,10 @@ class StyleforwardTTS(BaseTTS):
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
         # After we already have used the indices g or cond_g, lets get the speaker embedding
-        if hasattr(self, "emb_g"):
-            g_emb = self.emb_g(g)  # [B, C, 1]
-        if g_emb is not None:
-            g_emb = g_emb.unsqueeze(-1)
+        # if hasattr(self, "emb_g"):
+        #     g_emb = self.emb_g(g)  # [B, C, 1]
+        # if g_emb is not None:
+        #     g_emb = g_emb.unsqueeze(-1)
 
         # Style Encoder 
         if(self.config.style_encoder_config.use_lookup):
