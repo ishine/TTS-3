@@ -599,9 +599,9 @@ class Trainer:
         # forward pass and loss computation
         with torch.cuda.amp.autocast(enabled=config.mixed_precision):
             if optimizer_idx is not None:
-                outputs, loss_dict = self._model_train_step(batch, model, criterion, optimizer_idx=optimizer_idx, step)
+                outputs, loss_dict = self._model_train_step(batch, model, criterion, optimizer_idx=optimizer_idx, step = step)
             else:
-                outputs, loss_dict = self._model_train_step(batch, model, criterion, step)
+                outputs, loss_dict = self._model_train_step(batch, model, criterion, step = step)
 
         # skip the rest
         if outputs is None:
