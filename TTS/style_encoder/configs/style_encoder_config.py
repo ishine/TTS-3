@@ -52,7 +52,7 @@ class StyleEncoderConfig(Coqpit):
     
     # Style ditortion configs
     use_style_distortion_loss: bool = False
-    style_distortion_alpha: float = 1
+    style_distortion_alpha_loss: float = 1
 
     # GRL additional configs
     use_grl_on_speakers_in_style_embedding: bool = False # Whether use or not GRL in style embedding output avoinding speaker information

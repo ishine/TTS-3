@@ -1011,7 +1011,7 @@ class StyleForwardTTSLoss(nn.Module):
             self.criterion_clip = ClipLloss(self.style_encoder_config)
 
         if(self.style_encoder_config.use_style_distortion_loss):
-            self.criterion_style_distortion = MSELoss() # Simple L2 norm
+            self.criterion_style_distortion = nn.MSELoss() # Simple L2 norm
 
         self.spec_loss_alpha = c.spec_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
@@ -1184,7 +1184,7 @@ class StyleForwardTTSLoss(nn.Module):
                 style_distortion_loss = self.criterion_style_distortion(style_encoder_output['style_embedding'].squeeze(1), ressynt_style_encoder_output.squeeze(1))
             else:
                 style_distortion_loss = self.criterion_style_distortion(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
-            loss += clip_loss #It already has the alpha in it
+            loss += style_distortion_loss*self.style_encoder_config.style_distortion_alpha_loss
 
             return_dict['style_distortion_loss'] = style_distortion_loss
 
