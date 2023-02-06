@@ -1091,7 +1091,7 @@ class StyleForwardTTSLoss(nn.Module):
         if self.style_encoder_config.se_type == 'vae':
             if(step is not None):
                 self.criterion_se.step = step
-            style_loss = self.criterion_se(style_encoder_output['mean'], style_encoder_output['log_var'])
+            style_loss = self.criterion_se(style_encoder_output['mean'], style_encoder_output['log_var'], step)
             loss += style_loss * self.criterion_se.alpha_vae
             return_dict["style_encoder_loss"] = style_loss
             return_dict['alpha_value'] = self.criterion_se.alpha_vae

@@ -86,7 +86,7 @@ class VAEStyleEncoderLoss(torch.nn.Module):
 
         print("VAE report - Using Cyclical Annealing: " ,self.config['use_cyclical_annealing'])
 
-    def forward(self, mean, log_var):
+    def forward(self, mean, log_var, step):
         KL = - 0.5 * torch.sum(1+ log_var - mean.pow(2) - log_var.exp())
         
         if((self.start_loss_at > 0) and (self.step > self.start_loss_at)):
@@ -97,9 +97,7 @@ class VAEStyleEncoderLoss(torch.nn.Module):
         # Doing this here to not affect original training schedules of other style encoders
         if(self.config['use_cyclical_annealing']): 
             # print(self.step, self.alpha_vae) Used to debug, and seems to be working
-            self.update_alphavae(self.step)
-
-        self.step += 1  
+            self.update_alphavae(step)
         
         return self.stop_alpha*KL
 
