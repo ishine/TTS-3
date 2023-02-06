@@ -87,6 +87,7 @@ class ModifiedReferenceEncoder(nn.Module):
 
         super().__init__()
         self.num_mel = num_mel
+        self.embedding_dim = embedding_dim
         filters = [1] + [32, 32, 64, 64, 128, 128]
         num_layers = len(filters) - 1
         convs = [
@@ -100,7 +101,7 @@ class ModifiedReferenceEncoder(nn.Module):
 
         post_conv_height = self.calculate_post_conv_height(num_mel, 3, 2, 1, num_layers)
         self.recurrence = nn.GRU(
-            input_size=filters[-1] * post_conv_height, hidden_size=embedding_dim, batch_first=True, bidirectional=True
+            input_size=filters[-1] * post_conv_height, hidden_size=embedding_dim//2, batch_first=True, bidirectional=True
         )
 
         self.dropout = nn.Dropout(p=0.5)
@@ -139,6 +140,7 @@ class ModifiedReferenceEncoder(nn.Module):
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
+        out = out.view(batch_size, 1, self.embedding_dim)
         print(out.shape)
         if(self.use_nonlinear_proj):
             out = torch.tanh(self.proj(out))
