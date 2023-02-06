@@ -1137,7 +1137,7 @@ class StyleForwardTTSLoss(nn.Module):
             loss += style_loss * self.criterion_se.alpha_vae
             return_dict["style_encoder_loss"] = style_loss
 
-        if self.style_encoder_config.se_type == 're':
+        if(self.style_encoder_config.se_type == 're' or self.style_encoder_config.se_type == 'modifiedre'):
             if self.style_encoder_config.content_orthogonal_loss:
                 # print(style_encoder_output.shape, encoder_output.shape)
                 # print(torch.matmul(style_encoder_output, encoder_output.permute(0,2,1)))
