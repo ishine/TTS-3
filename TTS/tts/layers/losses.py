@@ -1193,7 +1193,7 @@ class StyleForwardTTSLoss(nn.Module):
 
         # Just for checking losses, todo: turn this optional
         return_dict['actual_step'] = step
-        return_dict['NOT_OPT_style_distortion'] = nn.MSELoss(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
+        return_dict['NOT_OPT_style_distortion'] = nn.MSELoss()(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
 
         return_dict["loss"] = loss
         return return_dict

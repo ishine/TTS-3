@@ -134,14 +134,14 @@ class ModifiedReferenceEncoder(nn.Module):
 
         g_emb = self.proj_speaker(speaker_embedding)
 
-        print(g_emb.shape, speaker_embedding.shape, x.shape)
+        # print(g_emb.shape, speaker_embedding.shape, x.shape)
         x = self._add_speaker_embedding(x, g_emb)
 
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
         out = out.view(batch_size, self.embedding_dim)
-        print(out.shape)
+        # print(out.shape)
         if(self.use_nonlinear_proj):
             out = torch.tanh(self.proj(out))
             out = self.dropout(out)
