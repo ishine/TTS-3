@@ -132,13 +132,14 @@ class ModifiedReferenceEncoder(nn.Module):
         #               num_channels*post_conv_height]
 
         g_emb = self.proj_speaker(speaker_embedding)
-        
+
+        print(g_emb.shape, speaker_embedding.shape, x.shape)
         x = self._add_speaker_embedding(x, g_emb)
 
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
-
+        print(out.shape)
         if(self.use_nonlinear_proj):
             out = torch.tanh(self.proj(out))
             out = self.dropout(out)
@@ -154,9 +155,7 @@ class ModifiedReferenceEncoder(nn.Module):
 
     def _add_speaker_embedding(self, outputs, embedded_speakers):
         # Fixed to the forwardtts, now, for adding we normalize by l2 norm
-        if(self.agg_norm == True):
-            embedded_speakers_ = nn.functional.normalize(embedded_speakers).expand(outputs.size(0), outputs.size(1), -1)
-        else:
-            embedded_speakers_ = embedded_speakers.expand(outputs.size(0), outputs.size(1), -1)
+
+        embedded_speakers_ = embedded_speakers.expand(outputs.size(0), outputs.size(1), -1)
         outputs = outputs + embedded_speakers_
         return outputs
