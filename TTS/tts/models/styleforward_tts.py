@@ -612,7 +612,7 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'modifiedre'):
-            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_input=y , speaker_embedding = g.permute(0,2,1))
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , speaker_embedding = g.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
