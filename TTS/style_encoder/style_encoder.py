@@ -1,7 +1,7 @@
 import torch
 from coqpit import Coqpit
 from torch import nn
-from TTS.style_encoder.layers.ref import ReferenceEncoder
+from TTS.style_encoder.layers.ref import ReferenceEncoder, ModifiedReferenceEncoder
 from TTS.style_encoder.layers.finegrainedre import FineGrainedReferenceEncoder
 from TTS.style_encoder.layers.gst import GST
 from TTS.style_encoder.layers.vae import VAEStyleEncoder
@@ -30,6 +30,11 @@ class StyleEncoder(nn.Module):
         # Instanciate Style Encoder Architecture
         if self.se_type == 're':
             self.layer = ReferenceEncoder(
+                num_mel = self.num_mel,
+                embedding_dim = self.style_embedding_dim
+            )
+        elif self.se_type == 'modifiedre':
+            self.layer = ModifiedReferenceEncoder(
                 num_mel = self.num_mel,
                 embedding_dim = self.style_embedding_dim
             )
@@ -92,6 +97,8 @@ class StyleEncoder(nn.Module):
             out = self.gst_embedding(*inputs)
         elif self.se_type == 're':
             out = self.re_embedding(*inputs)
+        elif self.se_type == 'modifiedre':
+            out = self.modifiedre_embedding_forward(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
         elif self.se_type == 'finegrainedre':
             out = self.finegrainedre_embedding(*inputs, kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
@@ -111,6 +118,8 @@ class StyleEncoder(nn.Module):
             out = self.gst_embedding(inputs, kwargs['style_mel'], kwargs['d_vectors'])
         elif self.se_type == 're':
             out = self.re_embedding_inference(inputs, kwargs['style_mel'])
+        elif self.se_type == 'modifiedre':
+            out = self.modifiedre_embedding_inference(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
         elif self.se_type == 'finegrainedre':
             out = self.finegrainedre_embedding_inference(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
@@ -131,6 +140,62 @@ class StyleEncoder(nn.Module):
     
     # Styled Inputs = [B, L, STY_DIM]
     # Style Embedding = [B, STY_DIM]
+
+    def modified_re_embedding_forward(self, inputs, style_input, speaker_embedding):
+        if style_input is None:
+            # ignore style token and return zero tensor
+            gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
+        elif style_input.shape == torch.Size([1, self.style_embedding_dim]):
+            gst_outputs = style_input
+        else:
+            # compute style tokens
+            input_args = [style_input]
+            gst_outputs = self.layer(inputs, style_input, speaker_embedding) 
+        
+            if(self.use_nonlinear_proj):
+                gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
+                gst_outputs = self.dropout(gst_outputs)
+            
+            if(self.use_proj_linear):
+                gst_outputs = self.proj(gst_outputs)
+
+        if(self.agg_type == 'concat'):
+            inputs = self._concat_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+        elif(self.agg_type == 'adain'):
+            inputs = self._adain(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+        else:
+            inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+            
+        return {'styled_inputs': inputs, 'style_embedding': gst_outputs}
+
+    def modified_re_embedding_inference(self, inputs, style_input, speaker_embedding):
+        if style_input is None:
+            # ignore style token and return zero tensor
+            gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
+        elif style_input.shape == torch.Size([1, self.style_embedding_dim]):
+            gst_outputs = style_input
+        else:
+            # compute style tokens
+            input_args = [style_input.unsqueeze(0)]
+            gst_outputs = self.layer(inputs, style_input, speaker_embedding) 
+        
+            if(self.use_nonlinear_proj):
+                gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
+                gst_outputs = self.dropout(gst_outputs)
+            
+            if(self.use_proj_linear):
+                gst_outputs = self.proj(gst_outputs)
+
+        if(self.agg_type == 'concat'):
+            inputs = self._concat_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+        elif(self.agg_type == 'adain'):
+            inputs = self._adain(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+        else:
+            inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+            
+        return {'styled_inputs': inputs, 'style_embedding': gst_outputs}
+
+
 
     def re_embedding(self, inputs, style_input):
         if style_input is None:

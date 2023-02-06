@@ -593,6 +593,12 @@ class StyleforwardTTS(BaseTTS):
         # Encoder
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
+        # After we already have used the indices g or cond_g, lets get the speaker embedding
+        if hasattr(self, "emb_g"):
+            g_emb = self.emb_g(g)  # [B, C, 1]
+        if g_emb is not None:
+            g_emb = g_emb.unsqueeze(-1)
+
         # Style Encoder 
         if(self.config.style_encoder_config.use_lookup):
             o_en = encoder_outputs.permute(0,2,1)
@@ -603,6 +609,10 @@ class StyleforwardTTS(BaseTTS):
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
+            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+        elif(self.config.style_encoder_config.se_type == 'modifiedre'):
+            se_inputs = [encoder_outputs.permute(0,2,1), y]
+            style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, g_emb.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
@@ -730,6 +740,10 @@ class StyleforwardTTS(BaseTTS):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
             style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[0:1]).to(aux_input['style_mel'].device) # Check if its that way, before [1:2], but style mel comes with shape [bs, n_mel, mel_len] and we want mel_mel
             style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1),style_mel = aux_input['style_mel'], text_len = x_lengths, mel_len = style_mel_lengths)
+            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+        elif(self.config.style_encoder_config.se_type == 'modifiedre'):
+            se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
+            style_encoder_outputs = self.style_encoder_layer.inference(se_inputs, g_emb.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'vae'):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
