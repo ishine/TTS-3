@@ -671,6 +671,8 @@ class StyleforwardTTS(BaseTTS):
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
+        print(ressynt_style_encoder_output.shape, style_encoder_outputs['style_embedding'].shape)
+
         outputs = {
             "model_outputs": o_de,  # [B, T, C]
             "durations_log": o_dr_log.squeeze(1),  # [B, T]
