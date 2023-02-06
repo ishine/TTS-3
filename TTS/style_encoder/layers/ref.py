@@ -140,13 +140,13 @@ class ModifiedReferenceEncoder(nn.Module):
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
-        out = out.view(batch_size, 1, self.embedding_dim)
+        out = out.view(batch_size, self.embedding_dim)
         print(out.shape)
         if(self.use_nonlinear_proj):
             out = torch.tanh(self.proj(out))
             out = self.dropout(out)
             
-        return out.squeeze(0)
+        return out
 
     @staticmethod
     def calculate_post_conv_height(height, kernel_size, stride, pad, n_convs):
