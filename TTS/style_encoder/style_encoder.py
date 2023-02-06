@@ -98,7 +98,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 're':
             out = self.re_embedding(*inputs)
         elif self.se_type == 'modifiedre':
-            out = self.modifiedre_embedding_forward(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
+            out = self.modified_re_embedding_forward(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
         elif self.se_type == 'finegrainedre':
             out = self.finegrainedre_embedding(*inputs, kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
@@ -119,7 +119,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 're':
             out = self.re_embedding_inference(inputs, kwargs['style_mel'])
         elif self.se_type == 'modifiedre':
-            out = self.modifiedre_embedding_inference(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
+            out = self.modified_re_embedding_inference(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
         elif self.se_type == 'finegrainedre':
             out = self.finegrainedre_embedding_inference(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
