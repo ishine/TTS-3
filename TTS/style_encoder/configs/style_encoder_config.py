@@ -50,6 +50,10 @@ class StyleEncoderConfig(Coqpit):
     clip_alpha_loss: float = 1
     clip_temperature: float = 1
     
+    # Style ditortion configs
+    use_style_distortion_loss: bool = False
+    style_distortion_alpha: float = 1
+
     # GRL additional configs
     use_grl_on_speakers_in_style_embedding: bool = False # Whether use or not GRL in style embedding output avoinding speaker information
     grl_alpha: float = 1 # GRL alpha, still one for all GRL's
