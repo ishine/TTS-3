@@ -1191,5 +1191,14 @@ class StyleForwardTTSLoss(nn.Module):
 
             return_dict['style_distortion_loss'] = style_distortion_loss
 
+        # Just for checking losses, todo: turn this optional
+        if(self.style_encoder_config.se_type == 'vae'):
+            clip_loss = self.criterion_clip(style_encoder_output['style_embedding'].squeeze(1), ressynt_style_encoder_output.squeeze(1))
+        else:
+            clip_loss = self.criterion_clip(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
+
+        return_dict['NOT_OPT_clip_loss'] = clip_loss # This is not being optimized
+        return_dict['actual_step'] = step
+
         return_dict["loss"] = loss
         return return_dict
