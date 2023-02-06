@@ -150,8 +150,8 @@ class StyleEncoder(nn.Module):
         else:
             # compute style tokens
             input_args = [style_input]
-            print(inputs.shape, style_input.shape, speaker_embedding.shape)
-            gst_outputs = self.layer(inputs, style_input, speaker_embedding) 
+            # print(inputs.shape, style_input.shape, speaker_embedding.shape)
+            gst_outputs = self.layer(style_input, speaker_embedding) 
         
             if(self.use_nonlinear_proj):
                 gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
@@ -178,7 +178,7 @@ class StyleEncoder(nn.Module):
         else:
             # compute style tokens
             input_args = [style_input.unsqueeze(0)]
-            gst_outputs = self.layer(inputs, style_input, speaker_embedding) 
+            gst_outputs = self.layer(style_input, speaker_embedding) 
         
             if(self.use_nonlinear_proj):
                 gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
