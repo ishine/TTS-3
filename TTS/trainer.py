@@ -537,7 +537,7 @@ class Trainer:
 
     @staticmethod
     def _model_train_step(
-        batch: Dict, model: nn.Module, criterion: nn.Module, optimizer_idx: int = None, step = None
+        batch: Dict, model: nn.Module, criterion: nn.Module, optimizer_idx: int = None, step: int = None
     ) -> Tuple[Dict, Dict]:
         """
         Perform a trainig forward step. Compute model outputs and losses.
@@ -571,7 +571,6 @@ class Trainer:
         scheduler: Union[torch.optim.lr_scheduler._LRScheduler, List],  # pylint: disable=protected-access
         config: Coqpit,
         optimizer_idx: int = None,
-        step: int = None,
     ) -> Tuple[Dict, Dict, int]:
         """Perform a forward - backward pass and run the optimizer.
 
@@ -599,9 +598,9 @@ class Trainer:
         # forward pass and loss computation
         with torch.cuda.amp.autocast(enabled=config.mixed_precision):
             if optimizer_idx is not None:
-                outputs, loss_dict = self._model_train_step(batch, model, criterion, optimizer_idx=optimizer_idx, step = step)
+                outputs, loss_dict = self._model_train_step(batch, model, criterion, optimizer_idx=optimizer_idx, step = self.total_steps_done)
             else:
-                outputs, loss_dict = self._model_train_step(batch, model, criterion, step = step)
+                outputs, loss_dict = self._model_train_step(batch, model, criterion, step = self.total_steps_done)
 
         # skip the rest
         if outputs is None:
