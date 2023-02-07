@@ -582,7 +582,7 @@ def ljspeech_style(root_path, meta_file, **kwargs):  # pylint: disable=unused-ar
             items.append([text, wav_file, speaker_name, style_name])
     return items
 
-def blizzard_2023(root_path, meta_file):
+def blizzard_2023(root_path, meta_file, **kwargs):
     txt_file = os.path.join(root_path, meta_file)
     items = []
     with open(txt_file, "r", encoding="utf-8") as ttf:
