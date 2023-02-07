@@ -614,6 +614,8 @@ class PitchExtractor:
             file_name = wav_file.split('/')[-6] + '_' + wav_file.split('/')[-5] + '_' + wav_file.split('/')[-4] + '_' + wav_file.split('/')[-3] + '_' + wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
         elif ds_name == 'emovdb':
             file_name = wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
+        elif ds_name == 'blizzard_2023':
+            file_name = wav_file.split('/')[-1]
         elif ds_name == 'ljspeech':
             file_name = os.path.splitext(os.path.basename(wav_file))[0]
         
