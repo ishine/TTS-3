@@ -221,6 +221,7 @@ class BidirectionalReferenceEncoder(nn.Module):
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
+        print(out.shape)
         out = out.view(batch_size, self.embedding_dim)
         # print(out.shape)
         if(self.use_nonlinear_proj):
