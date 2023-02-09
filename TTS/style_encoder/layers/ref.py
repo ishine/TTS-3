@@ -139,8 +139,10 @@ class ModifiedReferenceEncoder(nn.Module):
 
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
-        # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
-        out = out.view(batch_size, self.embedding_dim)
+        # out: 3D tensor [seq_len==2, batch_size, encoding_size=384]
+        out = torch.cat([out[0,:,:], out[1,:,:]], dim = 1)
+        # out: 2D tensor [batch_size, encoding_size = 384]
+
         # print(out.shape)
         if(self.use_nonlinear_proj):
             out = torch.tanh(self.proj(out))
@@ -220,10 +222,10 @@ class BidirectionalReferenceEncoder(nn.Module):
 
         self.recurrence.flatten_parameters()
         _, out = self.recurrence(x)
-        # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
-        out = torch.cat([out[0,:,:], out[1,:,:]], dim =1)
-        print(out.shape)
-        out = out.view(batch_size, self.embedding_dim)
+        # out: 3D tensor [seq_len==2, batch_size, encoding_size=384]
+        out = torch.cat([out[0,:,:], out[1,:,:]], dim = 1)
+        # out: 2D tensor [batch_size, encoding_size = 384]
+
         # print(out.shape)
         if(self.use_nonlinear_proj):
             out = torch.tanh(self.proj(out))
