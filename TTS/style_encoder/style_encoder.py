@@ -1,7 +1,7 @@
 import torch
 from coqpit import Coqpit
 from torch import nn
-from TTS.style_encoder.layers.ref import ReferenceEncoder, ModifiedReferenceEncoder
+from TTS.style_encoder.layers.ref import ReferenceEncoder, ModifiedReferenceEncoder, BidirectionalReferenceEncoder
 from TTS.style_encoder.layers.finegrainedre import FineGrainedReferenceEncoder
 from TTS.style_encoder.layers.gst import GST
 from TTS.style_encoder.layers.vae import VAEStyleEncoder
@@ -35,6 +35,11 @@ class StyleEncoder(nn.Module):
             )
         elif self.se_type == 'modifiedre':
             self.layer = ModifiedReferenceEncoder(
+                num_mel = self.num_mel,
+                embedding_dim = self.style_embedding_dim
+            )
+        elif self.se_type == 'bidirectionalre':
+            self.layer = BidirectionalReferenceEncoder(
                 num_mel = self.num_mel,
                 embedding_dim = self.style_embedding_dim
             )
@@ -99,6 +104,8 @@ class StyleEncoder(nn.Module):
             out = self.re_embedding(*inputs)
         elif self.se_type == 'modifiedre':
             out = self.modified_re_embedding_forward(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
+        elif self.se_type == 'bidirectionalre':
+            out = self.re_embedding(*inputs) # Since is only the re arquitecture that is different we use the same method
         elif self.se_type == 'finegrainedre':
             out = self.finegrainedre_embedding(*inputs, kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
@@ -120,6 +127,8 @@ class StyleEncoder(nn.Module):
             out = self.re_embedding_inference(inputs, kwargs['style_mel'])
         elif self.se_type == 'modifiedre':
             out = self.modified_re_embedding_inference(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
+        elif self.se_type == 'bidirectionalre':
+            out = self.re_embedding_inference(inputs, kwargs['style_mel'])# Since is only the re arquitecture that is different we use the same method
         elif self.se_type == 'finegrainedre':
             out = self.finegrainedre_embedding_inference(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
         elif self.se_type == 'diffusion':
