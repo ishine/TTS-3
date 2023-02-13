@@ -591,7 +591,7 @@ class StyleforwardTTS(BaseTTS):
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
 
         if(self.config.style_encoder_config.use_cycle_consistency):
-            g_cycle= 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
+            g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
             encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
             
                         # Style Encoder 
@@ -606,43 +606,28 @@ class StyleforwardTTS(BaseTTS):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             elif(self.config.style_encoder_config.se_type == 'modifiedre'):
-                style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , speaker_embedding = g.permute(0,2,1))
+                style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , speaker_embedding = g_cycle.permute(0,2,1))
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             else:
                 se_inputs = [encoder_outputs_cycle.permute(0,2,1), y]
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs)
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             
-            # Duration predictor pass
-            if self.args.detach_duration_predictor:
-                o_dr_log_cycle = self.duration_predictor(o_en_cycle .detach(), x_mask_cycle)
-            else:
-                o_dr_log_cycle = self.duration_predictor(o_en_cycle, x_mask_cycle)
-            o_dr_cycle = torch.clamp(torch.exp(o_dr_log_cycle) - 1, 0, self.max_duration)
-            o_attn_cycle = self.generate_attn(o_dr_cycle.squeeze(1), x_mask_cycle) # generate attn mask from predicted durations
-            o_alignment_dur_cycle = None
-            alignment_soft_cycle = None
-            alignment_logprob_cycle = None
-            alignment_mas_cycle = None
-            if self.use_aligner: # aligner
-                o_alignment_dur_cycle, alignment_soft_cycle, alignment_logprob_cycle, alignment_mas_cycle = self._forward_aligner(
-                    x_emb_cycle, y, x_mask_cycle, y_mask
-                )
-                alignment_soft_cycle = alignment_soft_cycle.transpose(1, 2)
-                alignment_mas_cycle = alignment_mas_cycle.transpose(1, 2)
-                dr_cycle = o_alignment_dur_cycle
-
-            # Pitch predictor pass
+            # duration predictor pass
+            o_dr_log_cycle = self.duration_predictor(o_en_cycle, x_mask_cycle)
+            o_dr_cycle = self.format_durations(o_dr_log_cycle, x_mask_cycle).squeeze(1)
+            y_lengths_cycle = o_dr_cycle.sum(1)
+            # pitch predictor pass
             o_pitch_cycle = None
-            avg_pitch_cycle = None
             if self.args.use_pitch:
-                o_pitch_emb_cycle, o_pitch_cycle, avg_pitch_cycle = self._forward_pitch_predictor(o_en_cycle, x_mask_cycle, pitch, dr_cycle)
+                # Remove conditional speaker embedding, and add the provided speaker, we provide pitch predicted by cond_speaker in order to generate the pitch embedding
+                # for target speaker and avoid speaker leakage (empirical results)
+                o_pitch_emb_cycle, o_pitch_cycle = self._forward_pitch_predictor(o_en_cycle, x_mask_cycle)
                 o_en_cycle = o_en_cycle + o_pitch_emb_cycle
+            
 
-            # Decoder pass
-            o_de_cycle, attn_cycle = self._forward_decoder(
-                o_en_cycle, dr_cycle, x_mask_cycle, y_lengths, g=None
-            ) 
+            # decoder pass
+            o_de_cycle, attn_cycle = self._forward_decoder(o_en_cycle, o_dr_cycle, x_mask_cycle, y_lengths_cycle, g=None)
 
 
         # Encoder

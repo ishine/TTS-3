@@ -48,6 +48,7 @@ class StyleEncoderConfig(Coqpit):
     # Cycle consistency configs
     use_cycle_consistency: bool = False 
     cycle_consistency_alpha: float = 1
+    start_cycle_at: int = 1 # Step to start back propagating cycle loss
 
     # CLIP loss configs
     use_clip_loss: bool = False 

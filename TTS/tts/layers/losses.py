@@ -1198,15 +1198,21 @@ class StyleForwardTTSLoss(nn.Module):
 
         if(self.style_encoder_config.use_cycle_consistency):
             
-            cycle_style_loss = self.criterion_cycle_consistency(style_encoder_output['style_embedding'], cycle_style_encoder_output)
+            if(self.style_encoder_config.start_cycle_at < step):
 
-            loss += cycle_style_loss*self.style_encoder_config.cycle_consistency_alpha
+                cycle_style_loss = self.criterion_cycle_consistency(style_encoder_output['style_embedding'], cycle_style_encoder_output)
 
-            return_dict['cycle_style_distortion_loss'] = cycle_style_loss
+                loss += cycle_style_loss*self.style_encoder_config.cycle_consistency_alpha
+
+                return_dict['cycle_style_distortion_loss'] = cycle_style_loss
+        
+            else:
+
+                return_dict['cycle_style_distortion_loss'] = 9999 # Just a number that you will see in trainer log output and confirm that this loss is not being propagated
 
         # Just for checking losses, todo: turn this optional
-        # return_dict['actual_step'] = step
-        return_dict['NOT_OPT_identity_style_loss'] = nn.MSELoss()(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
+        return_dict['which_step_in_model_loss_calc'] = step
+        # return_dict['NOT_OPT_identity_style_loss'] = nn.MSELoss()(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
 
         return_dict["loss"] = loss
         return return_dict
