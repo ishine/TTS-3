@@ -45,6 +45,10 @@ class StyleEncoderConfig(Coqpit):
     fg_attention_dim: int = 384
     prosody_embedding_dim: int = 3 #Default to align with text, according to reference repo, by my first look it should be = proj_dim = encoder_output_dim
 
+    # Cycle consistency configs
+    use_cycle_consistency: bool = False 
+    cycle_consistency_alpha: float = 1
+
     # CLIP loss configs
     use_clip_loss: bool = False 
     clip_alpha_loss: float = 1

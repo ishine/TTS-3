@@ -1013,6 +1013,9 @@ class StyleForwardTTSLoss(nn.Module):
         if(self.style_encoder_config.use_style_distortion_loss):
             self.criterion_style_distortion = nn.MSELoss() # Simple L2 norm
 
+        if(self.style_encoder_config.use_cycle_consistency):
+            self.criterion_cycle_consistency = nn.MSELoss()
+
         self.spec_loss_alpha = c.spec_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
         self.binary_alignment_loss_alpha = c.binary_align_loss_alpha
@@ -1046,6 +1049,7 @@ class StyleForwardTTSLoss(nn.Module):
         style_preds=None,
         speaker_preds_from_style=None,
         ressynt_style_encoder_output=None,
+        cycle_style_encoder_output=None,
         step = None
     ):
         loss = 0
@@ -1152,7 +1156,7 @@ class StyleForwardTTSLoss(nn.Module):
                 # print(torch.inner(style_encoder_output, speaker_output.squeeze(-1)).shape)
                 loss += speaker_dot_loss
                 return_dict["speaker_orthogonal_loss"] = speaker_dot_loss
-                
+
         if self.style_encoder_config.use_guided_style:
             # print(style_preds.shape, style_ids.shape)
             style_guided_loss = self.criterion_guided(style_preds, style_ids) # Must squeeze cuz it was augmented for broadcasting
@@ -1190,11 +1194,19 @@ class StyleForwardTTSLoss(nn.Module):
                 style_distortion_loss = self.criterion_style_distortion(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
             loss += style_distortion_loss*self.style_encoder_config.style_distortion_alpha_loss
 
-            return_dict['style_distortion_loss'] = style_distortion_loss
+            return_dict['identity_style_loss'] = style_distortion_loss
+
+        if(self.style_encoder_config.use_cycle_consistency):
+            
+            cycle_style_loss = self.criterion_cycle_consistency(style_encoder_output['style_embedding'], cycle_style_encoder_output)
+
+            loss += cycle_style_loss*self.style_encoder_config.cycle_consistency_alpha
+
+            return_dict['cycle_style_distortion_loss'] = cycle_style_loss
 
         # Just for checking losses, todo: turn this optional
         # return_dict['actual_step'] = step
-        return_dict['NOT_OPT_style_distortion'] = nn.MSELoss()(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
+        return_dict['NOT_OPT_identity_style_loss'] = nn.MSELoss()(style_encoder_output['style_embedding'], ressynt_style_encoder_output)
 
         return_dict["loss"] = loss
         return return_dict
