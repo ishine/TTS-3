@@ -840,10 +840,10 @@ class StyleforwardTTS(BaseTTS):
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
-                se_inputs = [encoder_outputs.permute(0,2,1), o_de, g]
-                ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
+                se_inputs = [o_en.permute(0,2,1), o_de, g]
+                ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
             else:
-                se_inputs = [encoder_outputs.permute(0,2,1), o_de]
+                se_inputs = [o_en.permute(0,2,1), o_de]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
 
