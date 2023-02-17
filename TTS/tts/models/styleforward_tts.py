@@ -799,7 +799,7 @@ class StyleforwardTTS(BaseTTS):
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'modifiedre'):
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=aux_input['style_mel'] , speaker_embedding = g_emb.permute(0,2,1))
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=aux_input['style_mel'] , speaker_embedding = g_emb)
             # style_encoder_outputs = self.style_encoder_layer.inference(se_inputs, g_emb.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'vae'):
