@@ -799,7 +799,8 @@ class StyleforwardTTS(BaseTTS):
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'modifiedre'):
             se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
-            style_encoder_outputs = self.style_encoder_layer.inference(se_inputs, g_emb.permute(0,2,1))
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=y , speaker_embedding = g_emb.permute(0,2,1))
+            # style_encoder_outputs = self.style_encoder_layer.inference(se_inputs, g_emb.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'vae'):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
@@ -841,7 +842,7 @@ class StyleforwardTTS(BaseTTS):
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
                 se_inputs = [o_en.permute(0,2,1), o_de, g]
-                ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
+                ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , speaker_embedding = g_emb.permute(0,2,1))['style_embedding']
             else:
                 se_inputs = [o_en.permute(0,2,1), o_de]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
