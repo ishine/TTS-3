@@ -742,7 +742,8 @@ class StyleforwardTTS(BaseTTS):
             "style_preds": style_preds,
             'speaker_preds_from_style': speaker_preds_from_style,
             'ressynt_style_encoder_output': ressynt_style_encoder_output,
-            'cycle_style_encoder_output': cycle_style_encoder_output
+            'cycle_style_encoder_output': cycle_style_encoder_output,
+            'model_outputs_middle_cycle': o_de_cycle
         }
         return outputs
 
