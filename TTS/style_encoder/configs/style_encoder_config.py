@@ -61,6 +61,7 @@ class StyleEncoderConfig(Coqpit):
 
     # GRL additional configs
     use_grl_on_speakers_in_style_embedding: bool = False # Whether use or not GRL in style embedding output avoinding speaker information
+    use_inverter: bool = False # whether use gri instead of grl
     grl_alpha: float = 1 # GRL alpha, still one for all GRL's
 
     # GST-SE Additional Configs
