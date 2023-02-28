@@ -20,7 +20,7 @@ from TTS.tts.utils.styles import StyleManager, get_style_weighted_sampler
 # Import Style Encoder
 from TTS.style_encoder.style_encoder import StyleEncoder
 from TTS.style_encoder.layers.grl import GradientReversalLayer
-
+from TTS.style_encoder.layers.gri import GradientInverterLayer
 
 @dataclass
 class StyleForwardTTSArgs(Coqpit):
@@ -194,7 +194,10 @@ class StyleforwardTTS(BaseTTS):
         if(config.style_encoder_config.use_grl_on_speakers_in_style_embedding): #Already assuming that we can have different GRL in different layers
             style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
             self.speaker_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_speakers)
-            self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
+            if(config.style_encoder_config.use_inverter):
+                self.grl_on_speakers_in_style_embedding = GradientInverterLayer(config.style_encoder_config.grl_alpha)
+            else:
+                self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
         
         
         # # pass all config fields to `self`
