@@ -17,6 +17,10 @@ class StyleEncoder(nn.Module):
         for key in config:
             setattr(self, key, config[key])
             
+        if (self.decompose_ref_mel):
+            save_num_mel = self.num_mel
+            self.num_mel = 3 # Pitch, Energy and Durations [B, MAX_LEN, 3]
+
         if(self.use_nonlinear_proj):
             self.nl_proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
             nn.init.xavier_normal_(self.nl_proj.weight) # Good init for projection
@@ -94,6 +98,11 @@ class StyleEncoder(nn.Module):
                 den_num_blocks = self.diff_num_blocks,
                 den_dropout = self.diff_dropout
             )
+
+        # Return
+        if (self.decompose_ref_mel):
+            self.num_mel = save_num_mel
+
         else:
             raise NotImplementedError
 
