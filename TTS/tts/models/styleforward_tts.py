@@ -586,61 +586,45 @@ class StyleforwardTTS(BaseTTS):
         """
         g , _ = self._set_speaker_input(aux_input)
 
-        # compute sequence masks
+        # Compute sequence masks
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
 
-        if(self.config.style_encoder_config.use_cycle_consistency):
-            g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
-            encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
-            
-                        # Style Encoder 
-            if(self.config.style_encoder_config.use_lookup):
-                o_en_cycle = encoder_outputs_cycle.permute(0,2,1)
-                style_encoder_outputs_cycle = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
-                o_en_cycle = o_en_cycle + style_encoder_outputs_cycle['style_embedding'] # [B, 1, C]
-                o_en_cycle = o_en_cycle.permute(0,2,1)
-                style_encoder_outputs_cycle['style_embedding'].squeeze(1)
-            elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
-                se_inputs = [encoder_outputs_cycle.permute(0,2,1), y]
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
-                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
-            elif(self.config.style_encoder_config.se_type == 'modifiedre'):
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , speaker_embedding = g_cycle.permute(0,2,1))
-                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
-            else:
-                se_inputs = [encoder_outputs_cycle.permute(0,2,1), y]
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs)
-                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
-            
-            # duration predictor pass
-            o_dr_log_cycle = self.duration_predictor(o_en_cycle, x_mask_cycle)
-            o_dr_cycle = self.format_durations(o_dr_log_cycle, x_mask_cycle).squeeze(1)
-            y_lengths_cycle = o_dr_cycle.sum(1)
-            # pitch predictor pass
-            o_pitch_cycle = None
-            if self.args.use_pitch:
-                # Remove conditional speaker embedding, and add the provided speaker, we provide pitch predicted by cond_speaker in order to generate the pitch embedding
-                # for target speaker and avoid speaker leakage (empirical results)
-                o_pitch_emb_cycle, o_pitch_cycle = self._forward_pitch_predictor(o_en_cycle, x_mask_cycle)
-                o_en_cycle = o_en_cycle + o_pitch_emb_cycle
-            
-
-            # decoder pass
-            o_de_cycle, attn_cycle = self._forward_decoder(o_en_cycle, o_dr_cycle, x_mask_cycle, y_lengths_cycle, g=None)
-
-
-        # Encoder
+        # Encoder pass
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
-        # After we already have used the indices g or cond_g, lets get the speaker embedding
-        # if hasattr(self, "emb_g"):
-        #     g_emb = self.emb_g(g)  # [B, C, 1]
-        # if g_emb is not None:
-        #     g_emb = g_emb.unsqueeze(-1)
-        # print(g.shape)
+        # Aligner Network pass
+        o_alignment_dur = None
+        alignment_soft = None
+        alignment_logprob = None
+        alignment_mas = None
+        if self.use_aligner:
+            o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
+                x_emb, y, x_mask, y_mask
+            )
+            alignment_soft = alignment_soft.transpose(1, 2)
+            alignment_mas = alignment_mas.transpose(1, 2)
+            dr = o_alignment_dur
 
-        # Style Encoder 
+        # Style reference features
+        if self.config.style_encoder_config.decompose_mel:
+            # Pitch
+            pitch_reference = pitch.squeeze(1).detach().clone().requires_grad_()
+
+            # Duration
+            dur_pholvl = dr.detach().clone().requires_grad_()
+            dur_reference, attn = self.expand_encoder_outputs(dur_pholvl, dur_pholvl, x_mask, torch.unsqueeze(sequence_mask(y_lengths, None), 1).to(dur_pholvl.dtype))
+
+            # TO-DO MAKE ENERGY 
+            style_reference = torch.stack([pitch_reference, dur_reference])
+            print('Using Pitch and Duration as style reference')
+
+        else:
+            # Use Mel Spectrogram
+            style_reference = y 
+            print('Using Mel Spectrogram as style reference')
+
+        # Style Encoder
         if(self.config.style_encoder_config.use_lookup):
             o_en = encoder_outputs.permute(0,2,1)
             style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
@@ -648,14 +632,14 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs['style_embedding'].squeeze(1)
         elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
-            se_inputs = [encoder_outputs.permute(0,2,1), y]
+            se_inputs = [encoder_outputs.permute(0,2,1), style_reference]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'modifiedre'):
-            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , speaker_embedding = g.permute(0,2,1))
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=style_reference , speaker_embedding = g.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
-            se_inputs = [encoder_outputs.permute(0,2,1), y]
+            se_inputs = [encoder_outputs.permute(0,2,1), style_reference]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
@@ -677,18 +661,7 @@ class StyleforwardTTS(BaseTTS):
             o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = torch.clamp(torch.exp(o_dr_log) - 1, 0, self.max_duration)
         o_attn = self.generate_attn(o_dr.squeeze(1), x_mask) # generate attn mask from predicted durations
-        o_alignment_dur = None
-        alignment_soft = None
-        alignment_logprob = None
-        alignment_mas = None
-        if self.use_aligner: # aligner
-            o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
-                x_emb, y, x_mask, y_mask
-            )
-            alignment_soft = alignment_soft.transpose(1, 2)
-            alignment_mas = alignment_mas.transpose(1, 2)
-            dr = o_alignment_dur
-
+        
         # Pitch predictor pass
         o_pitch = None
         avg_pitch = None
@@ -701,7 +674,55 @@ class StyleforwardTTS(BaseTTS):
             o_en, dr, x_mask, y_lengths, g=None
         )  # TODO: maybe pass speaker embedding (g) too
 
-        # Ressynthesis stuff
+        # Cycle Consistency pass
+
+        # After we already have used the indices g or cond_g, lets get the speaker embedding
+        # if hasattr(self, "emb_g"):
+        #     g_emb = self.emb_g(g)  # [B, C, 1]
+        # if g_emb is not None:Cycle
+        #     g_emb = g_emb.unsqueeze(-1)
+        # print(g.shape)
+
+        if(self.config.style_encoder_config.use_cycle_consistency):
+            g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
+            encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
+            
+            # Style Encoder 
+            if(self.config.style_encoder_config.use_lookup):
+                o_en_cycle = encoder_outputs_cycle.permute(0,2,1)
+                style_encoder_outputs_cycle = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
+                o_en_cycle = o_en_cycle + style_encoder_outputs_cycle['style_embedding'] # [B, 1, C]
+                o_en_cycle = o_en_cycle.permute(0,2,1)
+                style_encoder_outputs_cycle['style_embedding'].squeeze(1)
+            elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
+                se_inputs = [encoder_outputs_cycle.permute(0,2,1), y]
+                style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
+                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
+            elif(self.config.style_encoder_config.se_type == 'modifiedre'):
+                style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , speaker_embedding = g_cycle.permute(0,2,1))
+                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
+            else:
+                se_inputs = [encoder_outputs_cycle.permute(0,2,1), y]
+                style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs)
+                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
+            
+            # Duration predictor pass
+            o_dr_log_cycle = self.duration_predictor(o_en_cycle, x_mask_cycle)
+            o_dr_cycle = self.format_durations(o_dr_log_cycle, x_mask_cycle).squeeze(1)
+            y_lengths_cycle = o_dr_cycle.sum(1)
+
+            # Pitch predictor pass
+            o_pitch_cycle = None
+            if self.args.use_pitch:
+                # Remove conditional speaker embedding, and add the provided speaker, we provide pitch predicted by cond_speaker in order to generate the pitch embedding
+                # for target speaker and avoid speaker leakage (empirical results)
+                o_pitch_emb_cycle, o_pitch_cycle = self._forward_pitch_predictor(o_en_cycle, x_mask_cycle)
+                o_en_cycle = o_en_cycle + o_pitch_emb_cycle
+
+            # Decoder pass
+            o_de_cycle, attn_cycle = self._forward_decoder(o_en_cycle, o_dr_cycle, x_mask_cycle, y_lengths_cycle, g=None)
+
+        # Ressynthesis pass
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss): 
             if(self.config.style_encoder_config.se_type=='modifiedre'):
@@ -711,6 +732,7 @@ class StyleforwardTTS(BaseTTS):
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
+        # Find a Name
         cycle_style_encoder_output = None
         if(self.config.style_encoder_config.use_cycle_consistency):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
@@ -719,8 +741,6 @@ class StyleforwardTTS(BaseTTS):
             else:
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de_cycle]
                 cycle_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
-
-        # print(ressynt_style_encoder_output.shape, style_encoder_outputs['style_embedding'].shape)
 
         outputs = {
             "model_outputs": o_de,  # [B, T, C]
@@ -764,7 +784,7 @@ class StyleforwardTTS(BaseTTS):
         cond_g_emb = None
         x_lengths = torch.tensor(x.shape[1:2]).to(x.device)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
-        
+
         # encoder pass
         if(cond_g is not None):
             o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, cond_g)
