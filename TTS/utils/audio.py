@@ -738,6 +738,32 @@ class AudioProcessor(object):
         f0 = pw.stonemask(x.astype(np.double), f0, t, self.sample_rate)
         return f0
 
+    def compute_energy(self, x: np.ndarray) -> np.ndarray:
+        """Compute energy (f0) of a waveform using the same parameters used for computing melspectrogram.
+
+        Args:
+            x (np.ndarray): Waveform.
+
+        Returns:
+            np.ndarray: Energy.
+
+        Examples:
+            >>> WAV_FILE = filename = librosa.util.example_audio_file()
+            >>> from TTS.config import BaseAudioConfig
+            >>> from TTS.utils.audio import AudioProcessor
+            >>> conf = BaseAudioConfig(mel_fmax=8000)
+            >>> ap = AudioProcessor(**conf)
+            >>> wav = ap.load_wav(WAV_FILE, sr=22050)[:5 * 22050]
+            >>> energy = ap.compute_energy(wav)
+        """
+        mel = self.melspectrogram(x).astype("float32")
+        mel = self.denormalize(mel)
+        if self.do_amp_to_db_mel:
+            mel = torch.tensor(self._db_to_amp(mel))
+        
+        energy = torch.sqrt(torch.clamp(mel.pow(2).sum(dim=1), min=1.0e-10))
+        return energy
+
     ### Audio Processing ###
     def find_endpoint(self, wav: np.ndarray, min_silence_sec=0.8) -> int:
         """Find the last point without silence at the end of a audio signal.
