@@ -191,6 +191,7 @@ class BaseTTS(BaseModel):
         attn_mask = batch["attns"]
         waveform = batch["waveform"]
         pitch = batch["pitch"]
+        energy = batch["energy"]
         language_ids = batch["language_ids"]
         style_ids = batch["style_ids"]
 
@@ -241,6 +242,7 @@ class BaseTTS(BaseModel):
             "item_idx": item_idx,
             "waveform": waveform,
             "pitch": pitch,
+            "energy": energy,
             "language_ids": language_ids,
             "style_ids": style_ids
         }
@@ -301,6 +303,8 @@ class BaseTTS(BaseModel):
                 compute_linear_spec=config.model.lower() == "tacotron" or config.compute_linear_spec,
                 compute_f0=config.get("compute_f0", False),
                 f0_cache_path=config.get("f0_cache_path", None),
+                compute_energy = config.get("compute_energy", False),
+                energy_cache_path = config.get("energy_cache_path", None),
                 meta_data=data_items,
                 ds_name=config.datasets[0].name,
                 ap=ap,
@@ -355,6 +359,13 @@ class BaseTTS(BaseModel):
                         ap, config.get("f0_cache_path", None), config.num_loader_workers
                     )
 
+            # compute energy frames and write to files.
+            if config.compute_energy and rank in [None, 0]:
+                if not os.path.exists(config.energy_cache_path):
+                    dataset.energy_extractor.compute_energy(
+                        ap, config.get("energy_cache_path", None), config.num_loader_workers
+                    )
+
             # halt DDP processes for the main process to finish computing the F0 cache
             if num_gpus > 1:
                 dist.barrier()
@@ -362,6 +373,10 @@ class BaseTTS(BaseModel):
             # load pitch stats computed above by all the workers
             if config.compute_f0:
                 dataset.pitch_extractor.load_pitch_stats(config.get("f0_cache_path", None))
+
+            # load energy stats computed above by all the workers
+            if config.compute_energy:
+                dataset.energy_extractor.load_energy_stats(config.get("energy_cache_path", None))
 
             # sampler for DDP
             sampler = DistributedSampler(dataset) if num_gpus > 1 else None
