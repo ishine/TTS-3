@@ -118,6 +118,7 @@ class StyleForwardTTSArgs(Coqpit):
     hidden_channels: int = 384
     use_aligner: bool = True
     use_pitch: bool = True
+    use_energy: bool = True
     pitch_predictor_hidden_channels: int = 256
     pitch_predictor_kernel_size: int = 3
     pitch_predictor_dropout_p: float = 0.1
@@ -206,6 +207,7 @@ class StyleforwardTTS(BaseTTS):
         self.max_duration = self.args.max_duration
         self.use_aligner = self.args.use_aligner
         self.use_pitch = self.args.use_pitch
+        self.use_energy = self.args.use_energy
         self.use_binary_alignment_loss = False
 
         self.length_scale = (
@@ -562,6 +564,7 @@ class StyleforwardTTS(BaseTTS):
         y: torch.FloatTensor = None,
         dr: torch.IntTensor = None,
         pitch: torch.FloatTensor = None,
+        energy: torch.FloatTensor = None,
         aux_input: Dict = {"d_vectors": None, "speaker_ids": None, "style_ids": None},  # pylint: disable=unused-argument
     ) -> Dict:
         """Model's forward pass.
@@ -612,17 +615,18 @@ class StyleforwardTTS(BaseTTS):
             pitch_reference = pitch.squeeze(1).detach().clone().requires_grad_()
 
             # Duration
-            dur_pholvl = dr.detach().clone().requires_grad_()
-            dur_reference, attn = self.expand_encoder_outputs(dur_pholvl, dur_pholvl, x_mask, torch.unsqueeze(sequence_mask(y_lengths, None), 1).to(dur_pholvl.dtype))
+            dur_reference = dr.detach().clone().repeat_interleave(dr).float().requires_grad_()
+            
+            # Energy
+            energy_reference = energy.squeeze(1).detach().clone().requires_grad_()
 
-            # TO-DO MAKE ENERGY 
-            style_reference = torch.stack([pitch_reference, dur_reference])
-            print('Using Pitch and Duration as style reference')
+            style_reference = torch.stack([pitch_reference, dur_reference, energy_reference])
+            print('Using Pitch, Duration and Energy as style reference features')
 
         else:
             # Use Mel Spectrogram
             style_reference = y 
-            print('Using Mel Spectrogram as style reference')
+            print('Using Mel Spectrogram as style reference feature')
 
         # Style Encoder
         if(self.config.style_encoder_config.use_lookup):
@@ -890,6 +894,7 @@ class StyleforwardTTS(BaseTTS):
         mel_input = batch["mel_input"]
         mel_lengths = batch["mel_lengths"]
         pitch = batch["pitch"] if self.args.use_pitch else None
+        energy = batch["energy"] if self.args.use_energy else None
         d_vectors = batch["d_vectors"]
         speaker_ids = batch["speaker_ids"]
         durations = batch["durations"]
@@ -899,7 +904,7 @@ class StyleforwardTTS(BaseTTS):
 
         # forward pass
         outputs = self.forward(
-            text_input, text_lengths, mel_lengths, y=mel_input, dr=durations, pitch=pitch, aux_input=aux_input
+            text_input, text_lengths, mel_lengths, y=mel_input, dr=durations, pitch=pitch, energy= energy, aux_input=aux_input
         )
         # use aligner's output as the duration target
         if self.use_aligner:
