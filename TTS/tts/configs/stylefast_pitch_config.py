@@ -148,6 +148,8 @@ class StylefastPitchConfig(BaseTTSConfig):
     # dataset configs
     compute_f0: bool = True
     f0_cache_path: str = None
+    compute_energy: bool = False # Make it optional to use w/ or w/o energy
+    energy_cache_path: str = None
 
     # testing
     test_sentences: List[str] = field(
