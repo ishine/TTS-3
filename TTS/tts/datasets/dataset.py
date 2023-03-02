@@ -25,6 +25,8 @@ class TTSDataset(Dataset):
         ds_name: str = 'ljspeech',
         compute_f0: bool = False,
         f0_cache_path: str = None,
+        compute_energy: bool = False,
+        energy_cache_path: str = None,
         characters: Dict = None,
         custom_symbols: List = None,
         add_blank: bool = False,
@@ -117,6 +119,8 @@ class TTSDataset(Dataset):
         self.return_wav = return_wav
         self.compute_f0 = compute_f0
         self.f0_cache_path = f0_cache_path
+        self.compute_energy = compute_energy
+        self.energy_cache_path = energy_cache_path
         self.min_seq_len = min_seq_len
         self.max_seq_len = max_seq_len
         self.ap = ap
@@ -144,6 +148,8 @@ class TTSDataset(Dataset):
             os.makedirs(phoneme_cache_path, exist_ok=True)
         if compute_f0:
             self.pitch_extractor = PitchExtractor(self.ds_name, self.items, verbose=verbose)
+        if compute_energy:
+            self.energy_extractor = EnergyExtractor(self.ds_name, self.items, verbose=verbose)
         if self.verbose:
             print("\n > DataLoader initialization")
             print(" | > Use phonemes: {}".format(self.use_phonemes))
@@ -279,11 +285,17 @@ class TTSDataset(Dataset):
             pitch = self.pitch_extractor.load_or_compute_pitch(self.ap, wav_file, self.f0_cache_path, self.ds_name)
             pitch = self.pitch_extractor.normalize_pitch(pitch.astype(np.float32), speaker_name)
 
+        energy = None
+        if self.compute_energy:
+            energy = self.energy_extractor.load_or_compute_energy(self.ap, wav_file, self.energy_cache_path, self.ds_name)
+            energy = self.energy_extractor.normalize_energy(energy.astype(np.float32), speaker_name)
+
         sample = {
             "raw_text": raw_text,
             "text": text,
             "wav": wav,
             "pitch": pitch,
+            "energy": energy,
             "attn": attn,
             "item_idx": self.items[idx][1],
             "speaker_name": speaker_name,
@@ -543,6 +555,13 @@ class TTSDataset(Dataset):
             else:
                 pitch = None
 
+            if self.compute_energy:
+                energy = prepare_data(batch["energy"])
+                assert mel.shape[1] == energy.shape[1], f"[!] {mel.shape} vs {energy.shape}"
+                energy = torch.FloatTensor(energy)[:, None, :].contiguous()  # B x 1 xT
+            else:
+                energy = None
+
             # collate attention alignments
             if batch["attn"][0] is not None:
                 attns = [batch["attn"][idx].T for idx in ids_sorted_decreasing]
@@ -573,6 +592,7 @@ class TTSDataset(Dataset):
                 "waveform": wav_padded,
                 "raw_text": batch["raw_text"],
                 "pitch": pitch,
+                "energy": energy,
                 "language_ids": language_ids,
                 "style_ids": style_ids,
                 "style_target": batch["style_target"]
@@ -754,6 +774,184 @@ class PitchExtractor:
 
     def load_pitch_stats(self, cache_path):
         stats_path = os.path.join(cache_path, "pitch_stats.npy")
+        stats = np.load(stats_path, allow_pickle=True).item()
+
+        print(stats)
+
+        try:
+            self.mean = {}
+            self.std = {}
+            
+            for key in stats.keys():
+                self.mean[key] = stats[key]["mean"].astype(np.float32)
+                self.std[key] = stats[key]["std"].astype(np.float32)
+
+        except:
+                self.mean = stats["mean"].astype(np.float32)
+                self.std = stats["std"].astype(np.float32)
+
+
+class EnergyExtractor:
+    """Energy Extractor for computing energy from wav files.
+    Args:
+        items (List[List]): Dataset samples.
+        verbose (bool): Whether to print the progress.
+    """
+
+    def __init__(
+        self,
+        ds_name,
+        items: List[List],
+        verbose=False,
+    ):
+        self.ds_name = ds_name
+        self.items = items
+        self.verbose = verbose
+        self.mean = None
+        self.std = None
+
+    @staticmethod
+    def create_energy_file_path(wav_file, cache_path, ds_name):
+
+        if ds_name == 'cpqd_style_read' or ds_name == 'cpqd_read':
+            file_name = wav_file.split('/')[-6] + '_' + wav_file.split('/')[-5] + '_' + wav_file.split('/')[-4] + '_' + wav_file.split('/')[-3] + '_' + wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
+        elif ds_name == 'emovdb':
+            file_name = wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
+        elif ds_name == 'blizzard_2023':
+            file_name = wav_file.split('/')[-1]
+        elif ds_name == 'ljspeech':
+            file_name = os.path.splitext(os.path.basename(wav_file))[0]
+        
+        energy_file = os.path.join(cache_path, file_name + "_energy.npy")
+        return energy_file
+
+    @staticmethod
+    def _compute_and_save_energy(ap, wav_file, energy_file=None):
+        wav = ap.load_wav(wav_file)
+        energy = ap.compute_energy(wav)
+        if energy_file:
+            np.save(energy_file, energy)
+        return energy
+
+    @staticmethod
+    def compute_energy_stats(energy_vecs):
+        nonzeros = np.concatenate([v[np.where(v != 0.0)[0]] for v in energy_vecs])
+        mean, std = np.mean(nonzeros), np.std(nonzeros)
+        return mean, std
+
+    def normalize_energy(self, energy, speaker_name):
+        zero_idxs = np.where(energy == 0.0)[0]
+        try:
+            energy = energy - self.mean[speaker_name]
+            energy = energy / self.std[speaker_name]
+        except:
+            energy = energy - self.mean
+            energy = energy / self.std
+
+        energy[zero_idxs] = 0.0
+        return energy
+
+    def denormalize_energy(self, energy, speaker_name):
+        zero_idxs = np.where(energy == 0.0)[0]
+
+        try:
+            energy *= self.std[speaker_name]
+            energy += self.mean[speaker_name]
+        except:
+            energy *= self.std
+            energy += self.mean
+
+        energy[zero_idxs] = 0.0
+        return energy
+
+    @staticmethod
+    def load_or_compute_energy(ap, wav_file, cache_path, ds_name):
+        """
+        compute energy and return a numpy array of energy values
+        """
+        energy_file = EnergyExtractor.create_energy_file_path(wav_file, cache_path, ds_name)
+        if not os.path.exists(energy_file):
+            energy = EnergyExtractor._compute_and_save_energy(ap, wav_file, energy_file)
+        else:
+            energy = np.load(energy_file)
+        return energy.astype(np.float32)
+
+    @staticmethod
+    def _energy_worker(args):
+        item = args[0]
+        ap = args[1]
+        cache_path = args[2]
+        ds_name = args[3]
+        try:
+            _, wav_file, speaker_name, *_ = item
+        except:
+            _, wav_file, *_ = item
+
+        energy_file = EnergyExtractor.create_energy_file_path(wav_file, cache_path, ds_name)
+        if not os.path.exists(energy_file):
+            energy = EnergyExtractor._compute_and_save_energy(ap, wav_file, energy_file)
+            return energy
+        return None
+    
+    @staticmethod
+    def _get_speaker(args):
+        item = args[0]
+        try:
+            _, _, speaker_name, *_ = item
+            return speaker_name
+        except:
+            return None
+
+    def compute_energy(self, ap, cache_path, num_workers=0):
+        """Compute the input sequences with multi-processing.
+        Call it before passing dataset to the data loader to cache the input sequences for faster data loading."""
+        if not os.path.exists(cache_path):
+            os.makedirs(cache_path, exist_ok=True)
+
+        if self.verbose:
+            print(" | > Computing energy features ...")
+        if num_workers == 0:
+            energy_vecs = []
+            speakers_vecs = []
+            for _, item in enumerate(tqdm.tqdm(self.items)):
+                energy_vecs += [self._energy_worker([item, ap, cache_path, self.ds_name])]
+                speakers_vecs += [self._energy_worker([item])]
+        else:
+            with Pool(num_workers) as p:
+                energy_vecs = list(
+                    tqdm.tqdm(
+                        p.imap(EnergyExtractor._energy_worker, [[item, ap, cache_path, self.ds_name] for item in self.items]),
+                        total=len(self.items),
+                    )
+                )
+
+                speakers_vecs = list(
+                    tqdm.tqdm(
+                        p.imap(EnergyExtractor._get_speaker, [[item] for item in self.items]),
+                        total=len(self.items),
+                    )
+                )
+
+        energy_stats = {}
+
+        print(f"Energy calculated for {len(np.unique(speakers_vecs))} speakers.")
+
+        for speaker in np.unique(speakers_vecs):
+
+            print(f"Calculatin {speaker} energy stats...")
+            energy_vecs_filtered = np.array(energy_vecs)[np.array(speakers_vecs) == speaker]
+
+            energy_mean, energy_std = self.compute_energy_stats(energy_vecs_filtered)
+
+            print(f"{speaker} energy mean = {energy_mean} std = {energy_std}")
+
+            energy_stats[speaker] = {"mean": energy_mean, 
+                        "std": energy_std}
+
+        np.save(os.path.join(cache_path, "energy_stats"), energy_stats, allow_pickle=True)
+
+    def load_energy_stats(self, cache_path):
+        stats_path = os.path.join(cache_path, "energy_stats.npy")
         stats = np.load(stats_path, allow_pickle=True).item()
 
         print(stats)
