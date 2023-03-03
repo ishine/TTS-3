@@ -192,10 +192,12 @@ class StyleforwardTTS(BaseTTS):
                 self.style_classify_layer = nn.Linear(style_embedding_dim,self.num_style)
         
         if(config.style_encoder_config.use_grl_on_speakers_in_style_embedding): #Already assuming that we can have different GRL in different layers
+            print('Using GRL')
             style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
             self.speaker_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_speakers)
             if(config.style_encoder_config.use_inverter):
                 self.grl_on_speakers_in_style_embedding = GradientInverterLayer(config.style_encoder_config.grl_alpha)
+                print("Inverter layer activated")
             else:
                 self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
         
@@ -593,6 +595,7 @@ class StyleforwardTTS(BaseTTS):
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
 
+        o_de_cycle = None
         if(self.config.style_encoder_config.use_cycle_consistency):
             g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
             encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
