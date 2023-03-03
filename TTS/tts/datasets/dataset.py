@@ -835,33 +835,25 @@ class EnergyExtractor:
 
     @staticmethod
     def compute_energy_stats(energy_vecs):
-        nonzeros = np.concatenate([v[np.where(v != 0.0)[0]] for v in energy_vecs])
-        mean, std = np.mean(nonzeros), np.std(nonzeros)
+        mean, std = np.mean(energy_vecs), np.std(energy_vecs)
         return mean, std
 
     def normalize_energy(self, energy, speaker_name):
-        zero_idxs = np.where(energy == 0.0)[0]
         try:
             energy = energy - self.mean[speaker_name]
             energy = energy / self.std[speaker_name]
         except:
             energy = energy - self.mean
             energy = energy / self.std
-
-        energy[zero_idxs] = 0.0
         return energy
 
     def denormalize_energy(self, energy, speaker_name):
-        zero_idxs = np.where(energy == 0.0)[0]
-
         try:
             energy *= self.std[speaker_name]
             energy += self.mean[speaker_name]
         except:
             energy *= self.std
             energy += self.mean
-
-        energy[zero_idxs] = 0.0
         return energy
 
     @staticmethod
