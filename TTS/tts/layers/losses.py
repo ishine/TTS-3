@@ -1170,12 +1170,12 @@ class StyleForwardTTSLoss(nn.Module):
             return_dict["style_guided_loss"] = style_guided_loss
 
         if self.style_encoder_config.use_grl_on_speakers_in_style_embedding:
-            print(speaker_preds_from_style.shape, speaker_ids.shape)
-            # grl_speaker_in_style_loss = self.criterion_grl_speaker_in_style_embedding(speaker_preds_from_style, speaker_ids)
+    
+            grl_speaker_in_style_loss = self.criterion_grl_speaker_in_style_embedding(speaker_preds_from_style, speaker_ids)
             
-            # loss += self.grl_speaker_in_style_embedding_alpha*grl_speaker_in_style_loss
+            loss += self.grl_speaker_in_style_embedding_alpha*grl_speaker_in_style_loss
             
-            # return_dict["grl_speaker_in_style_embedding"] = grl_speaker_in_style_loss
+            return_dict["grl_speaker_in_style_embedding"] = grl_speaker_in_style_loss
 
 
         if(self.style_encoder_config.use_clip_loss):
