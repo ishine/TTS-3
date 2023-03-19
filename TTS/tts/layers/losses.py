@@ -1004,7 +1004,10 @@ class StyleForwardTTSLoss(nn.Module):
             # self.criterion_guided = nn.CrossEntropyLoss(weight =torch.Tensor([10,10,0.1,10])) # To balance styles
             # self.criterion_guided = nn.CrossEntropyLoss(ignore_index = 3) # To ignore none style (semi supervised)
         if(self.style_encoder_config.use_grl_on_speakers_in_style_embedding):
-            self.criterion_grl_speaker_in_style_embedding = nn.CrossEntropyLoss()
+            if(self.style_encoder_config.balanced_grl):
+                self.criterion_grl_speaker_in_style_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
+            else:
+                self.criterion_grl_speaker_in_style_embedding = nn.CrossEntropyLoss()
             self.grl_speaker_in_style_embedding_alpha = self.style_encoder_config.grl_alpha
 
         if(self.style_encoder_config.use_clip_loss):
