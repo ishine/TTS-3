@@ -33,3 +33,4 @@ We are an expressive TTS research group located at Unicamp and CPQD (Brazil).
 ## Enhancing Losses
 - Orthogonal Loss
 - CLIP Loss
+- Cycle consistency Loss(*)
