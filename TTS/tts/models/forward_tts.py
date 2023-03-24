@@ -615,7 +615,7 @@ class ForwardTTS(BaseTTS):
         }
         return outputs
 
-    def train_step(self, batch: dict, criterion: nn.Module):
+    def train_step(self, batch: dict, criterion: nn.Module, step):
         text_input = batch["text_input"]
         text_lengths = batch["text_lengths"]
         mel_input = batch["mel_input"]
@@ -705,8 +705,8 @@ class ForwardTTS(BaseTTS):
         logger.train_figures(steps, figures)
         logger.train_audios(steps, audios, ap.sample_rate)
 
-    def eval_step(self, batch: dict, criterion: nn.Module):
-        return self.train_step(batch, criterion)
+    def eval_step(self, batch: dict, criterion: nn.Module, step):
+        return self.train_step(batch, criterion, step)
 
     def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
         ap = assets["audio_processor"]
