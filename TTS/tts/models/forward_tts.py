@@ -244,7 +244,8 @@ class ForwardTTS(BaseTTS):
             if True: # Here goes freeze.pos in the future
                 for param in self.pos_tagger.parameters():
                     param.requires_grad = False
-                    
+                print("> POS Tagger is frozen")
+                
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
 
     def init_multispeaker(self, config: Coqpit):
