@@ -240,6 +240,11 @@ class ForwardTTS(BaseTTS):
             self.add_blank = config.add_blank
             self.tokenizer = CamembertTokenizer.from_pretrained('qanastek/pos-french-camembert')
             self.pos_tagger = CamembertForTokenClassification.from_pretrained('qanastek/pos-french-camembert')
+
+            if True: # Here goes freeze.pos in the future
+                for param in self.pos_tagger.parameters():
+                    param.requires_grad = False
+                    
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
 
     def init_multispeaker(self, config: Coqpit):
