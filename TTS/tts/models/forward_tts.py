@@ -16,6 +16,7 @@ from TTS.tts.utils.helpers import average_over_durations, generate_path, maximum
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.visual import plot_alignment, plot_pitch, plot_spectrogram
 
+from transformers import CamembertTokenizer, CamembertForTokenClassification, TokenClassificationPipeline
 
 @dataclass
 class ForwardTTSArgs(Coqpit):
@@ -231,6 +232,11 @@ class ForwardTTS(BaseTTS):
             self.aligner = AlignmentNetwork(
                 in_query_channels=self.args.out_channels, in_key_channels=self.args.hidden_channels
             )
+
+        if self.args.use_pos_tagger:
+            self.tokenizer = CamembertTokenizer.from_pretrained('qanastek/pos-french-camembert')
+            self.pos_tagger = CamembertForTokenClassification.from_pretrained('qanastek/pos-french-camembert')
+            self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
 
     def init_multispeaker(self, config: Coqpit):
         """Init for multi-speaker training.
