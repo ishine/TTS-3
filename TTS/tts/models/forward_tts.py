@@ -139,7 +139,7 @@ class ForwardTTSArgs(Coqpit):
     use_d_vector_file: bool = False
     d_vector_dim: int = None
     d_vector_file: str = None
-
+    use_pos_tagger: bool = False
 
 class ForwardTTS(BaseTTS):
     """General forward TTS model implementation that uses an encoder-decoder architecture with an optional alignment
