@@ -234,6 +234,7 @@ class ForwardTTS(BaseTTS):
             )
 
         if self.args.use_pos_tagger:
+            print("> Using POS Tagger")
             self.tokenizer = CamembertTokenizer.from_pretrained('qanastek/pos-french-camembert')
             self.pos_tagger = CamembertForTokenClassification.from_pretrained('qanastek/pos-french-camembert')
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
