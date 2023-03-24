@@ -245,7 +245,7 @@ class ForwardTTS(BaseTTS):
                 for param in self.pos_tagger.parameters():
                     param.requires_grad = False
                 print("> POS Tagger is frozen")
-                
+
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
 
     def init_multispeaker(self, config: Coqpit):
@@ -541,9 +541,10 @@ class ForwardTTS(BaseTTS):
             - g: :math:`[B, C]`
             - pitch: :math:`[B, 1, T]`
         """
-        print(x[0,:].tolist())
-        text = sequence_to_text(sequence = x[0, :].tolist(), tp = self.characters, add_blank=self.add_blank)
-        print(text)
+
+        for idx in range(x.shape[0]):
+            text = sequence_to_text(sequence = x[idx, :].tolist(), tp = self.characters, add_blank=self.add_blank)
+            print(text)
 
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
