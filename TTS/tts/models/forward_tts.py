@@ -236,6 +236,7 @@ class ForwardTTS(BaseTTS):
 
         if self.args.use_pos_tagger:
             print("> Using POS Tagger")
+            print(config)
             self.tokenizer = CamembertTokenizer.from_pretrained('qanastek/pos-french-camembert')
             self.pos_tagger = CamembertForTokenClassification.from_pretrained('qanastek/pos-french-camembert')
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
@@ -536,7 +537,7 @@ class ForwardTTS(BaseTTS):
         print(x[0,:].tolist())
         text = sequence_to_text(x[0, :].tolist())
         print(text)
-        
+
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
