@@ -17,6 +17,7 @@ from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.visual import plot_alignment, plot_pitch, plot_spectrogram
 
 from transformers import CamembertTokenizer, CamembertForTokenClassification, TokenClassificationPipeline
+from TTS.tts.utils.text import sequence_to_text
 
 @dataclass
 class ForwardTTSArgs(Coqpit):
@@ -532,6 +533,10 @@ class ForwardTTS(BaseTTS):
             - g: :math:`[B, C]`
             - pitch: :math:`[B, 1, T]`
         """
+        print(x[0,:].tolist())
+        text = sequence_to_text(x[0, :].tolist())
+        print(text)
+        
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
