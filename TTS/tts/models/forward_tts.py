@@ -238,7 +238,6 @@ class ForwardTTS(BaseTTS):
             print("> Using POS Tagger")
             self.characters = config.characters
             self.add_blank = config.add_blank
-            self.custom_symbols = config.custom_symbols
             self.tokenizer = CamembertTokenizer.from_pretrained('qanastek/pos-french-camembert')
             self.pos_tagger = CamembertForTokenClassification.from_pretrained('qanastek/pos-french-camembert')
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
@@ -537,7 +536,7 @@ class ForwardTTS(BaseTTS):
             - pitch: :math:`[B, 1, T]`
         """
         print(x[0,:].tolist())
-        text = sequence_to_text(sequence = x[0, :].tolist(), tp = self.characters, add_blank=self.add_blank, custom_symbols=self.custom_symbols)
+        text = sequence_to_text(sequence = x[0, :].tolist(), tp = self.characters, add_blank=self.add_blank)
         print(text)
 
         g = self._set_speaker_input(aux_input)
