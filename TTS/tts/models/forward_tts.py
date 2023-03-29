@@ -545,7 +545,8 @@ class ForwardTTS(BaseTTS):
         for idx in range(x.shape[0]):
             text = sequence_to_text(sequence = x[idx, :].tolist(), tp = self.characters, add_blank=self.add_blank)
             text = text[:x_lengths[idx]]
-            print(text)
+            labels = [l['entity'] for l in self.pos(text)]
+            print(list(zip(text.split(" "), labels)))
 
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
