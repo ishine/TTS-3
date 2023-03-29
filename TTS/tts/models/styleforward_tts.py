@@ -597,7 +597,8 @@ class StyleforwardTTS(BaseTTS):
 
         o_de_cycle = None
         if(self.config.style_encoder_config.use_cycle_consistency):
-            g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
+            #g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
+            g_cycle = g[torch.randperm(g.shape[0])] # g is (batch_size,1), so here we are getting random permutation of speakers ids
             encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
             
                         # Style Encoder 
