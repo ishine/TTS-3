@@ -594,8 +594,8 @@ class ForwardTTS(BaseTTS):
             # Applying padding for max len
             p_embedding = torch.cat(sen_embeddings, dim = 2)[:,:,1:]
             
-            if (p_embedding.shape[2] < x.shape[2]):
-                p_embedding = torch.nn.functional.pad(p_embedding, (0, x.shape[2] - p_embedding.shape[2]), mode='constant', value=0)
+            if (p_embedding.shape[2] < x.shape[1]):
+                p_embedding = torch.nn.functional.pad(p_embedding, (0, x.shape[1] - p_embedding.shape[2]), mode='constant', value=0)
 
             # Concatenated embeddings for sentence
             phrase_embeddings.append(p_embedding)
