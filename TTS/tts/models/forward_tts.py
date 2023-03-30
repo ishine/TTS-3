@@ -246,7 +246,9 @@ class ForwardTTS(BaseTTS):
                     param.requires_grad = False
                 print("> POS Tagger is frozen")
 
-            self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer)
+            self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer, device = 'cuda:0')
+
+            self.pos_embs = nn.Embedding(len(self.pos.model.config.id2label), self.args.hidden_channels)
 
     def init_multispeaker(self, config: Coqpit):
         """Init for multi-speaker training.
@@ -542,11 +544,51 @@ class ForwardTTS(BaseTTS):
             - pitch: :math:`[B, 1, T]`
         """
 
+        # Get Texts Batch
+        texts = []
         for idx in range(x.shape[0]):
             text = sequence_to_text(sequence = x[idx, :].tolist(), tp = self.characters, add_blank=self.add_blank)
             text = text[:x_lengths[idx]]
-            labels = [l['entity'] for l in self.pos(text)]
-            print(list(zip(text.split(" "), labels)))
+            texts.append([text])
+
+        # Make parallel prediction
+        predictions = self.pos(texts)
+
+        embeddings = []
+        words = []
+        phrase_embeddings = []
+
+        for sentence_idx in range(len(predictions)):
+            sen_embeddings = []
+            sen_words = []
+            for token_idx in range(len(predictions[sentence_idx])):
+                
+                # Get class and words delimiter
+                token = predictions[sentence_idx][token_idx]
+                entity = token['entity']
+                word = token['word']
+                
+                # Class to ID
+                token_id = self.pos.model.config.label2id[entity]
+                
+                # ID to embedding
+                embedding = self.pos_embs(torch.IntTensor([int(token_id)])).unsqueeze(2)
+                
+                # Embedding to fine grained
+                embedding_fine = embedding.repeat(1,1,len(word)) 
+                
+                # Save results
+                sen_embeddings.append(embedding_fine)
+                sen_words.append(word)
+            
+            # Embeddings delimited by words
+            embeddings.append(sen_embeddings)
+
+            # Words with delimitations
+            words.append(sen_words)
+            
+            # Concatenated embeddings for sentence
+            phrase_embeddings.append(torch.cat(sen_embeddings, dim = 2)[:,:,1:])
 
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
