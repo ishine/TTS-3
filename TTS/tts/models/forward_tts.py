@@ -574,7 +574,7 @@ class ForwardTTS(BaseTTS):
                 token_id = self.pos.model.config.label2id[entity]
                 
                 # ID to embedding
-                embedding = self.pos_embs(torch.IntTensor([int(token_id)])).unsqueeze(2)
+                embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
                 
                 # Embedding to fine grained
                 embedding_fine = embedding.repeat(1,1,len(word)) 
