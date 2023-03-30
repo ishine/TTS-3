@@ -557,10 +557,12 @@ class ForwardTTS(BaseTTS):
         embeddings = []
         words = []
         phrase_embeddings = []
+        entities = []
 
         for sentence_idx in range(len(predictions)):
             sen_embeddings = []
             sen_words = []
+            sen_ent = []
             for token_idx in range(len(predictions[sentence_idx])):
                 
                 # Get class and words delimiter
@@ -572,7 +574,7 @@ class ForwardTTS(BaseTTS):
                 token_id = self.pos.model.config.label2id[entity]
                 
                 # ID to embedding
-                embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
+                embedding = self.pos_embs(torch.IntTensor([int(token_id)])).unsqueeze(2)
                 
                 # Embedding to fine grained
                 embedding_fine = embedding.repeat(1,1,len(word)) 
@@ -580,15 +582,25 @@ class ForwardTTS(BaseTTS):
                 # Save results
                 sen_embeddings.append(embedding_fine)
                 sen_words.append(word)
+                sen_ent.append(entity)
             
             # Embeddings delimited by words
             embeddings.append(sen_embeddings)
 
             # Words with delimitations
             words.append(sen_words)
+            entities.append(sen_ent)
             
+            # Applying padding for max len
+            p_embedding = torch.cat(sen_embeddings, dim = 2)[:,:,1:]
+            
+            if (p_embedding.shape[2] < x.shape[2]):
+                p_embedding = torch.nn.functional.pad(p_embedding, (0, x.shape[2] - p_embedding.shape[2]), mode='constant', value=0)
+
             # Concatenated embeddings for sentence
-            phrase_embeddings.append(torch.cat(sen_embeddings, dim = 2)[:,:,1:])
+            phrase_embeddings.append(p_embedding)
+            
+        batch_pos_embs = torch.cat(phrase_embeddings, dim=0)
 
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
