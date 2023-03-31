@@ -248,7 +248,8 @@ class ForwardTTS(BaseTTS):
                 for block in to_freeze:
                     for param in block.parameters():
                         param.requires_grad = False
-                    print("POS, Decoder, Aligner and Duration Predictor are frozen")
+                
+                print("POS, Decoder, Aligner and Duration Predictor are frozen")
 
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer, device = 'cuda:0')
 
