@@ -243,12 +243,12 @@ class ForwardTTS(BaseTTS):
 
             if True: # Here goes freeze.pos in the future
                 
-                to_freeze = [self.pos_tagger, self.decoder, self.pitch_predictor, self.duration_predictor, self.aligner, self.pitch_emb]
+                to_freeze = [self.pos_tagger, self.decoder, self.duration_predictor, self.aligner]
                 
                 for block in to_freeze:
                     for param in block.parameters():
                         param.requires_grad = False
-                    print(f"{block=}" + "is frozen")
+                    print("POS, Decoder, Aligner and Duration Predictor are frozen")
 
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer, device = 'cuda:0')
 
