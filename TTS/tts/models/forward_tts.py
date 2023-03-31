@@ -242,13 +242,18 @@ class ForwardTTS(BaseTTS):
             self.pos_tagger = CamembertForTokenClassification.from_pretrained('qanastek/pos-french-camembert')
 
             if True: # Here goes freeze.pos in the future
-                for param in self.pos_tagger.parameters():
-                    param.requires_grad = False
-                print("> POS Tagger is frozen")
+                
+                to_freeze = [self.pos_tagger, self.decoder, self.pitch_predictor, self.duration_predictor, self.aligner, self.pitch_emb]
+                
+                for block in to_freeze:
+                    for param in block.parameters():
+                        param.requires_grad = False
+                    print(f"{block=}" + "is frozen")
 
             self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer, device = 'cuda:0')
 
             self.pos_embs = nn.Embedding(len(self.pos.model.config.id2label), self.args.hidden_channels)
+            nn.init.zeros_(self.pos_embs.weight)
 
     def init_multispeaker(self, config: Coqpit):
         """Init for multi-speaker training.
@@ -544,70 +549,79 @@ class ForwardTTS(BaseTTS):
             - pitch: :math:`[B, 1, T]`
         """
 
-        # Get Texts Batch
-        texts = []
-        for idx in range(x.shape[0]):
-            text = sequence_to_text(sequence = x[idx, :].tolist(), tp = self.characters, add_blank=self.add_blank)
-            text = text[:x_lengths[idx]]
-            texts.append([text])
-
-        # Make parallel prediction
-        predictions = self.pos(texts)
-
-        embeddings = []
-        words = []
-        phrase_embeddings = []
-        entities = []
-
-        for sentence_idx in range(len(predictions)):
-            sen_embeddings = []
-            sen_words = []
-            sen_ent = []
-            for token_idx in range(len(predictions[sentence_idx])):
-                
-                # Get class and words delimiter
-                token = predictions[sentence_idx][token_idx]
-                entity = token['entity']
-                word = token['word']
-                
-                # Class to ID
-                token_id = self.pos.model.config.label2id[entity]
-                
-                # ID to embedding
-                embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
-                
-                # Embedding to fine grained
-                embedding_fine = embedding.repeat(1,1,len(word)) 
-                
-                # Save results
-                sen_embeddings.append(embedding_fine)
-                sen_words.append(word)
-                sen_ent.append(entity)
-            
-            # Embeddings delimited by words
-            embeddings.append(sen_embeddings)
-
-            # Words with delimitations
-            words.append(sen_words)
-            entities.append(sen_ent)
-            
-            # Applying padding for max len
-            p_embedding = torch.cat(sen_embeddings, dim = 2)[:,:,1:]
-            
-            if (p_embedding.shape[2] < x.shape[1]):
-                p_embedding = torch.nn.functional.pad(p_embedding, (0, x.shape[1] - p_embedding.shape[2]), mode='constant', value=0)
-
-            # Concatenated embeddings for sentence
-            phrase_embeddings.append(p_embedding)
-            
-        batch_pos_embs = torch.cat(phrase_embeddings, dim=0)
-
+        
         g = self._set_speaker_input(aux_input)
         # compute sequence masks
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
         # encoder pass
         o_en, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
+
+        if (self.config.model_args.use_pos_tagger):
+
+            # Get Texts Batch
+            texts = []
+            for idx in range(x.shape[0]):
+                text = sequence_to_text(sequence = x[idx, :].tolist(), tp = self.characters, add_blank=self.add_blank)
+                text = text[:x_lengths[idx]]
+                texts.append([text])
+
+            # Make parallel prediction
+            predictions = self.pos(texts)
+
+            embeddings = []
+            words = []
+            phrase_embeddings = []
+            entities = []
+
+            for sentence_idx in range(len(predictions)):
+                sen_embeddings = []
+                sen_words = []
+                sen_ent = []
+                for token_idx in range(len(predictions[sentence_idx])):
+                    
+                    # Get class and words delimiter
+                    token = predictions[sentence_idx][token_idx]
+                    entity = token['entity']
+                    word = token['word']
+                    
+                    # Class to ID
+                    token_id = self.pos.model.config.label2id[entity]
+                    
+                    # ID to embedding
+                    embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
+                    
+                    # Embedding to fine grained
+                    embedding_fine = embedding.repeat(1,1,len(word)) 
+                    
+                    # Save results
+                    sen_embeddings.append(embedding_fine)
+                    sen_words.append(word)
+                    sen_ent.append(entity)
+                
+                # Embeddings delimited by words
+                embeddings.append(sen_embeddings)
+
+                # Words with delimitations
+                words.append(sen_words)
+                entities.append(sen_ent)
+                
+                # Concat all embeddings of a sentence (execpt BOS char)
+                p_embedding = torch.cat(sen_embeddings, dim = 2)[:,:,1:]
+                
+                # Applying padding for max len
+                if (p_embedding.shape[2] < x.shape[1]):
+                    p_embedding = torch.nn.functional.pad(p_embedding, (0, x.shape[1] - p_embedding.shape[2]), mode='constant', value=0)
+
+                # Save
+                phrase_embeddings.append(p_embedding)
+
+            # Concat along batch dim    
+            batch_pos_embs = torch.cat(phrase_embeddings, dim=0)
+
+            # POS pass
+            o_en = o_en + batch_pos_embs
+        
         # duration predictor pass
         if self.args.detach_duration_predictor:
             o_dr_log = self.duration_predictor(o_en.detach(), x_mask)
