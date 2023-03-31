@@ -243,7 +243,7 @@ class ForwardTTS(BaseTTS):
 
             if True: # Here goes freeze.pos in the future
                 
-                to_freeze = [self.pos_tagger, self.decoder, self.duration_predictor, self.aligner]
+                to_freeze = [self.pos_tagger, self.decoder, self.aligner]
                 
                 for block in to_freeze:
                     for param in block.parameters():
