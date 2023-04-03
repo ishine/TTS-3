@@ -4,7 +4,6 @@ from typing import Dict, Tuple
 import torch
 from coqpit import Coqpit
 from torch import nn
-from torch.cuda.amp.autocast_mode import autocast
 
 from TTS.tts.layers.feed_forward.decoder import Decoder
 from TTS.tts.layers.feed_forward.encoder import Encoder
@@ -251,7 +250,7 @@ class ForwardTTS(BaseTTS):
                 
                 print("POS, Decoder, Aligner and Duration Predictor are frozen")
 
-            self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer, device = 'cuda:0')
+            self.pos = TokenClassificationPipeline(model=self.pos_tagger, tokenizer=self.tokenizer, device = 'cpu')
 
             self.pos_embs = nn.Embedding(len(self.pos.model.config.id2label), self.args.hidden_channels)
             nn.init.zeros_(self.pos_embs.weight)
@@ -590,7 +589,7 @@ class ForwardTTS(BaseTTS):
                     token_id = self.pos.model.config.label2id[entity]
                     
                     # ID to embedding
-                    embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
+                    embedding = self.pos_embs(torch.IntTensor([int(token_id)])).unsqueeze(2)
                     
                     # Embedding to fine grained
                     embedding_fine = embedding.repeat(1,1,len(word)) 
@@ -719,7 +718,7 @@ class ForwardTTS(BaseTTS):
                     token_id = self.pos.model.config.label2id[entity]
                     
                     # ID to embedding
-                    embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
+                    embedding = self.pos_embs(torch.IntTensor([int(token_id)])).unsqueeze(2)
                     
                     # Embedding to fine grained
                     embedding_fine = embedding.repeat(1,1,len(word)) 
