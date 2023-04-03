@@ -686,6 +686,72 @@ class ForwardTTS(BaseTTS):
         g = self._set_speaker_input(aux_input)
         x_lengths = torch.tensor(x.shape[1:2]).to(x.device)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
+        
+        if (self.config.model_args.use_pos_tagger):
+
+            # Get Texts Batch
+            texts = []
+            for idx in range(x.shape[0]):
+                text = sequence_to_text(sequence = x[idx, :].tolist(), tp = self.characters, add_blank=self.add_blank)
+                text = text[:x_lengths[idx]]
+                texts.append([text])
+
+            # Make parallel prediction
+            predictions = self.pos(texts)
+
+            embeddings = []
+            words = []
+            phrase_embeddings = []
+            entities = []
+
+            for sentence_idx in range(len(predictions)):
+                sen_embeddings = []
+                sen_words = []
+                sen_ent = []
+                for token_idx in range(len(predictions[sentence_idx])):
+                    
+                    # Get class and words delimiter
+                    token = predictions[sentence_idx][token_idx]
+                    entity = token['entity']
+                    word = token['word']
+                    
+                    # Class to ID
+                    token_id = self.pos.model.config.label2id[entity]
+                    
+                    # ID to embedding
+                    embedding = self.pos_embs(torch.cuda.IntTensor([int(token_id)])).unsqueeze(2)
+                    
+                    # Embedding to fine grained
+                    embedding_fine = embedding.repeat(1,1,len(word)) 
+                    
+                    # Save results
+                    sen_embeddings.append(embedding_fine)
+                    sen_words.append(word)
+                    sen_ent.append(entity)
+                
+                # Embeddings delimited by words
+                embeddings.append(sen_embeddings)
+
+                # Words with delimitations
+                words.append(sen_words)
+                entities.append(sen_ent)
+                
+                # Concat all embeddings of a sentence (execpt BOS char)
+                p_embedding = torch.cat(sen_embeddings, dim = 2)[:,:,1:]
+                
+                # Applying padding for max len
+                if (p_embedding.shape[2] < x.shape[1]):
+                    p_embedding = torch.nn.functional.pad(p_embedding, (0, x.shape[1] - p_embedding.shape[2]), mode='constant', value=0)
+
+                # Save
+                phrase_embeddings.append(p_embedding)
+
+            # Concat along batch dim    
+            batch_pos_embs = torch.cat(phrase_embeddings, dim=0)
+
+            # POS pass
+            o_en = o_en + batch_pos_embs
+            
         # encoder pass
         o_en, x_mask, g, _ = self._forward_encoder(x, x_mask, g)
         # duration predictor pass
