@@ -93,8 +93,6 @@ class MetaStyleEncoder(nn.Module):
             enc_output = layer(enc_output)
             enc_output = residual + enc_output
 
-        print(f'enc_output shape pre mha = \n{enc_output.shape}\n')
-
         # Multi-head self-attention
         for _, layer in enumerate(self.slf_attn_stack):
             residual = enc_output
@@ -103,15 +101,11 @@ class MetaStyleEncoder(nn.Module):
             )
             enc_output = residual + enc_output
 
-        print(f'enc_output = \n{enc_output}\n')
-
         # Final Layer
         enc_output = self.fc_2(enc_output) # [B, T, H]
 
-
         # Temporal Average Pooling
         enc_output = torch.mean(enc_output, dim=1, keepdim=True) # [B, 1, H]
-
 
         return enc_output.squeeze(1) # (B,H)
 

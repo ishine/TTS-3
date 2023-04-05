@@ -769,6 +769,11 @@ class StyleforwardTTS(BaseTTS):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de, g]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
+            elif(self.config.style_encoder_config.se_type == 'metastyle'):
+                ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de , mel_mask = y_lengths)
+                style_embeddings_ = self.post_style_processor(ressynt_style_encoder_output['style_embedding'])
+        
+                ressynt_style_encoder_output = style_embeddings_
             else:
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
@@ -778,6 +783,11 @@ class StyleforwardTTS(BaseTTS):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de_cycle, g]
                 cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
+            elif(self.config.style_encoder_config.se_type == 'metastyle'):
+                cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de_cycle , mel_mask = y_lengths)
+                style_embeddings_ = self.post_style_processor(cycle_style_encoder_output['style_embedding'])
+        
+                cycle_style_encoder_output = style_embeddings_
             else:
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de_cycle]
                 cycle_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
