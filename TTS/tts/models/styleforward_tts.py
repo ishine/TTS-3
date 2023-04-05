@@ -641,9 +641,6 @@ class StyleforwardTTS(BaseTTS):
                     style_embeddings_cycle = self.post_style_processor(style_encoder_outputs_cycle['style_embedding'])
 
                     speaker_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings_cycle
-                    print(o_en_cycle)
-                    print(style_embeddings_cycle)
-                    print(style_encoder_outputs_cycle['style_embedding'])
 
                     style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
 

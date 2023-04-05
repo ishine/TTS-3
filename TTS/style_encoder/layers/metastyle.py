@@ -76,22 +76,27 @@ class MetaStyleEncoder(nn.Module):
 
         mask = get_mask_from_lengths(mask).unsqueeze(-1) # [B, req_len, 1]
 
-        print(mask.sum(),mask)
-
         # slf_attn_mask = mask.unsqueeze(1).expand(-1, max_len, -1)
         slf_attn_mask = mask
 
         enc_output = self.fc_1(mel)
 
+        print(f'enc_output = \n{enc_output}\n')
+
+
         # Spectral Processing
         for _, layer in enumerate(self.spectral_stack):
             enc_output = layer(enc_output)
+        
+        print(f'enc_output = \n{enc_output}\n')
 
         # Temporal Processing
         for _, layer in enumerate(self.temporal_stack):
             residual = enc_output
             enc_output = layer(enc_output)
             enc_output = residual + enc_output
+
+        print(f'enc_output = \n{enc_output}\n')
 
         # Multi-head self-attention
         for _, layer in enumerate(self.slf_attn_stack):
@@ -101,13 +106,17 @@ class MetaStyleEncoder(nn.Module):
             )
             enc_output = residual + enc_output
 
+        print(f'enc_output = \n{enc_output}\n')
+
         # Final Layer
         enc_output = self.fc_2(enc_output) # [B, T, H]
 
+        print(f'enc_output = \n{enc_output}\n')
 
         # Temporal Average Pooling
         enc_output = torch.mean(enc_output, dim=1, keepdim=True) # [B, 1, H]
 
+        print(f'enc_output = \n{enc_output}\n')
 
         return enc_output.squeeze(1) # (B,H)
 
