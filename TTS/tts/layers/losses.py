@@ -1000,9 +1000,15 @@ class StyleForwardTTSLoss(nn.Module):
             self.criterion_se = VQVAEStyleEncoderLoss(self.style_encoder_config)
 
         if self.style_encoder_config.use_guided_style:
-            self.criterion_guided = nn.CrossEntropyLoss()
+            self.criterion_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
             # self.criterion_guided = nn.CrossEntropyLoss(weight =torch.Tensor([10,10,0.1,10])) # To balance styles
             # self.criterion_guided = nn.CrossEntropyLoss(ignore_index = 3) # To ignore none style (semi supervised)
+        
+        if self.style_encoder_config.use_residual_speaker_disentanglement:
+            self.criterion_speaker_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
+            self.criterion_grl_style_in_speaker_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
+        
+
         if(self.style_encoder_config.use_grl_on_speakers_in_style_embedding):
             if(self.style_encoder_config.balanced_grl):
                 self.criterion_grl_speaker_in_style_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
@@ -1053,7 +1059,10 @@ class StyleForwardTTSLoss(nn.Module):
         speaker_preds_from_style=None,
         ressynt_style_encoder_output=None,
         cycle_style_encoder_output=None,
-        step = None
+        step = None,
+        residual_speaker_embeddings = None,
+        residual_style_preds = None,
+        residual_speaker_preds = None
     ):
         loss = 0
         return_dict = {}
@@ -1178,6 +1187,8 @@ class StyleForwardTTSLoss(nn.Module):
             return_dict["grl_speaker_in_style_embedding"] = grl_speaker_in_style_loss
 
 
+
+
         if(self.style_encoder_config.use_clip_loss):
             # print(style_encoder_output['style_embedding'].shape)
             # print(ressynt_style_encoder_output['style_embedding'].shape)
@@ -1213,6 +1224,20 @@ class StyleForwardTTSLoss(nn.Module):
             else:
 
                 return_dict['cycle_style_distortion_loss'] = 9999 # Just a number that you will see in trainer log output and confirm that this loss is not being propagated
+
+        if self.style_encoder_config.use_residual_speaker_disentanglement:
+            
+            speaker_guided_loss = self.criterion_speaker_guided(residual_speaker_preds, speaker_ids)
+
+            grl_style_in_speaker_loss = self.criterion_grl_style_in_speaker_embedding(residual_style_preds, style_ids)
+
+            speaker_style_orthogonal_loss = torch.trace(torch.inner(style_encoder_output['style_embedding'], residual_speaker_embeddings).abs())/len(batch)
+
+            loss += (speaker_guided_loss + grl_style_in_speaker_loss + speaker_style_orthogonal_loss)
+        
+            return_dict['speaker_guided_loss'] = speaker_guided_loss 
+            return_dict['grl_style_in_speaker_embedding'] = grl_style_in_speaker_loss
+            return_dict['speaker_style_ortho_loss'] = speaker_style_orthogonal_loss
 
         # Just for checking losses, todo: turn this optional
         return_dict['which_step_in_model_loss_calc'] = step

@@ -40,6 +40,8 @@ class StyleEncoderConfig(Coqpit):
     speaker_orthogonal_loss: bool = False # whether use othogonal loss between speaker and content embeddings
     use_guided_style: bool = False # Whether use guided style encoder training
     
+    use_residual_speaker_disentanglement: bool = False # If true, decomposes style embedding in F and SE-F, where SE-F will represent speakers
+
     # Finegrained re specific configs
     fg_attention_dropout: float = 0.1
     fg_attention_dim: int = 384
@@ -108,7 +110,7 @@ class StyleEncoderConfig(Coqpit):
         c = asdict(self)
         super().check_values()
 
-        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae","vqvae", "diffusion", "vaeflow","finegrainedre","modifiedre", "bidirectionalre"])
+        check_argument("se_type", c, restricted=True, enum_list=["gst", "re","vae","vqvae", "diffusion", "vaeflow","finegrainedre","modifiedre", "bidirectionalre","metastyle"])
         check_argument("agg_type", c, restricted=True, enum_list=["sum", "concat", "adain"])
         check_argument("num_mel", c, restricted=False)
         check_argument("style_embedding_dim", c, restricted=True, min_val=0, max_val=1000)
