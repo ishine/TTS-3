@@ -1024,7 +1024,8 @@ class StyleForwardTTSLoss(nn.Module):
 
         if(self.style_encoder_config.use_cycle_consistency):
             self.criterion_cycle_consistency = nn.MSELoss()
-
+            self.criterion_speaker_cycle_consistency = nn.MSELoss()
+            
         self.spec_loss_alpha = c.spec_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
         self.binary_alignment_loss_alpha = c.binary_align_loss_alpha
@@ -1059,6 +1060,7 @@ class StyleForwardTTSLoss(nn.Module):
         speaker_preds_from_style=None,
         ressynt_style_encoder_output=None,
         cycle_style_encoder_output=None,
+        speaker_embeddings_cycle= None,
         step = None,
         residual_speaker_embeddings = None,
         residual_style_preds = None,
@@ -1239,6 +1241,11 @@ class StyleForwardTTSLoss(nn.Module):
             return_dict['grl_style_in_speaker_embedding'] = grl_style_in_speaker_loss
             return_dict['speaker_style_ortho_loss'] = speaker_style_orthogonal_loss
 
+            if(self.style_encoder_config.use_cycle_consistency):
+                cycle_speaker_loss = self.criterion_speaker_cycle_consistency(speaker_embeddings_cycle, residual_speaker_embeddings)
+                return_dict['cycle_speaker_distortion_loss'] = cycle_speaker_loss
+
+                loss += cycle_speaker_loss
         # Just for checking losses, todo: turn this optional
         return_dict['which_step_in_model_loss_calc'] = step
         # return_dict['NOT_OPT_identity_style_loss'] = nn.MSELoss()(style_encoder_output['style_embedding'], ressynt_style_encoder_output)

@@ -636,11 +636,13 @@ class StyleforwardTTS(BaseTTS):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
 
                 if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
-                    style_embeddings_cycle = self.post_style_processor(style_encoder_outputs['style_embedding'])
-                    # speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['styled_inputs'] - style_embeddings)
+                    style_embeddings_cycle = self.post_style_processor(style_encoder_outputs_cycle['style_embedding'])
+                    speaker_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings
 
                     # grl_style_outs = self.grl_on_styles_in_speaker_embedding(speaker_embeddings)
                     # residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+
+                    style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
 
                     o_en_cycle = o_en_cycle + style_embeddings_cycle.permute(0,2,1)
                 else:
@@ -797,6 +799,7 @@ class StyleforwardTTS(BaseTTS):
             'speaker_preds_from_style': speaker_preds_from_style,
             'ressynt_style_encoder_output': ressynt_style_encoder_output,
             'cycle_style_encoder_output': cycle_style_encoder_output,
+            'speaker_embeddings_cycle': speaker_embeddings_cycle,
             'model_outputs_middle_cycle': o_de_cycle,
             'residual_speaker_embeddings': residual_speaker_embeddings,
             'residual_style_preds': residual_style_preds,
@@ -977,6 +980,7 @@ class StyleforwardTTS(BaseTTS):
                 speaker_preds_from_style = outputs['speaker_preds_from_style'],
                 ressynt_style_encoder_output = outputs['ressynt_style_encoder_output'],
                 cycle_style_encoder_output = outputs['cycle_style_encoder_output'],
+                speaker_embeddings_cycle = outputs['speaker_embeddings_cycle'],
                 step = step,
                 residual_speaker_embeddings = outputs['residual_speaker_embeddings'],
                 residual_style_preds = outputs['residual_style_preds'],

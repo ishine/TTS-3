@@ -73,6 +73,9 @@ class MetaStyleEncoder(nn.Module):
     def forward(self, mel, mask):
 
         max_len = mel.shape[1]
+
+        mask = get_mask_from_lengths(mask).float().unsqueeze(-1) # [B, req_len, 1]
+
         slf_attn_mask = mask.unsqueeze(1).expand(-1, max_len, -1)
 
         print(slf_attn_mask.shape)
@@ -335,3 +338,9 @@ class PositionwiseFeedForward(nn.Module):
         output = output + residual
 
         return output
+    
+def get_mask_from_lengths(lengths):
+    max_len = torch.max(lengths).item()
+    ids = torch.arange(0, max_len, out=torch.cuda.LongTensor(max_len))
+    mask = (ids < lengths.unsqueeze(1)).bool() # (B, max_len)
+    return mask
