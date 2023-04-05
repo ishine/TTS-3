@@ -644,6 +644,8 @@ class StyleforwardTTS(BaseTTS):
 
                     style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
 
+                    print(o_en_cycle.shape, speaker_embeddings_cycle.shape)
+
                     o_en_cycle = (o_en_cycle + style_embeddings_cycle).permute(0,2,1)
                 else:
                     o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
