@@ -645,7 +645,6 @@ class StyleforwardTTS(BaseTTS):
                     style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
 
                     style_embeddings_cycle = style_embeddings_cycle.unsqueeze(1).expand(o_en_cycle.size(0), o_en_cycle.size(1), -1)
-                    print(o_en_cycle.shape, style_embeddings_cycle.shape)
 
                     o_en_cycle = (o_en_cycle + style_embeddings_cycle).permute(0,2,1)
                 else:
@@ -707,8 +706,11 @@ class StyleforwardTTS(BaseTTS):
                 residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
                 
                 residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
-
+                
                 style_encoder_outputs['style_embedding'] = style_embeddings
+    
+                style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
+               
                 o_en = (o_en + style_embeddings).permute(0,2,1)
             else:
                 o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
@@ -879,6 +881,9 @@ class StyleforwardTTS(BaseTTS):
                 style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
 
                 style_encoder_outputs['style_embedding'] = style_embeddings
+
+                style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
+
                 o_en = (o_en + style_embeddings).permute(0,2,1)
             else:
                 o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
