@@ -74,7 +74,7 @@ class MetaStyleEncoder(nn.Module):
 
         max_len = mel.shape[1]
 
-        mask = get_mask_from_lengths(mask).float().unsqueeze(-1) # [B, req_len, 1]
+        mask = get_mask_from_lengths(mask).unsqueeze(-1) # [B, req_len, 1]
 
         # slf_attn_mask = mask.unsqueeze(1).expand(-1, max_len, -1)
         slf_attn_mask = mask
