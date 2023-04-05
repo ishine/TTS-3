@@ -81,14 +81,11 @@ class MetaStyleEncoder(nn.Module):
 
         enc_output = self.fc_1(mel)
 
-        print(f'enc_output = \n{enc_output}\n')
-
 
         # Spectral Processing
         for _, layer in enumerate(self.spectral_stack):
             enc_output = layer(enc_output)
         
-        print(f'enc_output = \n{enc_output}\n')
 
         # Temporal Processing
         for _, layer in enumerate(self.temporal_stack):
@@ -96,7 +93,7 @@ class MetaStyleEncoder(nn.Module):
             enc_output = layer(enc_output)
             enc_output = residual + enc_output
 
-        print(f'enc_output = \n{enc_output}\n')
+        print(f'enc_output shape pre mha = \n{enc_output.shape}\n')
 
         # Multi-head self-attention
         for _, layer in enumerate(self.slf_attn_stack):
@@ -111,12 +108,10 @@ class MetaStyleEncoder(nn.Module):
         # Final Layer
         enc_output = self.fc_2(enc_output) # [B, T, H]
 
-        print(f'enc_output = \n{enc_output}\n')
 
         # Temporal Average Pooling
         enc_output = torch.mean(enc_output, dim=1, keepdim=True) # [B, 1, H]
 
-        print(f'enc_output = \n{enc_output}\n')
 
         return enc_output.squeeze(1) # (B,H)
 
