@@ -785,8 +785,7 @@ class StyleforwardTTS(BaseTTS):
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de_cycle, g]
                 cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
             elif(self.config.style_encoder_config.se_type == 'metastyle'):
-                print(y_lengths_cycle.type(torch.LongTensor).get_device())
-                cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de_cycle , mel_mask = y_lengths_cycle.type(torch.LongTensor))
+                cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de_cycle , mel_mask = y_lengths_cycle.type(torch.LongTensor).to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu")))
                 style_embeddings_ = self.post_style_processor(cycle_style_encoder_output['style_embedding'])
         
                 cycle_style_encoder_output = style_embeddings_
