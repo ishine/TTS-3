@@ -8,6 +8,8 @@ from TTS.style_encoder.layers.vae import VAEStyleEncoder
 from TTS.style_encoder.layers.vqvae import VQVAEStyleEncoder
 from TTS.style_encoder.layers.vaeflow import VAEFlowStyleEncoder
 from TTS.style_encoder.layers.diffusion import DiffStyleEncoder
+from TTS.style_encoder.layers.metastyle import MetaStyleEncoder
+
 
 class StyleEncoder(nn.Module):
     def __init__(self, config:Coqpit) -> None:
@@ -94,6 +96,15 @@ class StyleEncoder(nn.Module):
                 den_num_blocks = self.diff_num_blocks,
                 den_dropout = self.diff_dropout
             )
+        elif self.se_type == 'metastyle':
+            self.layer = MetaStyleEncoder(
+                num_mel = self.num_mel, 
+                embedding_dim = self.style_embedding_dim, 
+                n_spectral = 2, 
+                n_temporal = 2, n_mha = 1, 
+                mha_heads = 1, 
+                max_seq_len = 400
+            )
         else:
             raise NotImplementedError
 
@@ -116,6 +127,8 @@ class StyleEncoder(nn.Module):
             out = self.vqvae_forward(*inputs)
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_forward(*inputs)
+        elif self.se_type == 'metastyle':
+            out = self.metastyle_forward(*inputs, kwargs['mel_mask'])
         else:
             raise NotImplementedError
         return out
@@ -139,6 +152,8 @@ class StyleEncoder(nn.Module):
             out = self.vqvae_inference(inputs, ref_mels= kwargs['style_mel'], K = kwargs['K'])
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_inference(inputs, ref_mels = kwargs['style_mel'], z = kwargs['z'])
+        elif self.se_type == 'metastyle':
+            out = self.metastyle_forward(*inputs, kwargs['mel_mask'])
         else:
             raise NotImplementedError
         return out
@@ -149,6 +164,33 @@ class StyleEncoder(nn.Module):
     
     # Styled Inputs = [B, L, STY_DIM]
     # Style Embedding = [B, STY_DIM]
+
+    def metastyle_forward(self, inputs, style_input, mel_mask):
+        if style_input is None:
+            # ignore style token and return zero tensor
+            gst_outputs = torch.zeros(1, 1, self.style_embedding_dim).type_as(inputs)
+        elif style_input.shape == torch.Size([1, self.style_embedding_dim]):
+            gst_outputs = style_input
+        else:
+            # compute style tokens
+            input_args = [style_input, mel_mask]
+            gst_outputs = self.layer(*input_args) 
+        
+            if(self.use_nonlinear_proj):
+                gst_outputs = torch.tanh(self.nl_proj(gst_outputs))
+                gst_outputs = self.dropout(gst_outputs)
+            
+            if(self.use_proj_linear):
+                gst_outputs = self.proj(gst_outputs)
+
+        if(self.agg_type == 'concat'):
+            inputs = self._concat_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+        elif(self.agg_type == 'adain'):
+            inputs = self._adain(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+        else:
+            inputs = self._add_speaker_embedding(outputs = inputs, embedded_speakers = gst_outputs.unsqueeze(1))
+            
+        return {'styled_inputs': inputs, 'style_embedding': gst_outputs}
 
     def modified_re_embedding_forward(self, inputs, style_input, speaker_embedding):
         if style_input is None:

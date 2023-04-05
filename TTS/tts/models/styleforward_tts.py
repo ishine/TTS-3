@@ -201,6 +201,23 @@ class StyleforwardTTS(BaseTTS):
             else:
                 self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
         
+        if(config.style_encoder_config.use_residual_speaker_disentanglement):
+            print('Using residual spekaer disentanglement'):
+            
+            self.post_style_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
+                                                      nn.GLU(),
+                                                      nn.Linear(style_embedding_dim, style_embedding_dim))
+            
+            self.post_speaker_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
+                                                      nn.GLU(),
+                                                      nn.Linear(style_embedding_dim, style_embedding_dim))
+            
+            self.style_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_style)
+
+            self.resisual_speaker_classifier = nn.Linear(style_embedding_dim, self.num_speakers)
+
+            self.grl_on_styles_in_speaker_embedding = GradientInverterLayer(config.style_encoder_config.grl_alpha)
+
         
         # # pass all config fields to `self`
         # # for fewer code change
@@ -615,6 +632,19 @@ class StyleforwardTTS(BaseTTS):
             elif(self.config.style_encoder_config.se_type == 'modifiedre'):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , speaker_embedding = g_cycle.permute(0,2,1))
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
+            elif(self.config_style_encoder_config.se_type == 'metastyle'):
+                style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
+
+                if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
+                    style_embeddings_cycle = self.post_style_processor(style_encoder_outputs['style_embedding'])
+                    # speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['styled_inputs'] - style_embeddings)
+
+                    # grl_style_outs = self.grl_on_styles_in_speaker_embedding(speaker_embeddings)
+                    # residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+
+                    o_en_cycle = o_en_cycle + style_embeddings_cycle.permute(0,2,1)
+                else:
+                    o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             else:
                 se_inputs = [encoder_outputs_cycle.permute(0,2,1), y]
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs)
@@ -661,6 +691,23 @@ class StyleforwardTTS(BaseTTS):
         elif(self.config.style_encoder_config.se_type == 'modifiedre'):
             style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , speaker_embedding = g.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+        elif(self.config_style_encoder_config.se_type == 'metastyle'):
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
+
+            if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
+                style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
+                residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding'] - style_embeddings)
+
+                grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
+                residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+                
+                residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
+
+                style_encoder_outputs['style_embedding'] = style_embeddings
+                o_en = o_en + style_embeddings.permute(0,2,1)
+            else:
+                o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+
         else:
             se_inputs = [encoder_outputs.permute(0,2,1), y]
             style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
@@ -750,7 +797,10 @@ class StyleforwardTTS(BaseTTS):
             'speaker_preds_from_style': speaker_preds_from_style,
             'ressynt_style_encoder_output': ressynt_style_encoder_output,
             'cycle_style_encoder_output': cycle_style_encoder_output,
-            'model_outputs_middle_cycle': o_de_cycle
+            'model_outputs_middle_cycle': o_de_cycle,
+            'residual_speaker_embeddings': residual_speaker_embeddings,
+            'residual_style_preds': residual_style_preds,
+            'residual_speaker_preds': residual_speaker_preds
         }
         return outputs
 
@@ -814,6 +864,17 @@ class StyleforwardTTS(BaseTTS):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
             style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), style_mel = aux_input['style_mel'], z = aux_input['z'])
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+        elif(self.config_style_encoder_config.se_type == 'metastyle'):
+            style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[0:1]).to(aux_input['style_mel'].device) 
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=aux_input['style_mel'] , mel_mask = style_mel_lengths)
+
+            if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
+                style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
+
+                style_encoder_outputs['style_embedding'] = style_embeddings
+                o_en = o_en + style_embeddings.permute(0,2,1)
+            else:
+                o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         else:
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
             style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), style_mel = aux_input['style_mel'])
@@ -916,7 +977,10 @@ class StyleforwardTTS(BaseTTS):
                 speaker_preds_from_style = outputs['speaker_preds_from_style'],
                 ressynt_style_encoder_output = outputs['ressynt_style_encoder_output'],
                 cycle_style_encoder_output = outputs['cycle_style_encoder_output'],
-                step = step
+                step = step,
+                residual_speaker_embeddings = outputs['residual_speaker_embeddings'],
+                residual_style_preds = outputs['residual_style_preds'],
+                residual_speaker_preds = outputs['residual_speaker_preds']
             )
             # compute duration error
             durations_pred = outputs["durations"]
