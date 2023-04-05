@@ -202,7 +202,7 @@ class StyleforwardTTS(BaseTTS):
                 self.grl_on_speakers_in_style_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha) # Still assuming only one alpha value
         
         if(config.style_encoder_config.use_residual_speaker_disentanglement):
-            print('Using residual spekaer disentanglement'):
+            print('Using residual spekaer disentanglement')
             
             self.post_style_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
                                                       nn.GLU(),
