@@ -31,7 +31,7 @@ class MetaStyleEncoder(nn.Module):
             embedding_dim
             // mha_heads
         )
-        kernel_size = [9,1]
+        kernel_size = 5
         dropout = 0.1
 
         self.max_seq_len = max_seq_len # This is our default, but it is interesting to be adaptive
