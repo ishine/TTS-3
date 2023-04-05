@@ -76,9 +76,6 @@ class MetaStyleEncoder(nn.Module):
 
         mask = get_mask_from_lengths(mask).unsqueeze(-1) # [B, req_len, 1]
 
-        print(mask.shape)
-        print(mask)
-
         # slf_attn_mask = mask.unsqueeze(1).expand(-1, max_len, -1)
         slf_attn_mask = mask
 
@@ -105,12 +102,10 @@ class MetaStyleEncoder(nn.Module):
         # Final Layer
         enc_output = self.fc_2(enc_output) # [B, T, H]
 
-        print(enc_output.shape)
 
         # Temporal Average Pooling
         enc_output = torch.mean(enc_output, dim=1, keepdim=True) # [B, 1, H]
 
-        print(enc_output.shape)
 
         return enc_output.squeeze(1) # (B,H)
 
