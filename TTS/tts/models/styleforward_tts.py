@@ -204,7 +204,7 @@ class StyleforwardTTS(BaseTTS):
         if(config.style_encoder_config.use_residual_speaker_disentanglement):
             print('Using residual speaker disentanglement')
             
-            self.post_style_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
+            self.post_style_processor = nn.Sequential(nn.Linear(style_embedding_dim, 2*style_embedding_dim), #Because glu return emb/2
                                                       nn.GLU(),
                                                       nn.Linear(style_embedding_dim, style_embedding_dim))
             
@@ -637,14 +637,10 @@ class StyleforwardTTS(BaseTTS):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
 
                 if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-                    
-                    print(style_encoder_outputs_cycle['style_embedding'].shape)
 
                     style_embeddings_cycle = self.post_style_processor(style_encoder_outputs_cycle['style_embedding'])
-                    speaker_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings
 
-                    # grl_style_outs = self.grl_on_styles_in_speaker_embedding(speaker_embeddings)
-                    # residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+                    speaker_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings_cycle
 
                     style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
 
