@@ -1025,7 +1025,7 @@ class StyleForwardTTSLoss(nn.Module):
         if(self.style_encoder_config.use_cycle_consistency):
             self.criterion_cycle_consistency = nn.MSELoss()
             self.criterion_speaker_cycle_consistency = nn.MSELoss()
-            
+
         self.spec_loss_alpha = c.spec_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
         self.binary_alignment_loss_alpha = c.binary_align_loss_alpha
@@ -1229,11 +1229,13 @@ class StyleForwardTTSLoss(nn.Module):
 
         if self.style_encoder_config.use_residual_speaker_disentanglement:
             
+            batch_len = residual_speaker_embeddings.shape[0]
+
             speaker_guided_loss = self.criterion_speaker_guided(residual_speaker_preds, speaker_ids)
 
             grl_style_in_speaker_loss = self.criterion_grl_style_in_speaker_embedding(residual_style_preds, style_ids)
 
-            speaker_style_orthogonal_loss = torch.trace(torch.inner(style_encoder_output['style_embedding'], residual_speaker_embeddings).abs())/len(batch)
+            speaker_style_orthogonal_loss = torch.trace(torch.inner(style_encoder_output['style_embedding'], residual_speaker_embeddings).abs())/batch_len
 
             loss += (speaker_guided_loss + grl_style_in_speaker_loss + speaker_style_orthogonal_loss)
         
