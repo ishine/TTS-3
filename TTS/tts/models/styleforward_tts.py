@@ -632,10 +632,10 @@ class StyleforwardTTS(BaseTTS):
             elif(self.config.style_encoder_config.se_type == 'modifiedre'):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , speaker_embedding = g_cycle.permute(0,2,1))
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
-            elif(self.config_style_encoder_config.se_type == 'metastyle'):
+            elif(self.config.style_encoder_config.se_type == 'metastyle'):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
 
-                if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
+                if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
                     style_embeddings_cycle = self.post_style_processor(style_encoder_outputs_cycle['style_embedding'])
                     speaker_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings
 
@@ -693,10 +693,10 @@ class StyleforwardTTS(BaseTTS):
         elif(self.config.style_encoder_config.se_type == 'modifiedre'):
             style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , speaker_embedding = g.permute(0,2,1))
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
-        elif(self.config_style_encoder_config.se_type == 'metastyle'):
+        elif(self.config.style_encoder_config.se_type == 'metastyle'):
             style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
 
-            if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
+            if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
                 style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
                 residual_speaker_embeddings = style_encoder_outputs['style_embedding'] - style_embeddings
 
@@ -867,11 +867,11 @@ class StyleforwardTTS(BaseTTS):
             # se_inputs = [o_en.permute(0,2,1), aux_input['style_mel']]
             style_encoder_outputs = self.style_encoder_layer.inference(o_en.permute(0,2,1), style_mel = aux_input['style_mel'], z = aux_input['z'])
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
-        elif(self.config_style_encoder_config.se_type == 'metastyle'):
+        elif(self.config.style_encoder_config.se_type == 'metastyle'):
             style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[0:1]).to(aux_input['style_mel'].device) 
             style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=aux_input['style_mel'] , mel_mask = style_mel_lengths)
 
-            if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
+            if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
                 style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
 
                 style_encoder_outputs['style_embedding'] = style_embeddings
