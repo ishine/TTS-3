@@ -208,9 +208,9 @@ class StyleforwardTTS(BaseTTS):
                                                       nn.GLU(),
                                                       nn.Linear(style_embedding_dim, style_embedding_dim))
             
-            self.post_speaker_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
-                                                      nn.GLU(),
-                                                      nn.Linear(style_embedding_dim, style_embedding_dim))
+            # self.post_speaker_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
+            #                                           nn.GLU(),
+            #                                           nn.Linear(style_embedding_dim, style_embedding_dim))
             
             self.style_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_style)
 
@@ -696,7 +696,7 @@ class StyleforwardTTS(BaseTTS):
 
             if(self.config_style_encoder_config.use_residual_speaker_disentanglement):
                 style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
-                residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding'] - style_embeddings)
+                residual_speaker_embeddings = style_encoder_outputs['style_embedding'] - style_embeddings
 
                 grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
                 residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
