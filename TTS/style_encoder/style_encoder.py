@@ -128,7 +128,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_forward(*inputs)
         elif self.se_type == 'metastyle':
-            out = self.metastyle_forward(*inputs, kwargs['mel_mask'])
+            out = self.metastyle_forward(inputs, kwargs['style_mel'], kwargs['mel_mask'])
         else:
             raise NotImplementedError
         return out
@@ -153,7 +153,7 @@ class StyleEncoder(nn.Module):
         elif self.se_type == 'vaeflow':
             out = self.vaeflow_inference(inputs, ref_mels = kwargs['style_mel'], z = kwargs['z'])
         elif self.se_type == 'metastyle':
-            out = self.metastyle_forward(*inputs, kwargs['mel_mask'])
+            out = self.metastyle_forward(inputs, kwargs['style_mel'], kwargs['mel_mask'])
         else:
             raise NotImplementedError
         return out
@@ -174,7 +174,7 @@ class StyleEncoder(nn.Module):
         else:
             # compute style tokens
             input_args = [style_input, mel_mask]
-            gst_outputs = self.layer(*input_args) 
+            gst_outputs = self.layer(mel = style_input, mask = mel_mask) 
         
             if(self.use_nonlinear_proj):
                 gst_outputs = torch.tanh(self.nl_proj(gst_outputs))

@@ -633,6 +633,7 @@ class StyleforwardTTS(BaseTTS):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , speaker_embedding = g_cycle.permute(0,2,1))
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             elif(self.config.style_encoder_config.se_type == 'metastyle'):
+
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
 
                 if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
