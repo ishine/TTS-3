@@ -241,7 +241,7 @@ class Trainer:
 	
         if(self.grad_accum_steps > 1):
                 effective_batch_len = self.config.batch_size*self.grad_accum_steps
-                print('Accum grad ON: effective batch size = {effective_batch_len}')
+                print(f'Accum grad ON: effective batch size = {effective_batch_len}')
 
         self.keep_avg_train = None
         self.keep_avg_eval = None
