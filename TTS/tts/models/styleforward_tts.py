@@ -610,7 +610,7 @@ class StyleforwardTTS(BaseTTS):
             dr = o_alignment_dur
 
         # Style reference features
-        if self.config.style_encoder_config.decompose_mel:
+        if self.config.style_encoder_config.decompose_ref_mel:
             # Pitch
             pitch_reference = pitch.squeeze(1).detach().clone().requires_grad_()
 
@@ -687,6 +687,7 @@ class StyleforwardTTS(BaseTTS):
         #     g_emb = g_emb.unsqueeze(-1)
         # print(g.shape)
 
+        o_de_cycle = None
         if(self.config.style_encoder_config.use_cycle_consistency):
             g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
             encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
