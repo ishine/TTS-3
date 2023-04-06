@@ -656,6 +656,10 @@ class StyleforwardTTS(BaseTTS):
                 style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs)
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             
+            if(o_en_cycle.isnan().any()):
+                print(style_embedding_cycle)
+                print(g_cycle)
+            
             # duration predictor pass
             o_dr_log_cycle = self.duration_predictor(o_en_cycle, x_mask_cycle)
             o_dr_cycle = self.format_durations(o_dr_log_cycle, x_mask_cycle).squeeze(1)
