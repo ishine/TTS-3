@@ -686,6 +686,10 @@ class ForwardTTS(BaseTTS):
         x_lengths = torch.tensor(x.shape[1:2]).to(x.device)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
         
+        # encoder pass
+        o_en, x_mask, g, _ = self._forward_encoder(x, x_mask, g)
+        
+        # pos tagger pass
         if (self.config.model_args.use_pos_tagger):
 
             # Get Texts Batch
@@ -750,9 +754,7 @@ class ForwardTTS(BaseTTS):
 
             # POS pass
             o_en = o_en + batch_pos_embs
-            
-        # encoder pass
-        o_en, x_mask, g, _ = self._forward_encoder(x, x_mask, g)
+        
         # duration predictor pass
         o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = self.format_durations(o_dr_log, x_mask).squeeze(1)
