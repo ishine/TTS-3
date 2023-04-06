@@ -670,9 +670,6 @@ class StyleforwardTTS(BaseTTS):
         
 
             # decoder pass
-            print(f'oen cycle = {o_en_cycle}')
-            print(f'Lengths only cycle = {y_lengths_cycle}')
-            
             o_de_cycle, attn_cycle = self._forward_decoder(o_en_cycle, o_dr_cycle, x_mask_cycle, y_lengths_cycle, g=None)
 
 
