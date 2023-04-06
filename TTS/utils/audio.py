@@ -761,7 +761,7 @@ class AudioProcessor(object):
         if self.do_amp_to_db_mel:
             mel = torch.tensor(self._db_to_amp(mel))
         
-        energy = torch.sqrt(torch.clamp(mel.pow(2).sum(dim=1), min=1.0e-10))
+        energy = torch.sqrt(torch.clamp(mel.pow(2).sum(dim=1), min=1.0e-10)).numpy()
         return energy
 
     ### Audio Processing ###
