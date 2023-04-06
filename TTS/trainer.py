@@ -607,7 +607,7 @@ class Trainer:
             else:
                 outputs, loss_dict = self._model_train_step(batch, model, criterion, step = self.total_steps_done)
 
-	loss_dict['loss'] = loss_dict['loss]/float(self.grad_accum_steps)
+        loss_dict['loss'] = loss_dict['loss]/float(self.grad_accum_steps)
 
         # skip the rest
         if outputs is None:
