@@ -340,6 +340,10 @@ class PositionwiseFeedForward(nn.Module):
     
 def get_mask_from_lengths(lengths):
     max_len = torch.max(lengths).item()
+    	
+    print(f'lengths = {lengths}')
+    print(f'max_len = {max_len}')
+    
     ids = torch.arange(0, max_len, out=torch.cuda.LongTensor(max_len))
     mask = (ids < lengths.unsqueeze(1)).bool() # (B, max_len)
     return mask
