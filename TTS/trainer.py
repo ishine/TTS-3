@@ -237,6 +237,11 @@ class Trainer:
         self.train_loader = None
         self.eval_loader = None
 
+	self.grad_accum_steps = self.config.grad_accum_steps
+	if(self.grad_accum_steps > 1):
+	effective_batch_len = self.config.batch_size*self.grad_accum_steps
+		print('Accum grad ON: effective batch size = {effective_batch_len})
+
         self.keep_avg_train = None
         self.keep_avg_eval = None
 
@@ -571,6 +576,7 @@ class Trainer:
         scheduler: Union[torch.optim.lr_scheduler._LRScheduler, List],  # pylint: disable=protected-access
         config: Coqpit,
         optimizer_idx: int = None,
+        step_optimizer: bool = True,
     ) -> Tuple[Dict, Dict, int]:
         """Perform a forward - backward pass and run the optimizer.
 
@@ -592,8 +598,6 @@ class Trainer:
         """
 
         step_start_time = time.time()
-        # zero-out optimizer
-        optimizer.zero_grad()
 
         # forward pass and loss computation
         with torch.cuda.amp.autocast(enabled=config.mixed_precision):
@@ -601,6 +605,8 @@ class Trainer:
                 outputs, loss_dict = self._model_train_step(batch, model, criterion, optimizer_idx=optimizer_idx, step = self.total_steps_done)
             else:
                 outputs, loss_dict = self._model_train_step(batch, model, criterion, step = self.total_steps_done)
+
+	loss_dict['loss'] = loss_dict['loss]/float(self.grad_accum_steps)
 
         # skip the rest
         if outputs is None:
@@ -644,9 +650,11 @@ class Trainer:
         else:
             # main model optimizer step
             loss_dict["loss"].backward()
-            if grad_clip > 0:
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
+            #gradient accumulation
+            if(step_optimizer):
+		    if grad_clip > 0:
+		        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+		    optimizer.step()
 
         # pytorch skips the step when the norm is 0. So ignore the norm value when it is NaN
         if isinstance(grad_norm, torch.Tensor) and (torch.isnan(grad_norm) or torch.isinf(grad_norm)):
@@ -655,7 +663,7 @@ class Trainer:
         step_time = time.time() - step_start_time
 
         # setup lr
-        if scheduler is not None and update_lr_scheduler and not self.config.scheduler_after_epoch:
+        if scheduler is not None and update_lr_scheduler and not self.config.scheduler_after_epoch and step_optimizer:
             scheduler.step()
 
         # detach losses
@@ -665,6 +673,11 @@ class Trainer:
             loss_dict[f"grad_norm_{optimizer_idx}"] = grad_norm
         else:
             loss_dict["grad_norm"] = grad_norm
+            
+        # zero-out optimizer
+        if step_optimizer:
+        	optimizer.zero_grad()
+            
         return outputs, loss_dict, step_time
 
     def train_step(self, batch: Dict, batch_n_steps: int, step: int, loader_start_time: float) -> Tuple[Dict, Dict]:
@@ -687,10 +700,16 @@ class Trainer:
         # conteainers to hold model outputs and losses for each optimizer.
         outputs_per_optimizer = None
         loss_dict = {}
+        
+        
+        step_optimizer = True
+        if ((step + 1) % self.grad_accum_steps != 0) and (step + 1 != batch_n_steps):
+                step_optimizer = False
+        
         if not isinstance(self.optimizer, list):
             # training with a single optimizer
             outputs, loss_dict_new, step_time = self._optimize(
-                batch, self.model, self.optimizer, self.scaler, self.criterion, self.scheduler, self.config
+                batch, self.model, self.optimizer, self.scaler, self.criterion, self.scheduler, self.config, step_optimizer = step_optimizer
             )
             loss_dict.update(loss_dict_new)
         else:

@@ -324,6 +324,7 @@ class BaseTrainingConfig(Coqpit):
     # training params
     epochs: int = 10000
     batch_size: int = None
+    grad_accum_steps: int = 1
     eval_batch_size: int = None
     mixed_precision: bool = False
     scheduler_after_epoch: bool = False
