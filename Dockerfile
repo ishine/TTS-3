@@ -11,4 +11,7 @@ COPY requirements-recod.txt /root
 COPY requirements.dev.txt /root
 COPY requirements.notebooks.txt /root
 RUN ["/bin/bash", "-c", "pip install -r <(cat requirements-recod.txt)"]
-COPY . /root
+
+# uncomment if using the POS TAGGER
+#RUN pip install sentencepiece==0.1.97
+#RUN pip install transformers==4.27.3
