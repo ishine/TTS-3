@@ -653,9 +653,9 @@ class Trainer:
             loss_dict["loss"].backward()
             #gradient accumulation
             if(step_optimizer):
-		    if grad_clip > 0:
-		        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-		    optimizer.step()
+                if grad_clip > 0:
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
 
         # pytorch skips the step when the norm is 0. So ignore the norm value when it is NaN
         if isinstance(grad_norm, torch.Tensor) and (torch.isnan(grad_norm) or torch.isinf(grad_norm)):
@@ -677,7 +677,7 @@ class Trainer:
             
         # zero-out optimizer
         if step_optimizer:
-        	optimizer.zero_grad()
+            optimizer.zero_grad()
             
         return outputs, loss_dict, step_time
 
@@ -705,7 +705,7 @@ class Trainer:
         
         step_optimizer = True
         if ((step + 1) % self.grad_accum_steps != 0) and (step + 1 != batch_n_steps):
-                step_optimizer = False
+            step_optimizer = False
         
         if not isinstance(self.optimizer, list):
             # training with a single optimizer
