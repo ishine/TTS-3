@@ -194,7 +194,10 @@ class StyleforwardTTS(BaseTTS):
         if(config.style_encoder_config.use_grl_on_speakers_in_style_embedding): #Already assuming that we can have different GRL in different layers
             print('Using GRL')
             style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
-            self.speaker_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_speakers)
+            self.speaker_classifier_using_style_embedding = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
+                                                                          nn.ReLU()  
+                                                                          nn.Linear(style_embedding_dim, self.num_speakers)
+                                                                          )
             if(config.style_encoder_config.use_inverter):
                 self.grl_on_speakers_in_style_embedding = GradientInverterLayer(config.style_encoder_config.grl_alpha)
                 print("Inverter layer activated")
@@ -208,16 +211,21 @@ class StyleforwardTTS(BaseTTS):
                                                       nn.GLU(),
                                                       nn.Linear(style_embedding_dim, style_embedding_dim))
 
+            self.post_speaker_processor = nn.Linear(style_embedding_dim, style_embedding_dim)
+
             # TODO: chenge order, and make style be F-emb, since emb will be speaker information, so residual must be only style related            
             # self.post_speaker_processor = nn.Sequential(nn.Linear(style_embedding_dim, 2*style_embedding_dim),
             #                                           nn.GLU(),
             #                                           nn.Linear(style_embedding_dim, style_embedding_dim))
             
-            self.style_classifier_using_style_embedding = nn.Linear(style_embedding_dim, self.num_style)
+            self.style_classifier_using_style_embedding = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
+                                                                          nn.ReLU()  
+                                                                          nn.Linear(style_embedding_dim, self.num_style)
+                                                                        )
 
             self.resisual_speaker_classifier = nn.Linear(style_embedding_dim, self.num_speakers)
 
-            self.grl_on_styles_in_speaker_embedding = GradientInverterLayer(config.style_encoder_config.grl_alpha)
+            self.grl_on_styles_in_speaker_embedding = GradientReversalLayer(config.style_encoder_config.grl_alpha)
 
         
         # # pass all config fields to `self`
@@ -639,9 +647,11 @@ class StyleforwardTTS(BaseTTS):
 
                 if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
 
-                    style_embeddings_cycle = self.post_style_processor(style_encoder_outputs_cycle['style_embedding'])
+                    speaker_embeddings_cycle = self.post_speaker_processor(style_encoder_outputs_cycle['style_embedding'])
 
-                    speaker_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings_cycle
+                    style_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - style_embeddings_cycle
+
+                    style_embeddings_cycle = self.post_style_processor(style_embeddings_cycle)
 
                     style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
 
@@ -705,8 +715,12 @@ class StyleforwardTTS(BaseTTS):
             style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=y , mel_mask = y_lengths)
             o_en = encoder_outputs.permute(0,2,1)
             if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-                style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
-                residual_speaker_embeddings = style_encoder_outputs['style_embedding'] - style_embeddings
+
+                residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
+
+                style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
+
+                style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
 
                 grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
                 residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
@@ -784,15 +798,22 @@ class StyleforwardTTS(BaseTTS):
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
         cycle_style_encoder_output = None
+        cycle_speaker_encoder_output = None
         if(self.config.style_encoder_config.use_cycle_consistency):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de_cycle, g]
                 cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de , speaker_embedding = g.permute(0,2,1))['style_embedding']
             elif(self.config.style_encoder_config.se_type == 'metastyle'):
                 cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=o_de_cycle , mel_mask = y_lengths_cycle.type(torch.LongTensor).to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu")))
-                style_embeddings_ = self.post_style_processor(cycle_style_encoder_output['style_embedding'])
-        
+                
+                residual_speaker_embeddings_ = self.post_speaker_processor(cycle_style_encoder_output['style_embedding']) # Linear in style output to predict speaker
+
+                style_embeddings_ = cycle_style_encoder_output['style_embedding'] - residual_speaker_embeddings_ # Style embeddings minus speaker information embedding
+
+                style_embeddings_ = self.post_style_processor(style_embeddings_) # Style post processing to be input of the decoder
+
                 cycle_style_encoder_output = style_embeddings_
+                cycle_speaker_encoder_output = residual_speaker_embeddings_
             else:
                 se_inputs = [encoder_outputs.permute(0,2,1), o_de_cycle]
                 cycle_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
@@ -822,7 +843,7 @@ class StyleforwardTTS(BaseTTS):
             'cycle_style_encoder_output': cycle_style_encoder_output,
             'speaker_embeddings_cycle': speaker_embeddings_cycle,
             'model_outputs_middle_cycle': o_de_cycle,
-            'residual_speaker_embeddings': residual_speaker_embeddings,
+            'residual_speaker_embeddings': cycle_speaker_encoder_output, # in fact, this is used to calculate cycle speaker loss
             'residual_style_preds': residual_style_preds,
             'residual_speaker_preds': residual_speaker_preds
         }
@@ -894,7 +915,11 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en.permute(0,2,1)
 
             if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-                style_embeddings = self.post_style_processor(style_encoder_outputs['style_embedding'])
+                speaker_emb_tmp = self.post_speaker_processor(style_encoder_outputs['style_embedding'])
+
+                style_embeddings = style_encoder_outputs['style_embedding'] - speaker_emb_tmp
+
+                style_embeddings = self.post_style_processor(style_embeddings)
 
                 style_encoder_outputs['style_embedding'] = style_embeddings
 
@@ -941,9 +966,15 @@ class StyleforwardTTS(BaseTTS):
                 se_inputs = [o_en.permute(0,2,1), o_de, g]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , speaker_embedding = g_emb.permute(1,0).unsqueeze(1))['style_embedding']
             elif(self.config.style_encoder_config.se_type == 'metastyle'):
+                
                 cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , mel_mask = y_lengths.type(torch.LongTensor).to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu")))
-                style_embeddings_ = self.post_style_processor(cycle_style_encoder_output['style_embedding'])
-        
+
+                speaker_emb_tmp = self.post_speaker_processor(cycle_style_encoder_output['style_embedding'])
+
+                style_embeddings = cycle_style_encoder_output['style_embedding'] - speaker_emb_tmp
+                
+                style_embeddings = self.post_style_processor(style_embeddings)
+
                 ressynt_style_encoder_output = style_embeddings_
             else:
                 se_inputs = [o_en.permute(0,2,1), o_de]
