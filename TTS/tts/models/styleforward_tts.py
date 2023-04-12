@@ -195,7 +195,7 @@ class StyleforwardTTS(BaseTTS):
             print('Using GRL')
             style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
             self.speaker_classifier_using_style_embedding = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
-                                                                          nn.ReLU()  
+                                                                          nn.ReLU(),  
                                                                           nn.Linear(style_embedding_dim, self.num_speakers)
                                                                           )
             if(config.style_encoder_config.use_inverter):
@@ -219,7 +219,7 @@ class StyleforwardTTS(BaseTTS):
             #                                           nn.Linear(style_embedding_dim, style_embedding_dim))
             
             self.style_classifier_using_style_embedding = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
-                                                                          nn.ReLU()  
+                                                                          nn.ReLU(),  
                                                                           nn.Linear(style_embedding_dim, self.num_style)
                                                                         )
 
