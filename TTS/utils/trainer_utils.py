@@ -80,6 +80,9 @@ def get_optimizer(
     if optimizer_name.lower() == "radam":
         module = importlib.import_module("TTS.utils.radam")
         optimizer = getattr(module, "RAdam")
+    elif optimizer_name.lower() == "lamb":
+        module = importlib.import_module("apex.optimizers.fused_lamb")
+        optimizer = getattr(module, "FusedLAMB")
     else:
         optimizer = getattr(torch.optim, optimizer_name)
     if model is not None:

@@ -194,8 +194,7 @@ class StyleforwardTTS(BaseTTS):
         if(config.style_encoder_config.use_grl_on_speakers_in_style_embedding): #Already assuming that we can have different GRL in different layers
             print('Using GRL')
             style_embedding_dim = config.style_encoder_config.proj_dim if (config.style_encoder_config.use_proj_linear or config.style_encoder_config.use_nonlinear_proj) else config.style_encoder_config.style_embedding_dim
-            self.speaker_classifier_using_style_embedding = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
-                                                                          nn.ReLU(),  
+            self.speaker_classifier_using_style_embedding = nn.Sequential(
                                                                           nn.Linear(style_embedding_dim, self.num_speakers)
                                                                           )
             if(config.style_encoder_config.use_inverter):
@@ -207,8 +206,8 @@ class StyleforwardTTS(BaseTTS):
         if(config.style_encoder_config.use_residual_speaker_disentanglement):
             print('Using residual speaker disentanglement')
             
-            self.post_style_processor = nn.Sequential(nn.Linear(style_embedding_dim, 2*style_embedding_dim), #Because glu return emb/2
-                                                      nn.GLU(),
+            self.post_style_processor = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim), #Because glu return emb/2
+                                                      nn.ReLU(),
                                                       nn.Linear(style_embedding_dim, style_embedding_dim))
 
             self.post_speaker_processor = nn.Linear(style_embedding_dim, style_embedding_dim)
@@ -218,8 +217,7 @@ class StyleforwardTTS(BaseTTS):
             #                                           nn.GLU(),
             #                                           nn.Linear(style_embedding_dim, style_embedding_dim))
             
-            self.style_classifier_using_style_embedding = nn.Sequential(nn.Linear(style_embedding_dim, style_embedding_dim),
-                                                                          nn.ReLU(),  
+            self.style_classifier_using_style_embedding = nn.Sequential(
                                                                           nn.Linear(style_embedding_dim, self.num_style)
                                                                         )
 
