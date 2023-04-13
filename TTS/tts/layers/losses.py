@@ -1182,7 +1182,7 @@ class StyleForwardTTSLoss(nn.Module):
 
         if self.style_encoder_config.use_grl_on_speakers_in_style_embedding:
     
-            grl_speaker_in_style_loss = self.criterion_grl_speaker_in_style_embedding(speaker_preds_from_style, speaker_ids)
+            grl_speaker_in_style_loss = torch.clamp(self.criterion_grl_speaker_in_style_embedding(speaker_preds_from_style, speaker_ids), min= 0, max = 4)
             
             loss += self.grl_speaker_in_style_embedding_alpha*grl_speaker_in_style_loss
             
@@ -1233,7 +1233,7 @@ class StyleForwardTTSLoss(nn.Module):
 
             speaker_guided_loss = self.criterion_speaker_guided(residual_speaker_preds, speaker_ids)
 
-            grl_style_in_speaker_loss = self.criterion_grl_style_in_speaker_embedding(residual_style_preds, style_ids)
+            grl_style_in_speaker_loss = torch.clamp(self.criterion_grl_style_in_speaker_embedding(residual_style_preds, style_ids), min = 0, max = 4)
 
             speaker_style_orthogonal_loss = torch.trace(torch.inner(style_encoder_output['style_embedding'], residual_speaker_embeddings).abs())/batch_len
 

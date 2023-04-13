@@ -665,7 +665,7 @@ class StyleforwardTTS(BaseTTS):
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             
             if(o_en_cycle.isnan().any()): # If something turns nan it will print its information
-                print(style_embedding_cycle)
+                print(style_embeddings_cycle)
                 print(g_cycle, g)
             
             # duration predictor pass
