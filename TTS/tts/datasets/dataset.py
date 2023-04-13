@@ -737,7 +737,7 @@ class PitchExtractor:
             speakers_vecs = []
             for _, item in enumerate(tqdm.tqdm(self.items)):
                 pitch_vecs += [self._pitch_worker([item, ap, cache_path, self.ds_name])]
-                speakers_vecs += [self._pitch_worker([item])]
+                speakers_vecs += [self._get_speaker([item])]
         else:
             with Pool(num_workers) as p:
                 pitch_vecs = list(
@@ -907,7 +907,7 @@ class EnergyExtractor:
             speakers_vecs = []
             for _, item in enumerate(tqdm.tqdm(self.items)):
                 energy_vecs += [self._energy_worker([item, ap, cache_path, self.ds_name])]
-                speakers_vecs += [self._energy_worker([item])]
+                speakers_vecs += [self._get_speaker([item])]
         else:
             with Pool(num_workers) as p:
                 energy_vecs = list(
