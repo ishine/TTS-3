@@ -11,6 +11,7 @@ from TTS.utils.io import load_fsspec
 from TTS.utils.training import NoamLR
 
 
+
 def is_apex_available():
     return importlib.util.find_spec("apex") is not None
 
@@ -81,10 +82,12 @@ def get_optimizer(
         module = importlib.import_module("TTS.utils.radam")
         optimizer = getattr(module, "RAdam")
     elif optimizer_name.lower() == "lamb":
-        module = importlib.import_module("apex.optimizers.fused_lamb")
-        optimizer = getattr(module, "FusedLAMB")
+        print('Using custom LAMB optimizer')
+        module = importlib.import_module("TTS.utils.generic_utils")
+        optimizer = getattr(module, "Lamb")
     else:
         optimizer = getattr(torch.optim, optimizer_name)
+        
     if model is not None:
         parameters = model.parameters()
     return optimizer(parameters, lr=lr, **optimizer_params)
@@ -151,3 +154,4 @@ def get_last_checkpoint(path: str) -> Tuple[str, str]:
         last_models["checkpoint"] = last_models["best_model"]
 
     return last_models["checkpoint"], last_models["best_model"]
+    
