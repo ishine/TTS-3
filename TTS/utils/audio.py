@@ -758,10 +758,9 @@ class AudioProcessor(object):
         """
         mel = self.melspectrogram(x).astype("float32")
         mel = self.denormalize(mel)
-        if self.do_amp_to_db_mel:
-            mel = torch.tensor(self._db_to_amp(mel))
-        
-        energy = torch.sqrt(torch.clamp(mel.pow(2).sum(dim=1), min=1.0e-10)).numpy()
+        mel = self._db_to_amp(mel)
+        energy = np.sqrt(np.clip(np.power(mel, 2).sum(axis=0), a_min=1.0e-10, a_max=None))
+
         return energy
 
     ### Audio Processing ###
