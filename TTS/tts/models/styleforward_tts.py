@@ -618,12 +618,10 @@ class StyleforwardTTS(BaseTTS):
             energy_reference = energy.squeeze(1).detach().clone().requires_grad_()
 
             style_reference = torch.stack([pitch_reference, energy_reference])
-            print('Using Pitch, and Energy as style reference features')
 
         else:
             # Use Mel Spectrogram
             style_reference = y 
-            print('Using Mel Spectrogram as style reference feature')
 
         # Style Encoder
         if(self.config.style_encoder_config.use_lookup):
