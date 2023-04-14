@@ -617,7 +617,7 @@ class StyleforwardTTS(BaseTTS):
             # Energy
             energy_reference = energy.squeeze(1).detach().clone().requires_grad_()
 
-            style_reference = torch.stack([pitch_reference, energy_reference])
+            style_reference = torch.stack([pitch_reference, energy_reference], dim=2)
 
         else:
             # Use Mel Spectrogram
