@@ -835,7 +835,8 @@ class EnergyExtractor:
 
     @staticmethod
     def compute_energy_stats(energy_vecs):
-        mean, std = np.mean(energy_vecs), np.std(energy_vecs)
+        energy_vec = np.concatenate([vec for vec in energy_vecs])
+        mean, std = np.mean(energy_vec), np.std(energy_vec)
         return mean, std
 
     def normalize_energy(self, energy, speaker_name):
