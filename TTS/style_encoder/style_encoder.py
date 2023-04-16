@@ -22,7 +22,10 @@ class StyleEncoder(nn.Module):
         if (self.decompose_ref_mel):
             save_num_mel = self.num_mel
             self.num_mel = 2 # Temporarily set equivalent to # of prosodic feats. (Pitch and Energy) [B, MAX_LEN, 2]
-
+            print("> Style Reference Feature: Pitch and Energy")
+        else:
+            print("> Style Reference Feature: Mel-Spectrogram") 
+            
         if(self.use_nonlinear_proj):
             self.nl_proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
             nn.init.xavier_normal_(self.nl_proj.weight) # Good init for projection
