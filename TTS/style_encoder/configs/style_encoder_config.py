@@ -118,7 +118,6 @@ class StyleEncoderConfig(Coqpit):
         check_argument("agg_type", c, restricted=True, enum_list=["sum", "concat", "adain"])
         check_argument("num_mel", c, restricted=False)
         check_argument("style_embedding_dim", c, restricted=True, min_val=0, max_val=1000)
-        check_argument("use_speaker_embedding", c, restricted=False)
         check_argument("gst_style_input_weights", c, restricted=False)
         check_argument("gst_num_heads", c, restricted=True, min_val=2, max_val=10)
         check_argument("gst_num_style_tokens", c, restricted=True, min_val=1, max_val=1000)
