@@ -18,7 +18,11 @@ class StyleEncoder(nn.Module):
         # Load Attributes from Style Encoder Config
         for key in config:
             setattr(self, key, config[key])
-            
+        
+        if (self.decompose_ref_mel):
+            save_num_mel = self.num_mel
+            self.num_mel = 2 # Temporarily set equivalent to # of prosodic feats. (Pitch and Energy) [B, MAX_LEN, 2]
+
         if(self.use_nonlinear_proj):
             self.nl_proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
             nn.init.xavier_normal_(self.nl_proj.weight) # Good init for projection
@@ -107,6 +111,9 @@ class StyleEncoder(nn.Module):
             )
         else:
             raise NotImplementedError
+
+        if (self.decompose_ref_mel):
+            self.num_mel = save_num_mel # Return to default num_mel
 
     def forward(self, inputs, **kwargs):
         if self.se_type == 'gst':

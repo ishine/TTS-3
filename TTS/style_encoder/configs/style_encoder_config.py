@@ -22,24 +22,27 @@ class StyleEncoderConfig(Coqpit):
             Style encoder type \in {diffusion, vae, vaeflow, gst, re}
     """
     # Style Encoder Type
-    se_type: str = "diffusion"
+    se_type: str = "re"
+    use_supervised_style: bool = False
+    use_guided_style: bool = False # Whether use guided style encoder training
+    use_lookup: bool = False
 
-    # Generic Style Encoder Configuration
+    # Style Encoder Inputs
     num_mel: int = 80
+    decompose_ref_mel: bool = False
+
+    # Style Encoder Outputs
     style_embedding_dim: int = 128
+    proj_dim: int = 384 # Projection dim, often the encoder output (512 is the tacotron2 default encoder output, 384 for fastpitch)
+    use_nonlinear_proj: bool = False # Whether use or not a linear (last_dim, last_dim) + tanh before agg in TTS encoder outputs
+
+    # Aggregation
     agg_type: str = "concat" # Can be concat, sum, or adain
     agg_norm: bool = False # If agg_type == sum, you can rather than normalizing or not
     use_proj_linear: bool = False # Whether use linear projection to decoder dim or not (specifcally useful for sum agg_style)
-    proj_dim: int = 384 # Projection dim, often the encoder output (512 is the tacotron2 default encoder output, 384 for fastpitch)
+
+    # Generic Style Encoder Configuration
     start_loss_at: int = 0 # Iteration that the style loss should start propagate 
-    use_nonlinear_proj: bool = False # Whether use or not a linear (last_dim, last_dim) + tanh before agg in TTS encoder outputs
-    use_speaker_embedding: bool = False
-    use_lookup: bool = False
-    use_supervised_style: bool = False
-    content_orthogonal_loss: bool = False # whether use othogonal loss between style and content embeddings
-    speaker_orthogonal_loss: bool = False # whether use othogonal loss between speaker and content embeddings
-    use_guided_style: bool = False # Whether use guided style encoder training
-    
     use_residual_speaker_disentanglement: bool = False # If true, decomposes style embedding in F and SE-F, where SE-F will represent speakers
 
     # Finegrained re specific configs
@@ -98,10 +101,11 @@ class StyleEncoderConfig(Coqpit):
     diff_dropout: float = 0.1
     diff_loss_alpha: float = 0.75
 
-
     # Use orthogonal loss    
     orthogonal_loss: bool = False  
     orthogonal_loss_alpha: float = 1.0
+    content_orthogonal_loss: bool = False # whether use othogonal loss between style and content embeddings
+    speaker_orthogonal_loss: bool = False # whether use othogonal loss between speaker and content embeddings
 
     def check_values(
         self,
