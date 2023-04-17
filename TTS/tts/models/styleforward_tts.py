@@ -719,6 +719,7 @@ class StyleforwardTTS(BaseTTS):
 
         # CYCLE CONSISTENCY PASS
         o_de_cycle = None
+        speaker_embeddings_cycle = None
         if(self.config.style_encoder_config.use_cycle_consistency):
             
             # CYCLE SELECT SPEAKER
