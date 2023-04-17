@@ -652,7 +652,9 @@ class StyleforwardTTS(BaseTTS):
             # Use Mel Spectrogram
             style_reference = y         
 
-        # STYLE ENCODER PASS 
+        # STYLE ENCODER PASS
+        residual_style_preds = None
+        residual_speaker_preds = None
         if(self.config.style_encoder_config.use_lookup):
             o_en = encoder_outputs.permute(0,2,1)
             style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
