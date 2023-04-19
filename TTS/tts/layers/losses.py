@@ -1011,7 +1011,7 @@ class StyleForwardTTSLoss(nn.Module):
         if self.style_encoder_config.use_guided_style:
             if self.style_encoder_config.guided_style_loss_type == 'ce':
                 self.criterion_guided = nn.CrossEntropyLoss()
-            elif self.style_encoder_config.guided_style_loss_type == 'focal_loss:
+            elif self.style_encoder_config.guided_style_loss_type == 'focal_loss':
                 self.criterion_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
             else:
                 raise NotImplementedError
