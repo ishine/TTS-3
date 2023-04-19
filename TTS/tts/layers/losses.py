@@ -1028,9 +1028,15 @@ class StyleForwardTTSLoss(nn.Module):
             
         # Residual Speaker Disentanglement Loss
         if self.style_encoder_config.use_residual_speaker_disentanglement:
-            self.criterion_speaker_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
-            self.criterion_grl_style_in_speaker_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
-        
+            if self.style_encoder_config.grl_loss_type == 'ce':
+                self.criterion_speaker_guided = nn.CrossEntropyLoss()
+                self.criterion_grl_style_in_speaker_embedding = nn.CrossEntropyLoss()
+            elif self.style_encoder_config.grl_loss_type == 'focal_loss':
+                self.criterion_speaker_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
+                self.criterion_grl_style_in_speaker_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
+            else:
+                raise NotImplementedError
+                
         # CLIP Loss
         if(self.style_encoder_config.use_clip_loss):
             self.criterion_clip = ClipLloss(self.style_encoder_config)
