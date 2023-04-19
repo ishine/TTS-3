@@ -961,13 +961,21 @@ class StyleForwardTTSLoss(nn.Module):
         self.style_encoder_config = c.style_encoder_config
         self.config = c
 
+        # Spectrogram Loss
         if c.spec_loss_type == "mse":
             self.spec_loss = MSELossMasked(False)
         elif c.spec_loss_type == "l1":
             self.spec_loss = L1LossMasked(False)
         else:
             raise ValueError(" [!] Unknown spec_loss_type {}".format(c.spec_loss_type))
-
+        self.spec_loss_alpha = c.spec_loss_alpha
+        
+        # Structural Similarity Loss
+        if c.use_ssim_loss:
+            self.ssim = SSIMLoss() if c.use_ssim_loss else None
+            self.ssim_loss_alpha = c.ssim_loss_alpha
+            
+        # Duration Loss
         if c.duration_loss_type == "mse":
             self.dur_loss = MSELossMasked(False)
         elif c.duration_loss_type == "l1":
@@ -976,20 +984,20 @@ class StyleForwardTTSLoss(nn.Module):
             self.dur_loss = Huber()
         else:
             raise ValueError(" [!] Unknown duration_loss_type {}".format(c.duration_loss_type))
-
+        self.dur_loss_alpha = c.dur_loss_alpha
+        
+        # Aligner Loss
         if c.model_args.use_aligner:
             self.aligner_loss = ForwardSumLoss()
             self.aligner_loss_alpha = c.aligner_loss_alpha
-
+        self.binary_alignment_loss_alpha = c.binary_align_loss_alpha
+        
+        # Pitch Loss
         if c.model_args.use_pitch:
             self.pitch_loss = MSELossMasked(False)
             self.pitch_loss_alpha = c.pitch_loss_alpha
 
-        if c.use_ssim_loss:
-            self.ssim = SSIMLoss() if c.use_ssim_loss else None
-            self.ssim_loss_alpha = c.ssim_loss_alpha
-
-        # style loss
+        # Style Encoder Achitecture Specific Loss
         if self.style_encoder_config.se_type == 'diffusion':
             self.criterion_se = DiffusionStyleEncoderLoss(self.style_encoder_config)
         if self.style_encoder_config.se_type == 'vae':
@@ -999,36 +1007,42 @@ class StyleForwardTTSLoss(nn.Module):
         if self.style_encoder_config.se_type == 'vqvae':
             self.criterion_se = VQVAEStyleEncoderLoss(self.style_encoder_config)
 
+        # Style Classifier Loss
         if self.style_encoder_config.use_guided_style:
-            self.criterion_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
-            # self.criterion_guided = nn.CrossEntropyLoss(weight =torch.Tensor([10,10,0.1,10])) # To balance styles
-            # self.criterion_guided = nn.CrossEntropyLoss(ignore_index = 3) # To ignore none style (semi supervised)
+            if self.style_encoder_config.guided_style_loss_type == 'ce':
+                self.criterion_guided = nn.CrossEntropyLoss()
+            elif self.style_encoder_config.guided_style_loss_type == 'focal_loss:
+                self.criterion_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
+            else:
+                raise NotImplementedError
         
+        # Speaker Classifier w/ GRL Loss
+        if self.style_encoder_config.use_grl_on_speakers_in_style_embedding:
+            if self.style_encoder_config.grl_loss_type == 'ce':
+                self.criterion_grl_speaker_in_style_embedding = nn.CrossEntropyLoss()
+            elif self.style_encoder_config.grl_loss_type == 'focal_loss':
+                self.criterion_grl_speaker_in_style_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
+            else:
+                raise NotImplementedError
+            self.grl_speaker_in_style_embedding_alpha = self.style_encoder_config.grl_alpha
+            
+        # Residual Speaker Disentanglement Loss
         if self.style_encoder_config.use_residual_speaker_disentanglement:
             self.criterion_speaker_guided = BalancedCrossEntropyLoss(loss_type='focal_loss')
             self.criterion_grl_style_in_speaker_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
         
-
-        if(self.style_encoder_config.use_grl_on_speakers_in_style_embedding):
-            if(self.style_encoder_config.balanced_grl):
-                self.criterion_grl_speaker_in_style_embedding = BalancedCrossEntropyLoss(loss_type='focal_loss')
-            else:
-                self.criterion_grl_speaker_in_style_embedding = nn.CrossEntropyLoss()
-            self.grl_speaker_in_style_embedding_alpha = self.style_encoder_config.grl_alpha
-
+        # CLIP Loss
         if(self.style_encoder_config.use_clip_loss):
             self.criterion_clip = ClipLloss(self.style_encoder_config)
 
+        # Style Distortion Loss
         if(self.style_encoder_config.use_style_distortion_loss):
             self.criterion_style_distortion = nn.MSELoss() # Simple L2 norm
 
+        # Cycle Consistency Loss
         if(self.style_encoder_config.use_cycle_consistency):
             self.criterion_cycle_consistency = nn.MSELoss()
             self.criterion_speaker_cycle_consistency = nn.MSELoss()
-
-        self.spec_loss_alpha = c.spec_loss_alpha
-        self.dur_loss_alpha = c.dur_loss_alpha
-        self.binary_alignment_loss_alpha = c.binary_align_loss_alpha
 
     @staticmethod
     def _binary_alignment_loss(alignment_hard, alignment_soft):
