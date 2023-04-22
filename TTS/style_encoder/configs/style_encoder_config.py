@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass
 from coqpit import Coqpit, check_argument
+from typing import List
 
 @dataclass
 class StyleEncoderConfig(Coqpit):
@@ -35,6 +36,7 @@ class StyleEncoderConfig(Coqpit):
     # Style Encoder Inputs
     num_mel: int = 80
     decompose_ref_mel: bool = False
+    style_reference_features: List[str] = None # Entries can be pitch, energy or melspectrogram
 
     # Style Encoder Outputs
     style_embedding_dim: int = 128

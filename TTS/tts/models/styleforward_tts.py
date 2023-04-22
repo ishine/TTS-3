@@ -641,17 +641,19 @@ class StyleforwardTTS(BaseTTS):
             dr = o_alignment_dur
 
         # STYLE REFERENCE FEATURES
-        if self.config.style_encoder_config.decompose_ref_mel:
-            # Use Pitch and Energy
-            pitch_reference = pitch.squeeze(1).detach().clone().requires_grad_()
-            energy_reference = energy.squeeze(1).detach().clone().requires_grad_()
-            
-            # Aggregate
-            style_reference = torch.stack([pitch_reference, energy_reference], dim=2)
+        style_features = []
+        if "pitch" in self.config.style_encoder_config.style_reference_features:
+            style_features.append(pitch.squeeze(1).detach().clone().requires_grad_())
+        if "energy" in self.config.style_encoder_config.style_reference_features:
+            style_features.append(energy.squeeze(1).detach().clone().requires_grad_())
+        if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
+            style_features.append(y)
+        
+        if style_features:
+            style_reference = torch.stack(style_features, dim=2)    
         else:
-            # Use Mel Spectrogram
-            style_reference = y         
-
+            raise Exception("No style reference was inputted")
+            
         # STYLE ENCODER PASS
         residual_style_preds = None
         residual_speaker_preds = None

@@ -19,12 +19,15 @@ class StyleEncoder(nn.Module):
         for key in config:
             setattr(self, key, config[key])
         
-        if (self.decompose_ref_mel):
-            save_num_mel = self.num_mel
-            self.num_mel = 2 # Temporarily set equivalent to # of prosodic feats. (Pitch and Energy) [B, MAX_LEN, 2]
-            print("> Style Reference Feature: Pitch and Energy")
+        # Set Reference Feature dim
+        if "melspectrogram" in self.style_reference_features:
+            self.num_mel = 80
+            n_proso_features = len(self.style_reference_features) - 1
         else:
-            print("> Style Reference Feature: Mel-Spectrogram") 
+            self.num_mel = 0
+            n_proso_features = len(self.style_reference_features)
+        self.num_mel += n_proso_features
+        print("> Style Reference Features: ", self.style_reference_features) 
             
         if(self.use_nonlinear_proj):
             self.nl_proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
@@ -114,9 +117,6 @@ class StyleEncoder(nn.Module):
             )
         else:
             raise NotImplementedError
-
-        if (self.decompose_ref_mel):
-            self.num_mel = save_num_mel # Return to default num_mel
 
     def forward(self, inputs, **kwargs):
         if self.se_type == 'gst':
