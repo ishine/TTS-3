@@ -643,9 +643,9 @@ class StyleforwardTTS(BaseTTS):
         # STYLE REFERENCE FEATURES
         style_features = []
         if "pitch" in self.config.style_encoder_config.style_reference_features:
-            style_features.append(pitch.squeeze(1).detach().clone().requires_grad_())
+            style_features.append(pitch.squeeze(1).detach().clone().requires_grad_().unsqueeze(2))
         if "energy" in self.config.style_encoder_config.style_reference_features:
-            style_features.append(energy.squeeze(1).detach().clone().requires_grad_())
+            style_features.append(energy.squeeze(1).detach().clone().requires_grad_().unsqueeze(2))
         if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
             style_features.append(y)
         
