@@ -650,7 +650,7 @@ class StyleforwardTTS(BaseTTS):
             style_features.append(y)
         
         if style_features:
-            style_reference = torch.stack(style_features, dim=2)    
+            style_reference = torch.cat(style_features, dim=2)    
         else:
             raise Exception("No style reference was inputted")
             
