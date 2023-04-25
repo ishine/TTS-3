@@ -912,7 +912,7 @@ class StyleforwardTTS(BaseTTS):
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
         elif(self.config.style_encoder_config.se_type == 'metastyle'):
             style_mel_lengths = torch.tensor(aux_input['style_mel'].shape[0:1]).to(aux_input['style_mel'].device) 
-            style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=aux_input['style_mel'] , mel_mask = style_mel_lengths)
+            style_encoder_outputs = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=aux_input['style_mel'].unsqueeze(0) , mel_mask = style_mel_lengths)
             o_en = o_en.permute(0,2,1)
 
             if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
