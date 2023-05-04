@@ -645,8 +645,8 @@ class StyleforwardTTS(BaseTTS):
                 means[i] = self.melstats[idx.item()]['mel_mean']
                 stds[i] = self.melstats[idx.item()]['mel_scale']
 
-            means = torch.Tensor(means).unsqueeze(1).to(y.device())
-            stds = torch.Tensor(stds).unsqueeze(1).to(y.device())
+            means = torch.Tensor(means).unsqueeze(1).to(y.device)
+            stds = torch.Tensor(stds).unsqueeze(1).to(y.device)
             
             y_norm = (y-means)/stds
         else:
