@@ -190,7 +190,7 @@ class StyleforwardTTS(BaseTTS):
         self.use_melstats = False
         if(os.path.isfile(config['output_path']+'mel_normalization_stats.npy')):
             self.use_melstats = True
-            self.melstats = np.load(config['output_path']+'mel_normalization_stats.npy', allow_pickle= True)
+            self.melstats = np.load(config['output_path']+'mel_normalization_stats.npy', allow_pickle= True).item()
 
         print("Using melspectrogram statistics = ", self.use_melstats)
 
