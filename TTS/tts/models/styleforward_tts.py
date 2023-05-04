@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, Tuple
-
+import numpy as np
+import os
 import torch
 from coqpit import Coqpit
 from torch import nn
@@ -21,6 +22,8 @@ from TTS.tts.utils.styles import StyleManager, get_style_weighted_sampler
 from TTS.style_encoder.style_encoder import StyleEncoder
 from TTS.style_encoder.layers.grl import GradientReversalLayer
 from TTS.style_encoder.layers.gri import GradientInverterLayer
+
+from TTS.tts.utils.helpers import StandardScaler
 
 @dataclass
 class StyleForwardTTSArgs(Coqpit):
@@ -182,6 +185,15 @@ class StyleforwardTTS(BaseTTS):
 
         self.speaker_manager = speaker_manager
         self.init_multispeaker(config)
+
+        # Reading mel statistics if exists
+        self.use_melstats = False
+        if(os.path.isfile(config['output_path']+'mel_normalization_stats.npy')):
+            self.use_melstats = True
+            self.melstats = np.load(config['output_path']+'mel_normalization_stats.npy', allow_pickle= True)
+
+        print("Using melspectrogram statistics = ", self.use_melstats)
+
         if(config.style_encoder_config.use_supervised_style):
             # print(config.style_encoder_config)
             self.style_manager = style_manager
@@ -624,6 +636,22 @@ class StyleforwardTTS(BaseTTS):
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
 
+        # If use melstats generate aux y
+        if self.use_melstats:
+            means = np.zeros((g.shape[0],80))
+            stds = np.zeros((g.shape[0],80))
+
+            for i,idx in enumerate(g):
+                means[i] = self.melstats[idx.item()]['mel_mean']
+                stds[i] = self.melstats[idx.item()]['mel_scale']
+
+            means = torch.Tensor(means).unsqueeze(1)
+            stds = torch.Tensor(stds).unsqueeze(1)
+            
+            y_norm = (y-means)/stds
+        else:
+            y_norm = y
+
         # ENCODER PASS
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
@@ -647,7 +675,7 @@ class StyleforwardTTS(BaseTTS):
         if "energy" in self.config.style_encoder_config.style_reference_features:
             style_features.append(energy.squeeze(1).detach().clone().requires_grad_().unsqueeze(2))
         if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
-            style_features.append(y)
+            style_features.append(y_norm)
         
         if style_features:
             style_reference = torch.cat(style_features, dim=2)    
