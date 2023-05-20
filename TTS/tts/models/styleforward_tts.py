@@ -670,10 +670,10 @@ class StyleforwardTTS(BaseTTS):
         # STYLE REFERENCE FEATURES
         style_reference_features = {}
         if "pitch" in self.config.style_encoder_config.style_reference_features:
-            style_reference_features['pitch'] = pitch.squeeze(1).detach().clone().requires_grad_().unsqueeze(2)
+            style_reference_features['pitch'] = pitch.detach().clone().requires_grad_()
         # REFERENCE ENERGY ENCODER PASS
         if "energy" in self.config.style_encoder_config.style_reference_features:
-            style_reference_features['energy'] = energy.squeeze(1).detach().clone().requires_grad_().unsqueeze(2)
+            style_reference_features['energy'] = energy.detach().clone().requires_grad_()
         if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
             style_reference_features['melspectrogram'] = y_norm
         assert style_reference_features, 'No style reference feature has been selected. Please choose one!'

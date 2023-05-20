@@ -34,17 +34,17 @@ class StyleEncoder(nn.Module):
             print("> Using Pitch as Reference Feature")
             self.ref_pitch_enc = nn.Conv1d(
                 1,
-                self.self.style_embedding_dim,
+                self.style_embedding_dim,
                 kernel_size=3,
                 padding=int((3 - 1) / 2),
-            ) 
+            )
 
         # REFERENCE ENERGY ENCODER ARCHITECTURE
         if "energy" in self.style_reference_features:
             print("> Using Energy as Reference Feature")
             self.ref_energy_enc = nn.Conv1d(
                 1,
-                self.self.style_embedding_dim,
+                self.style_embedding_dim,
                 kernel_size=3,
                 padding=int((3 - 1) / 2),
             ) 
@@ -133,43 +133,45 @@ class StyleEncoder(nn.Module):
 
     def forward(self, **kwargs):
         inputs = kwargs['out_txt_encoder']
+        out = {'style_embedding':torch.zeros(inputs.size()[0], inputs.size()[-1]).to('cuda:0'), 'styled_inputs':torch.zeros(inputs.size()).to('cuda:0')}
 
         if "melspectrogram" in self.style_reference_features:
             ref_melspectrogram =  kwargs['reference_features']['melspectrogram']
             if self.se_type == 'gst':
-                out = self.gst_embedding(inputs=inputs, style_input=ref_melspectrogram)
+                out.update(self.gst_embedding(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 're':
-                out = self.re_embedding(inputs=inputs, style_input=ref_melspectrogram)
+                out.update(self.re_embedding(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 'modifiedre':
-                out = self.modified_re_embedding_forward(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['speaker_embedding'])
+                out.update(self.modified_re_embedding_forward(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['speaker_embedding']))
             elif self.se_type == 'bidirectionalre':
-                out = self.re_embedding(inputs=inputs, style_input=ref_melspectrogram) # Since is only the re arquitecture that is different we use the same method
+                out.update(self.re_embedding(inputs=inputs, style_input=ref_melspectrogram)) # Since is only the re arquitecture that is different we use the same method
             elif self.se_type == 'finegrainedre':
-                out = self.finegrainedre_embedding(inputs=inputs, style_input=ref_melspectrogram, text_len=kwargs['text_len'], mel_len=kwargs['mel_len'])
+                out.update(self.finegrainedre_embedding(inputs=inputs, style_input=ref_melspectrogram, text_len=kwargs['text_len'], mel_len=kwargs['mel_len']))
             elif self.se_type == 'diffusion':
-                out = self.diff_forward(inputs=inputs, style_input=ref_melspectrogram)
+                out.update(self.diff_forward(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 'vae':
-                out = self.vae_forward(inputs=inputs, style_input=ref_melspectrogram)
+                out.update(self.vae_forward(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 'vqvae':
-                out = self.vqvae_forward(inputs=inputs, style_input=ref_melspectrogram)
+                out.update(self.vqvae_forward(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 'vaeflow':
-                out = self.vaeflow_forward(inputs=inputs, style_input=ref_melspectrogram)
+                out.update(self.vaeflow_forward(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 'metastyle':
-                out = self.metastyle_forward(inputs=inputs, style_input=ref_melspectrogram, mel_mask=kwargs['mel_mask'])
+                out.update(self.metastyle_forward(inputs=inputs, style_input=ref_melspectrogram, mel_mask=kwargs['mel_mask']))
             else:
                 raise NotImplementedError
-            
+
         if "pitch" in self.style_reference_features:
             ref_pitch = kwargs['reference_features']['pitch']
-            ref_pitch_emb = self.ref_pitch_enc(ref_pitch)
+            ref_pitch_out = self.ref_pitch_enc(ref_pitch)
+            ref_pitch_emb = torch.sum(ref_pitch_out, dim=2) / ref_pitch.size()[-1]
             out['style_embedding'] += ref_pitch_emb
-            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_pitch_emb.unsqueeze(1))
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = out['styled_inputs'], embedded_speakers = ref_pitch_emb.unsqueeze(1))
 
         if "energy" in self.style_reference_features:
             ref_energy = kwargs['reference_features']['energy']
             ref_energy_emb = self.ref_energy_enc(ref_energy)
             out['style_embedding'] += ref_energy_emb
-            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_energy_emb.unsqueeze(1))
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = out['styled_inputs'], embedded_speakers = ref_energy_emb.unsqueeze(1))
 
         return out
 
@@ -207,13 +209,13 @@ class StyleEncoder(nn.Module):
             ref_pitch = kwargs['reference_features']['pitch']
             ref_pitch_emb = self.ref_pitch_enc(ref_pitch)
             out['style_embedding'] += ref_pitch_emb
-            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_pitch_emb.unsqueeze(1))
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = out['style_inputs'], embedded_speakers = ref_pitch_emb.unsqueeze(1))
 
         if "energy" in self.style_reference_features:
             ref_energy = kwargs['reference_features']['energy']
             ref_energy_emb = self.ref_energy_enc(ref_energy)
             out['style_embedding'] += ref_energy_emb
-            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_energy_emb.unsqueeze(1))
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = out['style_inputs'], embedded_speakers = ref_energy_emb.unsqueeze(1))
             
         return out
             
