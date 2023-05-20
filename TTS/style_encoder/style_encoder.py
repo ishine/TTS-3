@@ -18,17 +18,7 @@ class StyleEncoder(nn.Module):
         # Load Attributes from Style Encoder Config
         for key in config:
             setattr(self, key, config[key])
-        
-        # Set Reference Feature dim
-        if "melspectrogram" in self.style_reference_features:
-            self.num_mel = 80
-            n_proso_features = len(self.style_reference_features) - 1
-        else:
-            self.num_mel = 0
-            n_proso_features = len(self.style_reference_features)
-        self.num_mel += n_proso_features
-        print("> Style Reference Features: ", self.style_reference_features) 
-            
+ 
         if(self.use_nonlinear_proj):
             self.nl_proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
             nn.init.xavier_normal_(self.nl_proj.weight) # Good init for projection
@@ -39,135 +29,194 @@ class StyleEncoder(nn.Module):
             self.proj = nn.Linear(self.style_embedding_dim, self.proj_dim)
             nn.init.xavier_normal_(self.proj.weight) # Good init for projection
 
-        # Instanciate Style Encoder Architecture
-        if self.se_type == 're':
-            self.layer = ReferenceEncoder(
-                num_mel = self.num_mel,
-                embedding_dim = self.style_embedding_dim
-            )
-        elif self.se_type == 'modifiedre':
-            self.layer = ModifiedReferenceEncoder(
-                num_mel = self.num_mel,
-                embedding_dim = self.style_embedding_dim
-            )
-        elif self.se_type == 'bidirectionalre':
-            self.layer = BidirectionalReferenceEncoder(
-                num_mel = self.num_mel,
-                embedding_dim = self.style_embedding_dim
-            )
-        elif self.se_type == 'finegrainedre':
-            self.layer = FineGrainedReferenceEncoder(
-                num_mel = self.num_mel,
-                embedding_dim = self.style_embedding_dim,
-                prosody_embedding_dim = self.prosody_embedding_dim,
-                encoder_embedding_dim = self.proj_dim,
-                fg_attention_dropout = self.fg_attention_dropout,
-                fg_attention_dim = self.fg_attention_dim
-            )
-        elif self.se_type == 'gst':
-            self.layer = GST(
-                num_mel = self.num_mel,
-                gst_embedding_dim = self.style_embedding_dim,
-                num_heads = self.gst_num_heads,
-                num_style_tokens = self.gst_num_style_tokens,
-            )
-        elif self.se_type == 'vae':
-            self.layer = VAEStyleEncoder(
-                num_mel = self.num_mel,
-                ref_embedding_dim = self.style_embedding_dim, # allow flexibility
-                style_embedding_dim = self.style_embedding_dim
-            )
-        elif self.se_type == 'vqvae':
-            self.layer = VQVAEStyleEncoder(
-                nmels_ref= self.num_mel,
-                dim = self.style_embedding_dim,
-                K = self.codebook_size
-            )
-        elif self.se_type == 'vaeflow':
-            self.layer = VAEFlowStyleEncoder(
-                num_mel = self.num_mel,
-                ref_emb_dim = self.style_embedding_dim,
-                style_emb_dim = self.style_embedding_dim,
-                intern_dim = self.vaeflow_intern_dim,
-                number_of_flows = self.vaeflow_number_of_flows
-            )
-        elif self.se_type == 'diffusion':
-            self.layer = DiffStyleEncoder(
-                diff_num_timesteps = self.diff_num_timesteps, 
-                diff_schedule_type = self.diff_schedule_type,
-                diff_loss_type = self.diff_loss_type, 
-                ref_online = self.diff_ref_online, 
-                ref_num_mel = self.num_mel, 
-                ref_style_emb_dim = self.style_embedding_dim, 
-                den_step_dim = self.diff_step_dim,
-                den_in_out_ch = self.diff_in_out_ch, 
-                den_num_heads = self.diff_num_heads, 
-                den_hidden_channels = self.diff_hidden_channels, 
-                den_num_blocks = self.diff_num_blocks,
-                den_dropout = self.diff_dropout
-            )
-        elif self.se_type == 'metastyle':
-            self.layer = MetaStyleEncoder(
-                num_mel = self.num_mel, 
-                embedding_dim = self.style_embedding_dim, 
-                n_spectral = 2, 
-                n_temporal = 2, n_mha = 1, 
-                mha_heads = 1, 
-                max_seq_len = 400
-            )
-        else:
-            raise NotImplementedError
+        # REFERENCE PITCH ENCODER ARCHITECTURE
+        if "pitch" in self.style_reference_features:
+            print("> Using Pitch as Reference Feature")
+            self.ref_pitch_enc = nn.Conv1d(
+                1,
+                self.self.style_embedding_dim,
+                kernel_size=3,
+                padding=int((3 - 1) / 2),
+            ) 
 
-    def forward(self, inputs, **kwargs):
-        if self.se_type == 'gst':
-            out = self.gst_embedding(*inputs)
-        elif self.se_type == 're':
-            out = self.re_embedding(*inputs)
-        elif self.se_type == 'modifiedre':
-            out = self.modified_re_embedding_forward(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
-        elif self.se_type == 'bidirectionalre':
-            out = self.re_embedding(*inputs) # Since is only the re arquitecture that is different we use the same method
-        elif self.se_type == 'finegrainedre':
-            out = self.finegrainedre_embedding(*inputs, kwargs['text_len'], kwargs['mel_len'])
-        elif self.se_type == 'diffusion':
-            out = self.diff_forward(*inputs)
-        elif self.se_type == 'vae':
-            out = self.vae_forward(*inputs)
-        elif self.se_type == 'vqvae':
-            out = self.vqvae_forward(*inputs)
-        elif self.se_type == 'vaeflow':
-            out = self.vaeflow_forward(*inputs)
-        elif self.se_type == 'metastyle':
-            out = self.metastyle_forward(inputs, kwargs['style_mel'], kwargs['mel_mask'])
-        else:
-            raise NotImplementedError
+        # REFERENCE ENERGY ENCODER ARCHITECTURE
+        if "energy" in self.style_reference_features:
+            print("> Using Energy as Reference Feature")
+            self.ref_energy_enc = nn.Conv1d(
+                1,
+                self.self.style_embedding_dim,
+                kernel_size=3,
+                padding=int((3 - 1) / 2),
+            ) 
+
+        # REFERENCE MELSPECTROGRAM ENCODER ARCHITECTURE
+        if "melspectrogram" in self.style_reference_features:
+            print("> Using MelSpectrogram as Reference Feature")
+
+            if self.se_type == 're':
+                self.layer = ReferenceEncoder(
+                    num_mel = self.num_mel,
+                    embedding_dim = self.style_embedding_dim
+                )
+            elif self.se_type == 'modifiedre':
+                self.layer = ModifiedReferenceEncoder(
+                    num_mel = self.num_mel,
+                    embedding_dim = self.style_embedding_dim
+                )
+            elif self.se_type == 'bidirectionalre':
+                self.layer = BidirectionalReferenceEncoder(
+                    num_mel = self.num_mel,
+                    embedding_dim = self.style_embedding_dim
+                )
+            elif self.se_type == 'finegrainedre':
+                self.layer = FineGrainedReferenceEncoder(
+                    num_mel = self.num_mel,
+                    embedding_dim = self.style_embedding_dim,
+                    prosody_embedding_dim = self.prosody_embedding_dim,
+                    encoder_embedding_dim = self.proj_dim,
+                    fg_attention_dropout = self.fg_attention_dropout,
+                    fg_attention_dim = self.fg_attention_dim
+                )
+            elif self.se_type == 'gst':
+                self.layer = GST(
+                    num_mel = self.num_mel,
+                    gst_embedding_dim = self.style_embedding_dim,
+                    num_heads = self.gst_num_heads,
+                    num_style_tokens = self.gst_num_style_tokens,
+                )
+            elif self.se_type == 'vae':
+                self.layer = VAEStyleEncoder(
+                    num_mel = self.num_mel,
+                    ref_embedding_dim = self.style_embedding_dim, # allow flexibility
+                    style_embedding_dim = self.style_embedding_dim
+                )
+            elif self.se_type == 'vqvae':
+                self.layer = VQVAEStyleEncoder(
+                    nmels_ref= self.num_mel,
+                    dim = self.style_embedding_dim,
+                    K = self.codebook_size
+                )
+            elif self.se_type == 'vaeflow':
+                self.layer = VAEFlowStyleEncoder(
+                    num_mel = self.num_mel,
+                    ref_emb_dim = self.style_embedding_dim,
+                    style_emb_dim = self.style_embedding_dim,
+                    intern_dim = self.vaeflow_intern_dim,
+                    number_of_flows = self.vaeflow_number_of_flows
+                )
+            elif self.se_type == 'diffusion':
+                self.layer = DiffStyleEncoder(
+                    diff_num_timesteps = self.diff_num_timesteps, 
+                    diff_schedule_type = self.diff_schedule_type,
+                    diff_loss_type = self.diff_loss_type, 
+                    ref_online = self.diff_ref_online, 
+                    ref_num_mel = self.num_mel, 
+                    ref_style_emb_dim = self.style_embedding_dim, 
+                    den_step_dim = self.diff_step_dim,
+                    den_in_out_ch = self.diff_in_out_ch, 
+                    den_num_heads = self.diff_num_heads, 
+                    den_hidden_channels = self.diff_hidden_channels, 
+                    den_num_blocks = self.diff_num_blocks,
+                    den_dropout = self.diff_dropout
+                )
+            elif self.se_type == 'metastyle':
+                self.layer = MetaStyleEncoder(
+                    num_mel = self.num_mel, 
+                    embedding_dim = self.style_embedding_dim, 
+                    n_spectral = 2, 
+                    n_temporal = 2, n_mha = 1, 
+                    mha_heads = 1, 
+                    max_seq_len = 400
+                )
+            else:
+                raise NotImplementedError
+
+    def forward(self, **kwargs):
+        inputs = kwargs['out_txt_encoder']
+
+        if "melspectrogram" in self.style_reference_features:
+            ref_melspectrogram =  kwargs['reference_features']['melspectrogram']
+            if self.se_type == 'gst':
+                out = self.gst_embedding(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 're':
+                out = self.re_embedding(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 'modifiedre':
+                out = self.modified_re_embedding_forward(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['speaker_embedding'])
+            elif self.se_type == 'bidirectionalre':
+                out = self.re_embedding(inputs=inputs, style_input=ref_melspectrogram) # Since is only the re arquitecture that is different we use the same method
+            elif self.se_type == 'finegrainedre':
+                out = self.finegrainedre_embedding(inputs=inputs, style_input=ref_melspectrogram, text_len=kwargs['text_len'], mel_len=kwargs['mel_len'])
+            elif self.se_type == 'diffusion':
+                out = self.diff_forward(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 'vae':
+                out = self.vae_forward(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 'vqvae':
+                out = self.vqvae_forward(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 'vaeflow':
+                out = self.vaeflow_forward(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 'metastyle':
+                out = self.metastyle_forward(inputs=inputs, style_input=ref_melspectrogram, mel_mask=kwargs['mel_mask'])
+            else:
+                raise NotImplementedError
+            
+        if "pitch" in self.style_reference_features:
+            ref_pitch = kwargs['reference_features']['pitch']
+            ref_pitch_emb = self.ref_pitch_enc(ref_pitch)
+            out['style_embedding'] += ref_pitch_emb
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_pitch_emb.unsqueeze(1))
+
+        if "energy" in self.style_reference_features:
+            ref_energy = kwargs['reference_features']['energy']
+            ref_energy_emb = self.ref_energy_enc(ref_energy)
+            out['style_embedding'] += ref_energy_emb
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_energy_emb.unsqueeze(1))
+
         return out
 
-    def inference(self, inputs, **kwargs):
-        if self.se_type == 'gst':
-            out = self.gst_embedding(inputs, kwargs['style_mel'], kwargs['d_vectors'])
-        elif self.se_type == 're':
-            out = self.re_embedding_inference(inputs, kwargs['style_mel'])
-        elif self.se_type == 'modifiedre':
-            out = self.modified_re_embedding_inference(inputs, kwargs['style_mel'], kwargs['speaker_embedding'])
-        elif self.se_type == 'bidirectionalre':
-            out = self.re_embedding_inference(inputs, kwargs['style_mel'])# Since is only the re arquitecture that is different we use the same method
-        elif self.se_type == 'finegrainedre':
-            out = self.finegrainedre_embedding_inference(inputs, kwargs['style_mel'],  kwargs['text_len'], kwargs['mel_len'])
-        elif self.se_type == 'diffusion':
-            out = self.diff_inference(inputs, ref_mels = kwargs['style_mel'], infer_from = kwargs['diff_t'])
-        elif self.se_type == 'vae':
-            out = self.vae_inference(inputs, ref_mels= kwargs['style_mel'], z = kwargs['z'])
-        elif self.se_type == 'vqvae':
-            out = self.vqvae_inference(inputs, ref_mels= kwargs['style_mel'], K = kwargs['K'])
-        elif self.se_type == 'vaeflow':
-            out = self.vaeflow_inference(inputs, ref_mels = kwargs['style_mel'], z = kwargs['z'])
-        elif self.se_type == 'metastyle':
-            out = self.metastyle_forward(inputs, kwargs['style_mel'], kwargs['mel_mask'])
-        else:
-            raise NotImplementedError
-        return out
+    def inference(self, **kwargs):
+        inputs = kwargs['out_txt_encoder']
 
+        if "melspectrogram" in self.style_reference_features:
+            ref_melspectrogram =  kwargs['reference_features']['melspectrogram']
+            
+            if self.se_type == 'gst':
+                out = self.gst_embedding(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['d_vectors'])
+            elif self.se_type == 're':
+                out = self.re_embedding_inference(inputs=inputs, style_input=ref_melspectrogram)
+            elif self.se_type == 'modifiedre':
+                out = self.modified_re_embedding_inference(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['speaker_embedding'])
+            elif self.se_type == 'bidirectionalre':
+                out = self.re_embedding_inference(inputs=inputs, style_input=ref_melspectrogram)# Since is only the re arquitecture that is different we use the same method
+            elif self.se_type == 'finegrainedre':
+                out = self.finegrainedre_embedding_inference(inputs=inputs, style_input=ref_melspectrogram, text_len=kwargs['text_len'], mel_len=kwargs['mel_len'])
+            elif self.se_type == 'diffusion':
+                out = self.diff_inference(inputs=inputs, style_input=ref_melspectrogram, infer_from = kwargs['diff_t'])
+            elif self.se_type == 'vae':
+                out = self.vae_inference(inputs=inputs, style_input=ref_melspectrogram, z = kwargs['z'])
+            elif self.se_type == 'vqvae':
+                out = self.vqvae_inference(inputs=inputs, style_input=ref_melspectrogram, K = kwargs['K'])
+            elif self.se_type == 'vaeflow':
+                out = self.vaeflow_inference(inputs=inputs, style_input=ref_melspectrogram, z = kwargs['z'])
+            elif self.se_type == 'metastyle':
+                out = self.metastyle_forward(inputs=inputs, style_input=ref_melspectrogram, mel_mask=kwargs['mel_mask'])
+            else:
+                raise NotImplementedError
+            
+
+        if "pitch" in self.style_reference_features:
+            ref_pitch = kwargs['reference_features']['pitch']
+            ref_pitch_emb = self.ref_pitch_enc(ref_pitch)
+            out['style_embedding'] += ref_pitch_emb
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_pitch_emb.unsqueeze(1))
+
+        if "energy" in self.style_reference_features:
+            ref_energy = kwargs['reference_features']['energy']
+            ref_energy_emb = self.ref_energy_enc(ref_energy)
+            out['style_embedding'] += ref_energy_emb
+            out['styled_inputs'] = self._add_speaker_embedding(outputs = inputs, embedded_speakers = ref_energy_emb.unsqueeze(1))
+            
+        return out
+            
     #######################
     ###### Specifics ######
     #######################
@@ -403,9 +452,9 @@ class StyleEncoder(nn.Module):
 
             return {'styled_inputs': inputs, 'style_embedding': gst_outputs.squeeze(1)}   
 
-    def vae_forward(self, inputs, ref_mels): 
+    def vae_forward(self, inputs, style_input): 
 
-        vae_output = self.layer.forward(ref_mels)
+        vae_output = self.layer.forward(style_input)
         vae_embedding = vae_output['z']
 
         if(self.use_nonlinear_proj):
@@ -422,8 +471,8 @@ class StyleEncoder(nn.Module):
     
         return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
-    def vae_inference(self, inputs, ref_mels, z=None):
-        # print(inputs.shape, ref_mels.shape)
+    def vae_inference(self, inputs, style_input, z=None):
+        # print(inputs.shape, style_input.shape)
         if(z is not None): # If an specific z is passed it uses it
             if(self.agg_type == 'concat'):
                 inputs =  self._concat_embedding(inputs, z)  
@@ -432,7 +481,7 @@ class StyleEncoder(nn.Module):
             return {'styled_inputs': inputs, 'style_embedding': z}
 
         else:
-            vae_output = self.layer.forward(ref_mels.unsqueeze(0))
+            vae_output = self.layer.forward(style_input.unsqueeze(0))
             vae_embedding = vae_output['z']
 
             if(self.use_nonlinear_proj):
@@ -449,8 +498,8 @@ class StyleEncoder(nn.Module):
 
             return {'styled_inputs': inputs, 'style_embedding': vae_embedding, 'mean': vae_output['mean'], 'log_var' : vae_output['log_var']}
 
-    def vqvae_forward(self, inputs, ref_mels): 
-        vqvae_output = self.layer.forward(ref_mels)
+    def vqvae_forward(self, inputs, style_input): 
+        vqvae_output = self.layer.forward(style_input)
         
         for key in vqvae_output:
             if(self.use_nonlinear_proj):
@@ -469,7 +518,7 @@ class StyleEncoder(nn.Module):
         
         return {'styled_inputs': inputs, 'style_embedding': vqvae_output['z_q_x_st'], 'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}
 
-    def vqvae_inference(self, inputs, ref_mels, K=None):
+    def vqvae_inference(self, inputs, style_input, K=None):
         if(K): # If an specific K is passed it uses it
             z = self.layer.codebook.weight[K].detach()
             if(self.agg_type == 'concat'):
@@ -479,7 +528,7 @@ class StyleEncoder(nn.Module):
             return {'styled_inputs': inputs, 'style_embedding': z}
 
         else:
-            vqvae_output = self.layer.forward(ref_mels)
+            vqvae_output = self.layer.forward(style_input)
 
             for key in vqvae_output:
                 if(self.use_nonlinear_proj):
@@ -498,8 +547,8 @@ class StyleEncoder(nn.Module):
         
             return {'styled_inputs': inputs, 'style_embedding': vqvae_output['z_q_x_st'], 'z_e':vqvae_output['z_e'], 'z_q':vqvae_output['z_q']}
 
-    def vaeflow_forward(self, inputs, ref_mels): 
-        vaeflow_output = self.layer.forward(ref_mels)
+    def vaeflow_forward(self, inputs, style_input): 
+        vaeflow_output = self.layer.forward(style_input)
         vaeflow_embedding = vaeflow_output['z_T']
 
         if(self.use_nonlinear_proj):
@@ -515,7 +564,7 @@ class StyleEncoder(nn.Module):
             inputs = self._add_speaker_embedding(inputs, vaeflow_embedding) 
         return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding.squeeze(1), 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
-    def vaeflow_inference(self, inputs, ref_mels, z=None):
+    def vaeflow_inference(self, inputs, style_input, z=None):
         if(z): # If an specific z is passed it uses it
             if(self.agg_type == 'concat'):
                 inputs = self._concat_embedding(inputs, z)  
@@ -524,7 +573,7 @@ class StyleEncoder(nn.Module):
             return {'styled_inputs': inputs, 'style_embedding': z}
 
         else:
-            vaeflow_output = self.layer.forward(ref_mels)
+            vaeflow_output = self.layer.forward(style_input)
             vaeflow_embedding = vaeflow_output['z_T']
 
             if(self.use_nonlinear_proj):
@@ -541,8 +590,8 @@ class StyleEncoder(nn.Module):
         
             return {'styled_inputs': inputs, 'style_embedding': vaeflow_embedding.squeeze(1), 'mean': vaeflow_output['mean'], 'log_var' : vaeflow_output['log_var'], 'z_0' : vaeflow_output['z_0'], 'z_T' : vaeflow_output['z_T']}
 
-    def diff_forward(self, inputs, ref_mels):
-            diff_output = self.layer.forward(ref_mels)
+    def diff_forward(self, inputs, style_input):
+            diff_output = self.layer.forward(style_input)
             diff_embedding = diff_output['style']
             if(self.use_nonlinear_proj):
                 diff_embedding = torch.tanh(self.nl_proj(diff_embedding))
@@ -557,8 +606,8 @@ class StyleEncoder(nn.Module):
                 inputs =  self._add_speaker_embedding(inputs, diff_embedding)
             return {'styled_inputs': inputs, 'style_embedding': diff_embedding.squeeze(1), 'noises': diff_output['noises']}
 
-    def diff_inference(self, inputs, ref_mels, infer_from):
-            diff_output = self.layer.inference(ref_mels, infer_from)
+    def diff_inference(self, inputs, style_input, infer_from):
+            diff_output = self.layer.inference(style_input, infer_from)
             diff_embedding = diff_output['style']
             if(self.use_nonlinear_proj):
                 diff_embedding = torch.tanh(self.nl_proj(diff_embedding))

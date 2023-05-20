@@ -154,7 +154,7 @@ class BaseTTS(BaseModel):
             language_id = self.language_manager.language_id_mapping[language_name]
 
         # get style id
-        if hasattr(self, "style_manager") and self.config.style_encoder_config.use_lookup and style_name is not None:
+        if hasattr(self, "style_manager") and self.config.style_encoder_config.se_type == 'lookup' and style_name is not None:
             style_id = self.style_manager.style_id_mapping[style_name]
 
         return {

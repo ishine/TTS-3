@@ -265,7 +265,7 @@ class StyleforwardTTS(BaseTTS):
             self.embedded_speaker_dim,
         )
 
-        if(not self.config.style_encoder_config.use_lookup):
+        if(self.config.style_encoder_config.se_type != 'lookup'):
             self.style_encoder_layer = StyleEncoder(self.config.style_encoder_config)
 
         if self.args.positional_encoding:
@@ -341,7 +341,7 @@ class StyleforwardTTS(BaseTTS):
 
         print(" > using STYLE information.")
 
-        if self.config.style_encoder_config.use_lookup and self.style_manager:
+        if self.config.style_encoder_config.se_type == 'lookup' and self.style_manager:
             print(" > initialization of style-embedding layers.")
             self.num_style = self.style_manager.num_styles
             self.embedded_style_dim = self.config.style_encoder_config.style_embedding_dim
@@ -630,29 +630,28 @@ class StyleforwardTTS(BaseTTS):
             - pitch: :math:`[B, 1, T]`
             - energy: :math:`[B, 1, T]`
         """
+
+        # GET SPEAKER
         g , _ = self._set_speaker_input(aux_input)
 
-        # Compute sequence masks
+        # SPECTROGRAM/TEXT BATCHES MASKS
         y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
 
-        # If use melstats generate aux y
+        # HARDCODED MEL NORMALIZATION
         if self.use_melstats:
             means = np.zeros((g.shape[0],80))
             stds = np.zeros((g.shape[0],80))
-
             for i,idx in enumerate(g):
                 means[i] = self.melstats[idx.item()]['mel_mean']
                 stds[i] = self.melstats[idx.item()]['mel_scale']
-
             means = torch.Tensor(means).unsqueeze(1).to(y.device)
             stds = torch.Tensor(stds).unsqueeze(1).to(y.device)
-            
             y_norm = (y-means)/stds
         else:
             y_norm = y
 
-        # ENCODER PASS
+        # TEXT ENCODER PASS
         encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
         # ALIGNER NETWORK PASS
@@ -669,61 +668,62 @@ class StyleforwardTTS(BaseTTS):
             dr = o_alignment_dur
 
         # STYLE REFERENCE FEATURES
-        style_features = []
+        style_reference_features = {}
         if "pitch" in self.config.style_encoder_config.style_reference_features:
-            style_features.append(pitch.squeeze(1).detach().clone().requires_grad_().unsqueeze(2))
+            style_reference_features['pitch'] = pitch.squeeze(1).detach().clone().requires_grad_().unsqueeze(2)
+        # REFERENCE ENERGY ENCODER PASS
         if "energy" in self.config.style_encoder_config.style_reference_features:
-            style_features.append(energy.squeeze(1).detach().clone().requires_grad_().unsqueeze(2))
+            style_reference_features['energy'] = energy.squeeze(1).detach().clone().requires_grad_().unsqueeze(2)
         if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
-            style_features.append(y_norm)
+            style_reference_features['melspectrogram'] = y_norm
+        assert style_reference_features, 'No style reference feature has been selected. Please choose one!'
         
-        if style_features:
-            style_reference = torch.cat(style_features, dim=2)    
-        else:
-            raise Exception("No style reference was inputted")
-            
+        
         # STYLE ENCODER PASS
-        residual_style_preds = None
-        residual_speaker_preds = None
-        if(self.config.style_encoder_config.use_lookup):
+        ## Look Up
+        if(self.config.style_encoder_config.se_type == 'lookup'):
             o_en = encoder_outputs.permute(0,2,1)
             style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
             o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs['style_embedding'].squeeze(1)
-        elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
-            se_inputs = [encoder_outputs.permute(0,2,1), style_reference]
-            style_encoder_outputs = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
-            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
-        elif(self.config.style_encoder_config.se_type == 'modifiedre'):
-            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=style_reference , speaker_embedding = g.permute(0,2,1))
-            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
-        elif(self.config.style_encoder_config.se_type == 'metastyle'):
-            style_encoder_outputs = self.style_encoder_layer.forward(inputs = encoder_outputs.permute(0,2,1), style_mel=style_reference , mel_mask = y_lengths)
+
+        ## Arguments 
+        se_args = {'out_txt_encoder':encoder_outputs.permute(0,2,1), 'reference_features':style_reference_features}
+        if(self.config.style_encoder_config.se_type == 'finegrainedre'):
+            se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
+        if(self.config.style_encoder_config.se_type == 'modifiedre'):
+            se_args.update({'speaker_embedding':g.permute(0,2,1)})
+        if(self.config.style_encoder_config.se_type == 'metastyle'):
+            se_args.update({'mel_mask':y_lengths})  
+
+        ## Pass
+        style_encoder_outputs = self.style_encoder_layer.forward(**se_args)
+
+        ## Residual Disentanglement
+        residual_style_preds = None
+        residual_speaker_preds = None
+        if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
             o_en = encoder_outputs.permute(0,2,1)
-            if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-                residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
-                style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
-                style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
-                grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
-                residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
-                residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
-                style_encoder_outputs['style_embedding'] = style_embeddings
-                style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
-                o_en = (o_en + style_embeddings).permute(0,2,1)
-            else:
-                o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+            assert self.config.style_encoder_config.se_type == 'metastyle', 'the line above only works for the metastyle output format'
+            residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
+            style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
+            style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
+            grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
+            residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+            residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
+            style_encoder_outputs['style_embedding'] = style_embeddings
+            style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
+            o_en = (o_en + style_embeddings).permute(0,2,1)
         else:
-            se_inputs = [encoder_outputs.permute(0,2,1), style_reference]
-            style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
-        # STYLE CLASSIFIER PASS
+        ## Style Classifier
         style_preds = None
         if(self.config.style_encoder_config.use_guided_style):
             style_preds = self.style_classify_layer(style_encoder_outputs['style_embedding'])
 
-        # SPEAKER CLASSIFIER PASS
+        ## Speaker Classifier (w/ GRL)
         speaker_preds_from_style = None
         if(self.config.style_encoder_config.use_grl_on_speakers_in_style_embedding):
             grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs['style_embedding'])
@@ -737,7 +737,7 @@ class StyleforwardTTS(BaseTTS):
         o_dr = torch.clamp(torch.exp(o_dr_log) - 1, 0, self.max_duration)
         o_attn = self.generate_attn(o_dr.squeeze(1), x_mask) # generate attn mask from predicted durations
         
-        # PITCH PREDICTOR
+        # PITCH PREDICTOR PASS
         o_pitch = None
         avg_pitch = None
         if self.args.use_pitch:
@@ -753,49 +753,53 @@ class StyleforwardTTS(BaseTTS):
         o_de_cycle = None
         speaker_embeddings_cycle = None
         if(self.config.style_encoder_config.use_cycle_consistency):
-            
+
+            # GET SPEAKER
             g , _ = self._set_speaker_input(aux_input)
 
+            # SPECTROGRAM/TEXT BATCHES MASKS
             y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
             x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
 		    
             # CYCLE SELECT SPEAKER
-            #g_cycle = 1 - g # Here we are working only in the two speakers case, where one of them has id 1 and the other 0, so we get the other one along the batch
             g_cycle = g[torch.randperm(g.shape[0])] # g is (batch_size,1), so here we are getting random permutation of speakers ids
             
             # CYCLE ENCODER PASS
             encoder_outputs_cycle, x_mask_cycle, g_cycle, x_emb_cycle = self._forward_encoder(x, x_mask, g_cycle)
             
-            # CYCLE STYLE ENCODER PASS 
-            if(self.config.style_encoder_config.use_lookup):
-                o_en_cycle = encoder_outputs_cycle.permute(0,2,1)
+            # CYCLE STYLE ENCODER PASS
+            ## Look Up
+            if(self.config.style_encoder_config.se_type == 'lookup'):
+                o_en_cycle = encoder_outputs.permute(0,2,1)
                 style_encoder_outputs_cycle = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
                 o_en_cycle = o_en_cycle + style_encoder_outputs_cycle['style_embedding'] # [B, 1, C]
                 o_en_cycle = o_en_cycle.permute(0,2,1)
                 style_encoder_outputs_cycle['style_embedding'].squeeze(1)
-            elif(self.config.style_encoder_config.se_type == 'finegrainedre'):
-                se_inputs = [encoder_outputs_cycle.permute(0,2,1), style_reference]
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs, text_len= x_lengths, mel_len = y_lengths)
-                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
-            elif(self.config.style_encoder_config.se_type == 'modifiedre'):
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = encoder_outputs_cycle.permute(0,2,1), style_mel=style_reference , speaker_embedding = g_cycle.permute(0,2,1))
-                o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
-            elif(self.config.style_encoder_config.se_type == 'metastyle'):
-                o_en_cycle = encoder_outputs_cycle.permute(0,2,1)
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(inputs = o_en_cycle, style_mel=style_reference , mel_mask = y_lengths)
 
-                if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-                    speaker_embeddings_cycle = self.post_speaker_processor(style_encoder_outputs_cycle['style_embedding'])
-                    style_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - speaker_embeddings_cycle
-                    style_embeddings_cycle = self.post_style_processor(style_embeddings_cycle)
-                    style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
-                    style_embeddings_cycle = style_embeddings_cycle.unsqueeze(1).expand(o_en_cycle.size(0), o_en_cycle.size(1), -1)
-                    o_en_cycle = (o_en_cycle + style_embeddings_cycle).permute(0,2,1)
-                else:
-                    o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
+
+            ## Arguments 
+            se_args = {'out_txt_encoder':encoder_outputs_cycle.permute(0,2,1), 'reference_features':style_reference_features}
+            if(self.config.style_encoder_config.se_type == 'finegrainedre'):
+                se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
+            if(self.config.style_encoder_config.se_type == 'modifiedre'):
+                se_args.update({'speaker_embedding':g.permute(0,2,1)})
+            if(self.config.style_encoder_config.se_type == 'metastyle'):
+                se_args.update({'mel_mask':y_lengths})  
+
+            ## Pass
+            style_encoder_outputs_cycle = self.style_encoder_layer.forward(**se_args)
+
+            ## Residual Disentanglement
+            if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
+                o_en_cycle = encoder_outputs_cycle.permute(0,2,1)
+                assert self.config.style_encoder_config.se_type == 'metastyle', 'the line above only works for the metastyle output format'
+                speaker_embeddings_cycle = self.post_speaker_processor(style_encoder_outputs_cycle['style_embedding']) # Linear in style output to predict speaker
+                style_embeddings_cycle = style_encoder_outputs_cycle['style_embedding'] - speaker_embeddings_cycle # Style embeddings minus speaker information embedding
+                style_embeddings_cycle = self.post_style_processor(style_embeddings_cycle) # Style post
+                style_encoder_outputs_cycle['style_embedding'] = style_embeddings_cycle
+                style_embeddings_cycle = style_embeddings_cycle.unsqueeze(1).expand(o_en_cycle.size(0), o_en_cycle.size(1), -1)
+                o_en_cycle = (o_en_cycle + style_embeddings_cycle).permute(0,2,1)
             else:
-                se_inputs = [encoder_outputs_cycle.permute(0,2,1), style_reference]
-                style_encoder_outputs_cycle = self.style_encoder_layer.forward(se_inputs)
                 o_en_cycle = style_encoder_outputs_cycle['styled_inputs'].permute(0,2,1)
             
             if(o_en_cycle.isnan().any()): # If something turns nan it will print its information
@@ -918,7 +922,7 @@ class StyleforwardTTS(BaseTTS):
         # se_inputs = [o_en, aux_input['style_mel']]
         # o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
         
-        if(self.config.style_encoder_config.use_lookup):
+        if(self.config.style_encoder_config.se_type == 'lookup'):
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
             o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
