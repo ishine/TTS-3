@@ -27,6 +27,11 @@ We are an expressive TTS research group located at Unicamp and CPQD (Brazil).
 - Style Classifier
 - Speaker Classifier + GRL (Gradient Reversal Layer)
 
+## Style Reference Features
+- Pitch
+- Energy
+- Mel-Spectrogram
+
 ## Agregation Types
 - Sum, Concat or AdaIN
 
