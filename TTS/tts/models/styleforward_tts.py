@@ -441,8 +441,9 @@ class StyleforwardTTS(BaseTTS):
             - x_mask: :math:`(B, 1, T_{en})`
             - g: :math:`(B, C)`
         """
-        if hasattr(self, "emb_g"):
-            g = self.emb_g(g)  # [B, C, 1]
+        if g is not None:
+            if hasattr(self, "emb_g"):
+                g = self.emb_g(g)  # [B, C, 1]
         if g is not None:
             g = g.unsqueeze(-1)
         # [B, T, C]
