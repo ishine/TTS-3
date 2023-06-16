@@ -655,6 +655,8 @@ class StyleforwardTTS(BaseTTS):
         else:
             y_norm = y
 
+        print(g)
+
         # TEXT ENCODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
             encoder_outputs, x_mask, _, x_emb = self._forward_encoder(x, x_mask)
