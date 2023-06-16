@@ -144,7 +144,7 @@ class StyleEncoder(nn.Module):
             ref_melspectrogram =  kwargs['reference_features']['melspectrogram']
             if self.se_type == 'gst':
                 out.update(self.gst_embedding(inputs=inputs, style_input=ref_melspectrogram))
-            elif(self.se_type == 're' | self.se_type == 'inre'):
+            elif(self.se_type == 're' or self.se_type == 'inre'):
                 out.update(self.re_embedding(inputs=inputs, style_input=ref_melspectrogram))
             elif self.se_type == 'modifiedre':
                 out.update(self.modified_re_embedding_forward(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['speaker_embedding']))
@@ -188,7 +188,7 @@ class StyleEncoder(nn.Module):
             
             if self.se_type == 'gst':
                 out = self.gst_embedding(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['d_vectors'])
-            elif(self.se_type == 're' | self.se_type == 'inre'):
+            elif(self.se_type == 're' or self.se_type == 'inre'):
                 out = self.re_embedding_inference(inputs=inputs, style_input=ref_melspectrogram)
             elif self.se_type == 'modifiedre':
                 out = self.modified_re_embedding_inference(inputs=inputs, style_input=ref_melspectrogram, speaker_embedding=kwargs['speaker_embedding'])

@@ -656,7 +656,7 @@ class StyleforwardTTS(BaseTTS):
         else:
             y_norm = y
 
-        print(g)
+        # print(g)
 
         # TEXT ENCODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
