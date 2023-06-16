@@ -657,7 +657,7 @@ class StyleforwardTTS(BaseTTS):
 
         # TEXT ENCODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
-            encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask)
+            encoder_outputs, x_mask, _, x_emb = self._forward_encoder(x, x_mask)
             if hasattr(self, "emb_g"):
                 g = self.emb_g(g)  # [B, C, 1]
             if g is not None:
