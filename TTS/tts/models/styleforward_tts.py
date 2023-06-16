@@ -487,8 +487,12 @@ class StyleforwardTTS(BaseTTS):
         # positional encoding
         if hasattr(self, "pos_encoder"):
             o_en_ex = self.pos_encoder(o_en_ex, y_mask)
+
+        if g is not None:
+            o_en_ex = o_en_ex + g #expect g to be the embedding
+
         # decoder pass
-        o_de = self.decoder(o_en_ex, y_mask, g=g)
+        o_de = self.decoder(o_en_ex, y_mask) # this g is useless
         return o_de.transpose(1, 2), attn.transpose(1, 2)
 
     def _forward_pitch_predictor(
@@ -652,7 +656,14 @@ class StyleforwardTTS(BaseTTS):
             y_norm = y
 
         # TEXT ENCODER PASS
-        encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
+        if self.config.style_encoder_config.agg_spk_emb_decoder:
+            encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask)
+            if hasattr(self, "emb_g"):
+                g = self.emb_g(g)  # [B, C, 1]
+            if g is not None:
+                g = g.unsqueeze(-1)
+        else:
+            encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
         # ALIGNER NETWORK PASS
         o_alignment_dur = None
@@ -729,6 +740,10 @@ class StyleforwardTTS(BaseTTS):
             grl_output = self.grl_on_speakers_in_style_embedding(style_encoder_outputs['style_embedding'])
             speaker_preds_from_style = self.speaker_classifier_using_style_embedding(grl_output)
 
+        if self.config.style_encoder_config.agg_stl_emb_adaptors:
+            o_en = self.style_encoder_layer._add_speaker_embedding(encoder_outputs.permute(0,2,1), style_encoder_outputs['style_embedding'].unsqueeze(1))
+            o_en = o_en.permute(0,2,1)
+
         # DURATION PREDICTOR PASS
         if self.args.detach_duration_predictor:
             o_dr_log = self.duration_predictor(o_en.detach(), x_mask)
@@ -745,9 +760,10 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en + o_pitch_emb
 
         # DECODER PASS
-        o_de, attn = self._forward_decoder(
-            o_en, dr, x_mask, y_lengths, g=None
-        ) 
+        if self.config.style_encoder_config.agg_spk_emb_decoder:
+            o_de, attn = self._forward_decoder(o_en, dr, x_mask, y_lengths, g=g)        
+        else:
+            o_de, attn = self._forward_decoder(o_en, dr, x_mask, y_lengths, g=None) 
 
         # CYCLE CONSISTENCY PASS
         o_de_cycle = None

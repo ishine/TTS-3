@@ -42,10 +42,15 @@ class StyleEncoderConfig(Coqpit):
     proj_dim: int = 384 # Projection dim, often the encoder output (512 is the tacotron2 default encoder output, 384 for fastpitch)
     use_nonlinear_proj: bool = False # Whether use or not a linear (last_dim, last_dim) + tanh before agg in TTS encoder outputs
 
+    # Normalization
+    use_melstat_norm: bool = False # If want to use pre computed melspec statistic only in input of style encoder
+
     # Aggregation
     agg_type: str = "concat" # Can be concat, sum, or adain
     agg_norm: bool = False # If agg_type == sum, you can rather than normalizing or not
     use_proj_linear: bool = False # Whether use linear projection to decoder dim or not (specifcally useful for sum agg_style)
+    agg_spk_emb_decoder: bool = False # If you want to agg speaker embedding only in decoder input (and not in varianca adaptors)
+    agg_stl_emb_adaptors: bool = False # If you want to agg style embedding only in varianca adaptors (and not in decoder input)
 
     # Style Classifier
     use_guided_style: bool = False # Whether use guided style encoder training
@@ -127,7 +132,7 @@ class StyleEncoderConfig(Coqpit):
         c = asdict(self)
         super().check_values()
 
-        check_argument("se_type", c, restricted=True, enum_list=["lookup", "gst", "re","vae","vqvae", "diffusion", "vaeflow","finegrainedre","modifiedre", "bidirectionalre","metastyle"])
+        check_argument("se_type", c, restricted=True, enum_list=["lookup", "gst", "re","vae","vqvae", "diffusion", "vaeflow","finegrainedre","modifiedre", "bidirectionalre","metastyle", "inre"])
         check_argument("agg_type", c, restricted=True, enum_list=["sum", "concat", "adain"])
         check_argument("num_mel", c, restricted=False)
         check_argument("style_embedding_dim", c, restricted=True, min_val=0, max_val=1000)
