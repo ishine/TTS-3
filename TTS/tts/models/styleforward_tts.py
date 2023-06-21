@@ -920,22 +920,39 @@ class StyleforwardTTS(BaseTTS):
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
         
         # encoder pass
-        if(cond_g is not None):
-            o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, cond_g)
-        else:
-            o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, g)
-            
-
-        # After we already have used the indices g or cond_g, lets get the speaker embedding
-        if hasattr(self, "emb_g"):
-            g_emb = self.emb_g(g)  # [B, C, 1]
-        if g_emb is not None:
-            g_emb = g_emb.unsqueeze(-1)
-        if(cond_g is not None):
+        if self.config.style_encoder_config.agg_spk_emb_decoder:
+            encoder_outputs, x_mask, _, x_emb = self._forward_encoder(x, x_mask)
             if hasattr(self, "emb_g"):
-                cond_g_emb = self.emb_g(cond_g)  # [B, C, 1]
-            if cond_g_emb is not None:
-                cond_g_emb = cond_g_emb.unsqueeze(-1)
+                g = self.emb_g(g)  # [B, C, 1]
+            if g is not None:
+                g = g.unsqueeze(-1)
+            
+            g_emb = g
+
+        elif(cond_g is not None):
+            encoder_outputs, x_mask, g_check, _ = self._forward_encoder(x, x_mask, cond_g)
+
+            # After we already have used the indices g or cond_g, lets get the speaker embedding
+            if hasattr(self, "emb_g"):
+                g_emb = self.emb_g(g)  # [B, C, 1]
+            if g_emb is not None:
+                g_emb = g_emb.unsqueeze(-1)
+            if(cond_g is not None):
+                if hasattr(self, "emb_g"):
+                    cond_g_emb = self.emb_g(cond_g)  # [B, C, 1]
+                if cond_g_emb is not None:
+                    cond_g_emb = cond_g_emb.unsqueeze(-1)
+
+        else:
+            encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
+            g_emb = g
+        # OLD
+        # if(cond_g is not None):
+        #     o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, cond_g)
+        # else:
+        #     o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, g)
+
+        o_en = encoder_outputs
 
         #Style embedding 
         # se_inputs = [o_en, aux_input['style_mel']]
@@ -986,6 +1003,10 @@ class StyleforwardTTS(BaseTTS):
             o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
 
+        if self.config.style_encoder_config.agg_stl_emb_adaptors:
+            o_en = self.style_encoder_layer._add_speaker_embedding(encoder_outputs.permute(0,2,1), style_encoder_outputs['style_embedding'].unsqueeze(1))
+            o_en = o_en.permute(0,2,1)
+
         # duration predictor pass
         o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = self.format_durations(o_dr_log, x_mask).squeeze(1)
@@ -1010,7 +1031,12 @@ class StyleforwardTTS(BaseTTS):
         
 
         # decoder pass
-        o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None)
+        if self.config.style_encoder_config.agg_spk_emb_decoder:
+            o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=g)        
+        else:
+            o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None) 
+        # OLD
+        #o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None)
 
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss):
