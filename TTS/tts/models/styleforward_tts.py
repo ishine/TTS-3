@@ -992,22 +992,22 @@ class StyleforwardTTS(BaseTTS):
         style_encoder_outputs = self.style_encoder_layer.forward(**se_args)
 
         ## Residual Disentanglement
-        residual_style_preds = None
-        residual_speaker_preds = None
-        if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-            o_en = encoder_outputs.permute(0,2,1)
-            assert self.config.style_encoder_config.se_type == 'metastyle', 'the line above only works for the metastyle output format'
-            residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
-            style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
-            style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
-            grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
-            residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
-            residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
-            style_encoder_outputs['style_embedding'] = style_embeddings
-            style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
-            o_en = (o_en + style_embeddings).permute(0,2,1)
-        else:
-            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+        # residual_style_preds = None
+        # residual_speaker_preds = None
+        # if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
+        #     o_en = encoder_outputs.permute(0,2,1)
+        #     assert self.config.style_encoder_config.se_type == 'metastyle', 'the line above only works for the metastyle output format'
+        #     residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
+        #     style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
+        #     style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
+        #     grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
+        #     residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+        #     residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
+        #     style_encoder_outputs['style_embedding'] = style_embeddings
+        #     style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
+        #     o_en = (o_en + style_embeddings).permute(0,2,1)
+        # else:
+        #     o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
 
         if self.config.style_encoder_config.agg_stl_emb_adaptors:
