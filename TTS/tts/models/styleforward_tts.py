@@ -916,6 +916,7 @@ class StyleforwardTTS(BaseTTS):
         """
         g , cond_g = self._set_speaker_input(aux_input)
         cond_g_emb = None
+        g_check = None
         x_lengths = torch.tensor(x.shape[1:2]).to(x.device)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
         
