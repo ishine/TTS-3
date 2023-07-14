@@ -58,7 +58,7 @@ class StyleEncoder(nn.Module):
                     num_mel = self.num_mel,
                     embedding_dim = self.style_embedding_dim
                 )
-            if self.se_type == 'inre':
+            elif self.se_type == 'inre':
                 self.layer = INReferenceEncoder(
                     num_mel = self.num_mel,
                     embedding_dim = self.style_embedding_dim
