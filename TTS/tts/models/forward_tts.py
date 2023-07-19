@@ -455,6 +455,7 @@ class ForwardTTS(BaseTTS):
         pitch: torch.FloatTensor = None,
         dr: torch.IntTensor = None,
         pitch_control: torch.FloatTensor = None,
+        pitch_replace: torch.FloatTensor = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         """Pitch predictor forward pass.
 
@@ -483,12 +484,15 @@ class ForwardTTS(BaseTTS):
             # Put the control over phonemes      
             if(pitch_control is not None):
                 print('entrou no pitch control: ', pitch_control, avg_pitch)
-                avg_pitch = avg_pitch*pitch_control
+                avg_pitch = avg_pitch*pitch_control 
             o_pitch_emb = self.pitch_emb(avg_pitch)
             return o_pitch_emb, o_pitch, avg_pitch
         if(pitch_control is not None):
-            print('entrou no pitch control: ', pitch_control, o_pitch)
-            o_pitch = o_pitch*pitch_control
+            print('Pitch changed by args!')
+            o_pitch = o_pitch + pitch_control # I don't remember why is it residual instead of replace, stay as TODO
+        if(pitch_replace is not None):
+            print("Pitch replaced by args!")
+            o_pitch = pitch_replace
         o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
@@ -498,6 +502,8 @@ class ForwardTTS(BaseTTS):
         x_mask: torch.IntTensor,
         energy: torch.FloatTensor = None,
         dr: torch.IntTensor = None,
+        energy_control: torch.FloatTensor = None,
+        energy_replace: torch.FloatTensor = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         """Energy predictor forward pass.
 
@@ -523,8 +529,18 @@ class ForwardTTS(BaseTTS):
         o_energy = self.energy_predictor(o_en, x_mask)
         if energy is not None:
             avg_energy = average_over_durations(energy, dr)
+            # Put the control over phonemes
+            if (energy_control is not None):
+                print('Realizando controle de energia: ', energy_control, avg_energy)
+                avg_energy = avg_energy*energy_control
             o_energy_emb = self.energy_emb(avg_energy)
             return o_energy_emb, o_energy, avg_energy
+        if(energy_control is not None):
+            print('Energy changed by args!')
+            o_energy = o_energy + energy_control
+        if(energy_replace is not None):
+            print('Energy replaced by args!')
+            o_energy = energy_replace
         o_energy_emb = self.energy_emb(o_energy)
         return o_energy_emb, o_energy
     
@@ -834,16 +850,17 @@ class ForwardTTS(BaseTTS):
         o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = self.format_durations(o_dr_log, x_mask).squeeze(1)
         y_lengths = o_dr.sum(1)
-        # pitch predictor pass
+
+        # PITCH PREDICTOR PASS
         o_pitch = None
         if self.args.use_pitch:
-            o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = aux_input['pitch_control'])
+            o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = aux_input['pitch_control'], pitch_replace=aux_input['pitch_replace'])
             o_en = o_en + o_pitch_emb
-
+        
         # ENERGY PREDICTOR PASS
         o_energy = None
         if self.args.use_energy:
-            o_energy_emb, o_energy = self._forward_pitch_predictor(o_en, x_mask)
+            o_energy_emb, o_energy = self._forward_energy_predictor(o_en, x_mask, energy_control = aux_input['energy_control'], energy_replace=aux_input['energy_replace'])
             o_en = o_en + o_energy_emb
 
         # decoder pass

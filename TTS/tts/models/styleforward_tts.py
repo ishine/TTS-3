@@ -572,7 +572,7 @@ class StyleforwardTTS(BaseTTS):
             # Put the control over phonemes      
             if(pitch_control is not None):
                 print('entrou no pitch control: ', pitch_control, avg_pitch)
-                avg_pitch = avg_pitch*pitch_control # TODO, check if its necessary, cuz while training we dont intend to control pitch
+                avg_pitch = avg_pitch*pitch_control 
             o_pitch_emb = self.pitch_emb(avg_pitch)
             return o_pitch_emb, o_pitch, avg_pitch
         if(pitch_control is not None):
@@ -590,6 +590,8 @@ class StyleforwardTTS(BaseTTS):
         x_mask: torch.IntTensor,
         energy: torch.FloatTensor = None,
         dr: torch.IntTensor = None,
+        energy_control: torch.FloatTensor = None,
+        energy_replace: torch.FloatTensor = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         """Energy predictor forward pass.
 
@@ -615,8 +617,18 @@ class StyleforwardTTS(BaseTTS):
         o_energy = self.energy_predictor(o_en, x_mask)
         if energy is not None:
             avg_energy = average_over_durations(energy, dr)
+            # Put the control over phonemes
+            if (energy_control is not None):
+                print('Realizando controle de energia: ', energy_control, avg_energy)
+                avg_energy = avg_energy*energy_control
             o_energy_emb = self.energy_emb(avg_energy)
             return o_energy_emb, o_energy, avg_energy
+        if(energy_control is not None):
+            print('Energy changed by args!')
+            o_energy = o_energy + energy_control
+        if(energy_replace is not None):
+            print('Energy replaced by args!')
+            o_energy = energy_replace
         o_energy_emb = self.energy_emb(o_energy)
         return o_energy_emb, o_energy
     
@@ -992,7 +1004,8 @@ class StyleforwardTTS(BaseTTS):
         return outputs
 
     @torch.no_grad()
-    def inference(self, x, aux_input={"d_vectors": None, "speaker_ids": None, "cond_speaker_ids" : None, 'style_mel': None, "style_ids": None,'pitch_control': None, 'pitch_replace': None, 'z': None}):  # pylint: disable=unused-argument
+    def inference(self, x, aux_input={"d_vectors": None, "speaker_ids": None, "cond_speaker_ids" : None, 'style_mel': None, "style_ids": None,
+                                      'pitch_control': None, 'pitch_replace': None, 'energy_control': None, 'energy_replace': None, 'z': None}):  # pylint: disable=unused-argument
         """Model's inference pass.
 
         Args:
@@ -1116,8 +1129,16 @@ class StyleforwardTTS(BaseTTS):
         # ENERGY PREDICTOR PASS
         o_energy = None
         if self.args.use_energy:
-            o_energy_emb, o_energy = self._forward_pitch_predictor(o_en, x_mask)
-            o_en = o_en + o_energy_emb
+            # Remove conditional speaker embedding, and add the provided speaker, we provide energy predicted by cond_speaker in order to generate the energy embedding
+            # for target speaker and avoid speaker leakage (empirical results)
+            if(cond_g is not None):
+                o_energy_emb, o_energy = self._forward_energy_predictor(o_en, x_mask)
+                o_en = o_en - cond_g_emb.expand(o_en.size(0), o_en.size(1), -1) + g_emb.expand(o_en.size(0), o_en.size(1), -1)
+                o_energy_emb, o_energy = self._forward_energy_predictor(o_en, x_mask, energy_replace = o_energy)
+                o_en = o_en + o_energy_emb
+            else:
+                o_energy_emb, o_energy = self._forward_energy_predictor(o_en, x_mask, energy_control = aux_input['energy_control'], energy_replace=aux_input['energy_replace'])
+                o_en = o_en + o_energy_emb
 
         # DECODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
