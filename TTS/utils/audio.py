@@ -738,7 +738,7 @@ class AudioProcessor(object):
         f0 = pw.stonemask(x.astype(np.double), f0, t, self.sample_rate)
         return f0
 
-    def compute_energy(self, y: np.ndarray) -> np.ndarray:
+    def compute_energy(self, x: np.ndarray) -> np.ndarray:
         """Compute energy of a waveform using the same parameters used for computing melspectrogram.
         Args:
             x (np.ndarray): Waveform.
@@ -753,9 +753,27 @@ class AudioProcessor(object):
             >>> wav = ap.load_wav(WAV_FILE, sr=22050)[:5 * 22050]
             >>> energy = ap.compute_energy(wav)
         """
-        x = self._stft(y=y)
+
+        # First compute pitch to obtain matching voiced/unvoiced decisions
+        # align F0 length to the spectrogram length
+        if len(x) % self.hop_length == 0:
+            x = np.pad(x, (0, self.hop_length // 2), mode="reflect")
+
+        f0, t = pw.dio(
+            x.astype(np.double),
+            fs=self.sample_rate,
+            f0_ceil=self.mel_fmax,
+            frame_period=1000 * self.hop_length / self.sample_rate,
+        )
+        f0 = pw.stonemask(x.astype(np.double), f0, t, self.sample_rate)
+        zero_idxs = np.where(f0 == 0.0)[0]
+
+        x = self._stft(y=x)
         mag, _ = librosa.magphase(x)
         energy = np.sqrt(np.sum(mag**2, axis=0))
+
+        assert len(energy) == len(f0)
+        energy[zero_idxs] = 0.0
         return energy
 
     ### Audio Processing ###
