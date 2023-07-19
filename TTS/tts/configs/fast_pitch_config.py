@@ -145,6 +145,8 @@ class FastPitchConfig(BaseTTSConfig):
     # dataset configs
     compute_f0: bool = True
     f0_cache_path: str = None
+    compute_energy: bool = True
+    energy_cache_path: str = None
 
     # testing
     test_sentences: List[str] = field(
