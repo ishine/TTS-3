@@ -946,7 +946,7 @@ class ForwardTTS(BaseTTS):
                 "energy_ground_truth": plot_pitch(energy, gt_spec, ap, output_fig=False),
                 "energy_avg_predicted": plot_pitch(energy_avg_expanded, pred_spec, ap, output_fig=False),
             }
-            figures.update(energy)
+            figures.update(energy_figures)
 
         # plot the attention mask computed from the predicted durations
         if "attn_durations" in outputs:
