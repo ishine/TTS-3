@@ -136,6 +136,7 @@ class StylefastPitchConfig(BaseTTSConfig):
     dur_loss_alpha: float = 1.0
     spec_loss_alpha: float = 1.0
     pitch_loss_alpha: float = 1.0
+    energy_loss_alpha: float = 1.0
     aligner_loss_alpha: float = 1.0
     binary_align_loss_alpha: float = 1.0
     binary_align_loss_start_step: int = 20000

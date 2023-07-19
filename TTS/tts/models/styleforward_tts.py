@@ -48,6 +48,9 @@ class StyleForwardTTSArgs(Coqpit):
         use_pitch (bool):
             Use pitch predictor to learn the pitch. Defaults to True.
 
+        use_energy (bool):
+            Use energy predictor to learn the energy. Defaults to True.
+
         duration_predictor_hidden_channels (int):
             Number of hidden channels in the duration predictor. Defaults to 256.
 
@@ -68,6 +71,18 @@ class StyleForwardTTSArgs(Coqpit):
 
         pitch_embedding_kernel_size (int):
             Kernel size of the projection layer in the pitch predictor. Defaults to 3.
+
+        energy_predictor_hidden_channels (int):
+            Number of hidden channels in the energy predictor. Defaults to 256.
+
+        energy_predictor_dropout_p (float):
+            Dropout rate for the energy predictor. Defaults to 0.1.
+
+        energy_predictor_kernel_size (int):
+            Kernel size of conv layers in the energy predictor. Defaults to 3.
+
+        energy_embedding_kernel_size (int):
+            Kernel size of the projection layer in the energy predictor. Defaults to 3.
 
         positional_encoding (bool):
             Whether to use positional encoding. Defaults to True.
@@ -120,15 +135,27 @@ class StyleForwardTTSArgs(Coqpit):
     out_channels: int = 80
     hidden_channels: int = 384
     use_aligner: bool = True
+
+    # pitch params
     use_pitch: bool = True
     use_energy: bool = False
     pitch_predictor_hidden_channels: int = 256
     pitch_predictor_kernel_size: int = 3
     pitch_predictor_dropout_p: float = 0.1
     pitch_embedding_kernel_size: int = 3
+
+    # energy params
+    use_energy: bool = False
+    energy_predictor_hidden_channels: int = 256
+    energy_predictor_kernel_size: int = 3
+    energy_predictor_dropout_p: float = 0.1
+    energy_embedding_kernel_size: int = 3
+
+    # duration params
     duration_predictor_hidden_channels: int = 256
     duration_predictor_kernel_size: int = 3
     duration_predictor_dropout_p: float = 0.1
+
     positional_encoding: bool = True
     poisitonal_encoding_use_scale: bool = True
     length_scale: int = 1
@@ -297,6 +324,20 @@ class StyleforwardTTS(BaseTTS):
                 self.args.hidden_channels,
                 kernel_size=self.args.pitch_embedding_kernel_size,
                 padding=int((self.args.pitch_embedding_kernel_size - 1) / 2),
+            )
+
+        if self.args.use_energy:
+            self.energy_predictor = DurationPredictor(
+                self.args.hidden_channels + self.embedded_speaker_dim,
+                self.args.energy_predictor_hidden_channels,
+                self.args.energy_predictor_kernel_size,
+                self.args.energy_predictor_dropout_p,
+            )
+            self.pitch_emb = nn.Conv1d(
+                1,
+                self.args.hidden_channels,
+                kernel_size=self.args.energy_embedding_kernel_size,
+                padding=int((self.args.energy_embedding_kernel_size - 1) / 2),
             )
 
         if self.args.use_aligner:
@@ -544,6 +585,42 @@ class StyleforwardTTS(BaseTTS):
         o_pitch_emb = self.pitch_emb(o_pitch)
         return o_pitch_emb, o_pitch
 
+    def _forward_energy_predictor(
+        self,
+        o_en: torch.FloatTensor,
+        x_mask: torch.IntTensor,
+        energy: torch.FloatTensor = None,
+        dr: torch.IntTensor = None,
+    ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+        """Energy predictor forward pass.
+
+        1. Predict energy from encoder outputs.
+        2. In training - Compute average pitch values for each input character from the ground truth pitch values.
+        3. Embed average energy values.
+
+        Args:
+            o_en (torch.FloatTensor): Encoder output.
+            x_mask (torch.IntTensor): Input sequence mask.
+            energy (torch.FloatTensor, optional): Ground truth energy values. Defaults to None.
+            dr (torch.IntTensor, optional): Ground truth durations. Defaults to None.
+
+        Returns:
+            Tuple[torch.FloatTensor, torch.FloatTensor]: Energy embedding, energy prediction.
+
+        Shapes:
+            - o_en: :math:`(B, C, T_{en})`
+            - x_mask: :math:`(B, 1, T_{en})`
+            - pitch: :math:`(B, 1, T_{de})`
+            - dr: :math:`(B, T_{en})`
+        """
+        o_energy = self.energy_predictor(o_en, x_mask)
+        if energy is not None:
+            avg_energy = average_over_durations(energy, dr)
+            o_energy_emb = self.energy_emb(avg_energy)
+            return o_energy_emb, o_energy, avg_energy
+        o_energy_emb = self.energy_emb(o_energy)
+        return o_energy_emb, o_energy
+    
     def _forward_aligner(
         self, x: torch.FloatTensor, y: torch.FloatTensor, x_mask: torch.IntTensor, y_mask: torch.IntTensor
     ) -> Tuple[torch.IntTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
@@ -656,8 +733,6 @@ class StyleforwardTTS(BaseTTS):
         else:
             y_norm = y
 
-        # print(g)
-
         # TEXT ENCODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
             encoder_outputs, x_mask, _, x_emb = self._forward_encoder(x, x_mask)
@@ -762,6 +837,13 @@ class StyleforwardTTS(BaseTTS):
             o_pitch_emb, o_pitch, avg_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch, dr)
             o_en = o_en + o_pitch_emb
 
+        # ENERGY PREDICTOR PASS
+        o_energy = None
+        avg_energy = None
+        if self.args.use_energy:
+            o_energy_emb, o_energy, avg_energy = self._forward_energy_predictor(o_en, x_mask, energy, dr)
+            o_en = o_en + o_energy_emb
+
         # DECODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
             o_de, attn = self._forward_decoder(o_en, dr, x_mask, y_lengths, g=g)        
@@ -837,6 +919,13 @@ class StyleforwardTTS(BaseTTS):
                 # for target speaker and avoid speaker leakage (empirical results)
                 o_pitch_emb_cycle, o_pitch_cycle = self._forward_pitch_predictor(o_en_cycle, x_mask_cycle)
                 o_en_cycle = o_en_cycle + o_pitch_emb_cycle
+
+            o_energy_cycle = None
+            if self.args.use_energy:
+                # Remove conditional speaker embedding, and add the provided speaker, we provide pitch predicted by cond_speaker in order to generate the pitch embedding
+                # for target speaker and avoid speaker leakage (empirical results)
+                o_energy_emb_cycle, o_energy_cycle = self._forward_energy_predictor(o_en_cycle, x_mask_cycle)
+                o_en_cycle = o_en_cycle + o_energy_emb_cycle
         
             # CYCLE DECODER PASS
             o_de_cycle, attn_cycle = self._forward_decoder(o_en_cycle, o_dr_cycle, x_mask_cycle, y_lengths_cycle, g=None)
@@ -879,6 +968,8 @@ class StyleforwardTTS(BaseTTS):
             "attn_durations": o_attn,  # for visualization [B, T_en, T_de']
             "pitch_avg": o_pitch,
             "pitch_avg_gt": avg_pitch,
+            "energy_avg": o_energy,
+            "energy_avg_gt": avg_energy,
             "alignments": attn,  # [B, T_de, T_en]
             "alignment_soft": alignment_soft,
             "alignment_mas": alignment_mas,
@@ -914,25 +1005,25 @@ class StyleforwardTTS(BaseTTS):
             - x_lengths: [B]
             - g: [B, C]
         """
+        # GET SPEAKER
         g , cond_g = self._set_speaker_input(aux_input)
         cond_g_emb = None
         g_check = None
+
+        # GET BATCH TEXT MASKS
         x_lengths = torch.tensor(x.shape[1:2]).to(x.device)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
         
-        # encoder pass
+        # TEXT ENCODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
             encoder_outputs, x_mask, _, x_emb = self._forward_encoder(x, x_mask)
             if hasattr(self, "emb_g"):
                 g = self.emb_g(g)  # [B, C, 1]
             if g is not None:
                 g = g.unsqueeze(-1)
-            
             g_emb = g
-
         elif(cond_g is not None):
             encoder_outputs, x_mask, g_check, _ = self._forward_encoder(x, x_mask, cond_g)
-
             # After we already have used the indices g or cond_g, lets get the speaker embedding
             if hasattr(self, "emb_g"):
                 g_emb = self.emb_g(g)  # [B, C, 1]
@@ -943,21 +1034,10 @@ class StyleforwardTTS(BaseTTS):
                     cond_g_emb = self.emb_g(cond_g)  # [B, C, 1]
                 if cond_g_emb is not None:
                     cond_g_emb = cond_g_emb.unsqueeze(-1)
-
         else:
             encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
             g_emb = g
-        # OLD
-        # if(cond_g is not None):
-        #     o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, cond_g)
-        # else:
-        #     o_en, x_mask, g_check, _ = self._forward_encoder(x, x_mask, g)
-
         o_en = encoder_outputs
-
-        #Style embedding 
-        # se_inputs = [o_en, aux_input['style_mel']]
-        # o_en, style_encoder_outputs = self.style_encoder_layer.forward(se_inputs)
 
         # STYLE REFERENCE FEATURES
         style_reference_features = {}
@@ -1015,62 +1095,58 @@ class StyleforwardTTS(BaseTTS):
             o_en = self.style_encoder_layer._add_speaker_embedding(encoder_outputs.permute(0,2,1), style_encoder_outputs['style_embedding'].unsqueeze(1))
             o_en = o_en.permute(0,2,1)
 
-        # duration predictor pass
+        # DURATION PREDICTOR PASS
         o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = self.format_durations(o_dr_log, x_mask).squeeze(1)
         y_lengths = o_dr.sum(1)
-        # pitch predictor pass
+
+        # PITCH PREDICTOR PASS
         o_pitch = None
         if self.args.use_pitch:
             # Remove conditional speaker embedding, and add the provided speaker, we provide pitch predicted by cond_speaker in order to generate the pitch embedding
             # for target speaker and avoid speaker leakage (empirical results)
             if(cond_g is not None):
                 o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask)
-
                 o_en = o_en - cond_g_emb.expand(o_en.size(0), o_en.size(1), -1) + g_emb.expand(o_en.size(0), o_en.size(1), -1)
-
                 o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_replace = o_pitch)
-
                 o_en = o_en + o_pitch_emb
-
             else:
                 o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch_control = aux_input['pitch_control'], pitch_replace=aux_input['pitch_replace'])
                 o_en = o_en + o_pitch_emb
         
+        # ENERGY PREDICTOR PASS
+        o_energy = None
+        if self.args.use_energy:
+            o_energy_emb, o_energy = self._forward_pitch_predictor(o_en, x_mask)
+            o_en = o_en + o_energy_emb
 
-        # decoder pass
+        # DECODER PASS
         if self.config.style_encoder_config.agg_spk_emb_decoder:
             o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=g)        
         else:
             o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None) 
-        # OLD
-        #o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None)
-
+ 
+        # CYCLE CONSISTENCY
         ressynt_style_encoder_output = None
         if(self.config.style_encoder_config.use_clip_loss or self.config.style_encoder_config.use_style_distortion_loss):
             if(self.config.style_encoder_config.se_type=='modifiedre'):
                 se_inputs = [o_en.permute(0,2,1), o_de, g]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , speaker_embedding = g_emb.permute(1,0).unsqueeze(1))['style_embedding']
             elif(self.config.style_encoder_config.se_type == 'metastyle'):
-                
                 cycle_style_encoder_output = self.style_encoder_layer.forward(inputs = o_en.permute(0,2,1), style_mel=o_de , mel_mask = y_lengths.type(torch.LongTensor).to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu")))
-
                 speaker_emb_tmp = self.post_speaker_processor(cycle_style_encoder_output['style_embedding'])
-
                 style_embeddings = cycle_style_encoder_output['style_embedding'] - speaker_emb_tmp
-                
                 style_embeddings = self.post_style_processor(style_embeddings)
-
                 ressynt_style_encoder_output = style_embeddings
             else:
                 se_inputs = [o_en.permute(0,2,1), o_de]
                 ressynt_style_encoder_output = self.style_encoder_layer.forward(se_inputs)['style_embedding']
 
-
         outputs = {
             "model_outputs": o_de,
             "alignments": attn,
             "pitch": o_pitch,
+            "energy": o_energy,
             "durations_log": o_dr_log,
             "style_encoder_outputs": style_encoder_outputs,
             "g":  g,
@@ -1115,6 +1191,8 @@ class StyleforwardTTS(BaseTTS):
                 dur_target=durations,
                 pitch_output=outputs["pitch_avg"] if self.use_pitch else None,
                 pitch_target=outputs["pitch_avg_gt"] if self.use_pitch else None,
+                energy_output=outputs["energy_avg"] if self.use_energy else None,
+                energy_target=outputs["energy_avg_gt"] if self.use_energy else None,
                 input_lens=text_lengths,
                 alignment_logprob=outputs["alignment_logprob"] if self.use_aligner else None,
                 alignment_soft=outputs["alignment_soft"] if self.use_binary_alignment_loss else None,
@@ -1173,6 +1251,21 @@ class StyleforwardTTS(BaseTTS):
             }
             figures.update(pitch_figures)
 
+        # plot energy figures
+        if self.args.use_energy:
+            energy = batch["energy"]
+            energy_avg_expanded, _ = self.expand_encoder_outputs(
+                outputs["energy_avg"], outputs["durations"], outputs["x_mask"], outputs["y_mask"]
+            )
+            energy = energy[0, 0].data.cpu().numpy()
+            energy = abs(energy)
+            energy_avg_expanded = abs(energy_avg_expanded[0, 0]).data.cpu().numpy()
+            energy_figures = {
+                "energy_ground_truth": plot_pitch(energy, gt_spec, ap, output_fig=False),
+                "energy_avg_predicted": plot_pitch(energy_avg_expanded, pred_spec, ap, output_fig=False),
+            }
+            figures.update(energy)
+
         # plot the attention mask computed from the predicted durations
         if "attn_durations" in outputs:
             alignments_hat = outputs["attn_durations"][0].data.cpu().numpy()
@@ -1210,7 +1303,6 @@ class StyleforwardTTS(BaseTTS):
 
     def get_criterion(self):
         from TTS.tts.layers.losses import StyleForwardTTSLoss  # pylint: disable=import-outside-toplevel
-
         return StyleForwardTTSLoss(self.config)
 
     def on_train_step_start(self, trainer):

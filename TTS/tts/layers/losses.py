@@ -997,6 +997,11 @@ class StyleForwardTTSLoss(nn.Module):
             self.pitch_loss = MSELossMasked(False)
             self.pitch_loss_alpha = c.pitch_loss_alpha
 
+        # Energy Loss
+        if c.model_args.use_energy:
+            self.energy_loss = MSELossMasked(False)
+            self.energy_loss_alpha = c.energy_loss_alpha
+
         # Style Encoder Achitecture Specific Loss
         if self.style_encoder_config.se_type == 'diffusion':
             self.criterion_se = DiffusionStyleEncoderLoss(self.style_encoder_config)
@@ -1067,6 +1072,8 @@ class StyleForwardTTSLoss(nn.Module):
         dur_target,
         pitch_output,
         pitch_target,
+        energy_output,
+        energy_target,
         input_lens,
         style_encoder_output,
         alignment_logprob=None,
@@ -1108,6 +1115,11 @@ class StyleForwardTTSLoss(nn.Module):
             pitch_loss = self.pitch_loss(pitch_output.transpose(1, 2), pitch_target.transpose(1, 2), input_lens)
             loss = loss + self.pitch_loss_alpha * pitch_loss
             return_dict["loss_pitch"] = self.pitch_loss_alpha * pitch_loss
+        
+        if hasattr(self, "energy_loss") and self.energy_loss_alpha > 0:
+            energy_loss = self.energy_loss(energy_output.transpose(1, 2), energy_target.transpose(1, 2), input_lens)
+            loss = loss + self.energy_loss_alpha * energy_loss
+            return_dict["loss_energy"] = self.energy_loss_alpha * energy_loss
 
         if hasattr(self, "aligner_loss") and self.aligner_loss_alpha > 0:
             aligner_loss = self.aligner_loss(alignment_logprob, input_lens, decoder_output_lens)
