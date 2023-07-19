@@ -138,7 +138,6 @@ class StyleForwardTTSArgs(Coqpit):
 
     # pitch params
     use_pitch: bool = True
-    use_energy: bool = False
     pitch_predictor_hidden_channels: int = 256
     pitch_predictor_kernel_size: int = 3
     pitch_predictor_dropout_p: float = 0.1
@@ -333,7 +332,7 @@ class StyleforwardTTS(BaseTTS):
                 self.args.energy_predictor_kernel_size,
                 self.args.energy_predictor_dropout_p,
             )
-            self.pitch_emb = nn.Conv1d(
+            self.energy_emb = nn.Conv1d(
                 1,
                 self.args.hidden_channels,
                 kernel_size=self.args.energy_embedding_kernel_size,
