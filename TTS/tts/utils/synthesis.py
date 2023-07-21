@@ -310,7 +310,7 @@ def synthesis(
         if style_representation is not None:
             style_mel = style_representation
 
-        print(style_mel.shape)
+        #print(style_mel.shape)
         text_inputs = numpy_to_torch(text_inputs, torch.long, cuda=use_cuda)
         text_inputs = text_inputs.unsqueeze(0)
     elif backend in ["tf", "tflite"]:
