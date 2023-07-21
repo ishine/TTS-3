@@ -77,7 +77,9 @@ def run_model_torch(
     diff_t = None, 
     z: torch.Tensor = None,
     pitch_control: torch.FloatTensor = None,
-    pitch_replace: torch.FloatTensor = None
+    pitch_replace: torch.FloatTensor = None,
+    energy_control: torch.FloatTensor = None,
+    energy_replace: torch.FloatTensor = None
 ) -> Dict:
     """Run a torch model for inference. It does not support batch inference.
 
@@ -109,7 +111,9 @@ def run_model_torch(
             "diff_t": diff_t,
             "z": z,
             "pitch_control": pitch_control,
-            "pitch_replace": pitch_replace
+            "pitch_replace": pitch_replace,
+            "energy_control": energy_control,
+            "energy_replace": energy_replace
         },
     )
     return outputs
@@ -232,6 +236,8 @@ def synthesis(
     z = None,
     pitch_control = None,
     pitch_replace = None,
+    energy_control = None,
+    energy_replace = None,
     backend="torch",
 ):
     """Synthesize voice for the given text using Griffin-Lim vocoder or just compute output features to be passed to
@@ -320,7 +326,7 @@ def synthesis(
         text_inputs = tf.expand_dims(text_inputs, 0)
     # synthesize voice
     if backend == "torch":
-        outputs = run_model_torch(model, text_inputs, speaker_id, cond_speaker_id, style_mel, d_vector=d_vector, language_id=language_id, style_id = style_id, diff_t = diff_t, z = z, pitch_control = pitch_control, pitch_replace = pitch_replace)
+        outputs = run_model_torch(model, text_inputs, speaker_id, cond_speaker_id, style_mel, d_vector=d_vector, language_id=language_id, style_id = style_id, diff_t = diff_t, z = z, pitch_control = pitch_control, pitch_replace = pitch_replace, energy_control = energy_control, energy_replace = energy_replace)
         model_outputs = outputs["model_outputs"]
         model_outputs = model_outputs[0].data.cpu().numpy()
         alignments = outputs["alignments"]
