@@ -1082,7 +1082,7 @@ class StyleforwardTTS(BaseTTS):
             se_args.update({'mel_mask':y_lengths})  
 
         ## Pass
-        style_encoder_outputs = self.style_encoder_layer.forward(**se_args)
+        style_encoder_outputs = self.style_encoder_layer.inference(**se_args)
 
         ## Residual Disentanglement
         # residual_style_preds = None
