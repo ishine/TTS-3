@@ -830,10 +830,10 @@ class StyleforwardTTS(BaseTTS):
         alignment_logprob = None
         alignment_mas = None
         if self.use_aligner:
-            print(x_emb.shape, o_en.shape)
+            # print(x_emb.shape, o_en.shape)
             if self.use_cond_aligner:
                 o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
-                o_en, y, x_mask, y_mask
+                o_en.permute(0,2,1), y, x_mask, y_mask
             )      
             else:
                 o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
