@@ -276,6 +276,7 @@ class StyleforwardTTS(BaseTTS):
         self.use_pitch = self.args.use_pitch
         self.use_energy = self.args.use_energy
         self.use_binary_alignment_loss = False
+        self.binary_loss_weight = 0
 
         self.length_scale = (
             float(self.args.length_scale) if isinstance(self.args.length_scale, int) else self.args.length_scale
@@ -754,19 +755,6 @@ class StyleforwardTTS(BaseTTS):
         else:
             encoder_outputs, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
 
-        # ALIGNER NETWORK PASS
-        o_alignment_dur = None
-        alignment_soft = None
-        alignment_logprob = None
-        alignment_mas = None
-        if self.use_aligner:
-            o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
-                x_emb, y, x_mask, y_mask
-            )
-            alignment_soft = alignment_soft.transpose(1, 2)
-            alignment_mas = alignment_mas.transpose(1, 2)
-            dr = o_alignment_dur
-
         # STYLE REFERENCE FEATURES
         style_reference_features = {}
         if "pitch" in self.config.style_encoder_config.style_reference_features:
@@ -832,6 +820,26 @@ class StyleforwardTTS(BaseTTS):
         if self.config.style_encoder_config.agg_stl_emb_adaptors:
             o_en = self.style_encoder_layer._add_speaker_embedding(encoder_outputs.permute(0,2,1), style_encoder_outputs['style_embedding'].unsqueeze(1))
             o_en = o_en.permute(0,2,1)
+
+
+        # ALIGNER NETWORK PASS
+        o_alignment_dur = None
+        alignment_soft = None
+        alignment_logprob = None
+        alignment_mas = None
+        if self.use_aligner:
+            if self.use_cond_aligner:
+                o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
+                o_en, y, x_mask, y_mask
+            )      
+            else:
+                o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
+                x_emb, y, x_mask, y_mask
+            )
+            alignment_soft = alignment_soft.transpose(1, 2)
+            alignment_mas = alignment_mas.transpose(1, 2)
+            dr = o_alignment_dur
+
 
         # DURATION PREDICTOR PASS
         if self.args.detach_duration_predictor:
@@ -1230,7 +1238,8 @@ class StyleforwardTTS(BaseTTS):
                 step = step,
                 residual_speaker_embeddings = outputs['residual_speaker_embeddings'],
                 residual_style_preds = outputs['residual_style_preds'],
-                residual_speaker_preds = outputs['residual_speaker_preds']
+                residual_speaker_preds = outputs['residual_speaker_preds'],
+                binary_loss_weight = self.binary_loss_weight 
             )
             # compute duration error
             durations_pred = outputs["durations"]
@@ -1329,3 +1338,12 @@ class StyleforwardTTS(BaseTTS):
         """Enable binary alignment loss when needed"""
         if trainer.total_steps_done > self.config.binary_align_loss_start_step:
             self.use_binary_alignment_loss = True
+
+            # Total steps to reach max alpha, where it has its min value at binary_align_loss_start_step
+            tot_steps_to_reach_max = self.config.binary_loss_warmup_steps + self.config.binary_align_loss_start_step
+            
+            # Max alpha binary loss
+            max_alpha = self.config.binary_align_loss_alpha
+
+            """Schedule binary loss weight."""
+            self.binary_loss_weight = min(max_alpha*trainer.total_steps_done / tot_steps_to_reach_max , max_alpha) * 1.0

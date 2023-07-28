@@ -920,9 +920,13 @@ class ForwardTTSLoss(nn.Module):
         alignment_logprob=None,
         alignment_hard=None,
         alignment_soft=None,
+        binary_loss_weight = None,
     ):
         loss = 0
         return_dict = {}
+
+        self.binary_alignment_loss_alpha = binary_loss_weight
+
         if hasattr(self, "ssim_loss") and self.ssim_loss_alpha > 0:
             ssim_loss = self.ssim(decoder_output, decoder_target, decoder_output_lens)
             loss = loss + self.ssim_loss_alpha * ssim_loss
@@ -1102,8 +1106,12 @@ class StyleForwardTTSLoss(nn.Module):
         step = None,
         residual_speaker_embeddings = None,
         residual_style_preds = None,
-        residual_speaker_preds = None
+        residual_speaker_preds = None,
+        binary_loss_weight = None,
     ):
+        
+        self.binary_alignment_loss_alpha = binary_loss_weight
+
         loss = 0
         return_dict = {}
         if hasattr(self, "ssim_loss") and self.ssim_loss_alpha > 0:
@@ -1137,10 +1145,17 @@ class StyleForwardTTSLoss(nn.Module):
             loss = loss + self.aligner_loss_alpha * aligner_loss
             return_dict["loss_aligner"] = self.aligner_loss_alpha * aligner_loss
 
+        # if self.binary_alignment_loss_alpha > 0 and alignment_hard is not None:
+        #     binary_alignment_loss = self._binary_alignment_loss(alignment_hard, alignment_soft)
+        #     loss = loss + self.binary_alignment_loss_alpha * binary_alignment_loss
+        #     return_dict["loss_binary_alignment"] = self.binary_alignment_loss_alpha * binary_alignment_loss
+
+
         if self.binary_alignment_loss_alpha > 0 and alignment_hard is not None:
             binary_alignment_loss = self._binary_alignment_loss(alignment_hard, alignment_soft)
             loss = loss + self.binary_alignment_loss_alpha * binary_alignment_loss
             return_dict["loss_binary_alignment"] = self.binary_alignment_loss_alpha * binary_alignment_loss
+
 
         # style encoder loss diffusion based
         if self.style_encoder_config.se_type == 'diffusion':

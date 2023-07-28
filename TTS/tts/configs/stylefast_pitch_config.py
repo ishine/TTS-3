@@ -112,6 +112,7 @@ class StylefastPitchConfig(BaseTTSConfig):
     # model specific params
     model_args: StyleForwardTTSArgs = StyleForwardTTSArgs()
 
+
     # multi-speaker settings
     num_speakers: int = 0
     speakers_file: str = None
@@ -140,6 +141,14 @@ class StylefastPitchConfig(BaseTTSConfig):
     aligner_loss_alpha: float = 1.0
     binary_align_loss_alpha: float = 1.0
     binary_align_loss_start_step: int = 20000
+    # Warmup steps will be steps to reach alpha starting from start_step (if start step is 10 and warmup is 20, binary will start in 10 and linearly
+    # increase until 10+20 steps)
+    binary_loss_warmup_steps: int = 50000 
+
+    # conditionated aligner
+    # whether agg or not style and spk in aligner input (instead of only char embeddings)
+    use_cond_aligner: bool = False
+    
 
     # overrides
     min_seq_len: int = 13

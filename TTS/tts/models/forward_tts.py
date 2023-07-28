@@ -196,6 +196,8 @@ class ForwardTTS(BaseTTS):
         self.use_pitch = self.args.use_pitch
         self.use_energy = self.args.use_energy
         self.use_binary_alignment_loss = False
+        self.binary_loss_weight = 0
+
 
         self.length_scale = (
             float(self.args.length_scale) if isinstance(self.args.length_scale, int) else self.args.length_scale
@@ -910,6 +912,7 @@ class ForwardTTS(BaseTTS):
                 alignment_logprob=outputs["alignment_logprob"] if self.use_aligner else None,
                 alignment_soft=outputs["alignment_soft"] if self.use_binary_alignment_loss else None,
                 alignment_hard=outputs["alignment_mas"] if self.use_binary_alignment_loss else None,
+                binary_loss_weight = self.binary_loss_weight 
             )
             # compute duration error
             durations_pred = outputs["durations"]
@@ -1009,3 +1012,12 @@ class ForwardTTS(BaseTTS):
         """Enable binary alignment loss when needed"""
         if trainer.total_steps_done > self.config.binary_align_loss_start_step:
             self.use_binary_alignment_loss = True
+
+            # Total steps to reach max alpha, where it has its min value at binary_align_loss_start_step
+            tot_steps_to_reach_max = self.config.binary_loss_warmup_steps + self.config.binary_align_loss_start_step
+            
+            # Max alpha binary loss
+            max_alpha = self.config.binary_align_loss_alpha
+
+            """Schedule binary loss weight."""
+            self.binary_loss_weight = min(max_alpha*trainer.total_steps_done / tot_steps_to_reach_max , max_alpha) * 1.0
