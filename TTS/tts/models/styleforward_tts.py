@@ -220,6 +220,8 @@ class StyleforwardTTS(BaseTTS):
 
         print("Using melspectrogram statistics = ", self.use_melstats)
 
+        self.use_cond_aligner = config.use_cond_aligner
+
         if(config.style_encoder_config.use_supervised_style):
             # print(config.style_encoder_config)
             self.style_manager = style_manager
