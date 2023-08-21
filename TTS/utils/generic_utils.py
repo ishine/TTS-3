@@ -90,13 +90,10 @@ def to_camel(text):
 
 def find_module(module_path: str, module_name: str) -> object:
     module_name = module_name.lower()
-    print(module_path, module_name)
 
     class_name = to_camel(module_name)
-    print(class_name)
 
     module = importlib.import_module(module_path + "." + module_name)
-    print(module)
 
     return getattr(module, class_name)
 
