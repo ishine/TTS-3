@@ -87,7 +87,10 @@ def to_camel(text):
     text = text.replace("Tts", "TTS")
     return text
 
-
+# If you are trying FastPitch and this function returns error, it is because we need to:
+# pip install sentencepiece==0.1.97
+# pip install transformers==4.27.3
+# Due to experiments we did where we try to import these libs, even though we are not using in default
 def find_module(module_path: str, module_name: str) -> object:
     module_name = module_name.lower()
 
