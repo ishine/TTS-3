@@ -16,7 +16,8 @@ from TTS.tts.utils.helpers import average_over_durations, generate_path, maximum
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.visual import plot_alignment, plot_pitch, plot_spectrogram
 
-from transformers import CamembertTokenizer, CamembertForTokenClassification, TokenClassificationPipeline
+## Uncoment if you will use it, but since our default docker image does not install it, it crashes the vanilla fastpitch
+#from transformers import CamembertTokenizer, CamembertForTokenClassification, TokenClassificationPipeline
 from TTS.tts.utils.text import sequence_to_text
 
 @dataclass
