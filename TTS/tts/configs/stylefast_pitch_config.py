@@ -140,10 +140,10 @@ class StylefastPitchConfig(BaseTTSConfig):
     energy_loss_alpha: float = 1.0
     aligner_loss_alpha: float = 1.0
     binary_align_loss_alpha: float = 1.0
-    binary_align_loss_start_step: int = 20000
+    binary_align_loss_start_epoch: int = 1
     # Warmup steps will be steps to reach alpha starting from start_step (if start step is 10 and warmup is 20, binary will start in 10 and linearly
     # increase until 10+20 steps)
-    binary_loss_warmup_steps: int = 50000 
+    binary_loss_warmup_epochs: int = 150 
 
     # conditionated aligner
     # whether agg or not style and spk in aligner input (instead of only char embeddings)
