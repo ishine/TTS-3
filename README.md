@@ -14,6 +14,11 @@ We are an expressive TTS research group located at Unicamp and CPQD (Brazil).
 - Tacotron 2
 - Fastpitch
 
+## Expressive Datasets
+- EMOVDB
+- IEMOCAP
+- ESD
+
 ## Style Encoders
 - Look-Up
 - Reference Encoder (Coarse/Fine-Grained)
