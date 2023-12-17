@@ -773,8 +773,8 @@ class StyleforwardTTS(BaseTTS):
             o_en = encoder_outputs.permute(0,2,1)
             style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
             o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
-            o_en = o_en.permute(0,2,1)
             style_encoder_outputs['style_embedding'].squeeze(1)
+            style_encoder_outputs['styled_inputs'] = o_en
 
         else:
             # STYLE REFERENCE FEATURES
