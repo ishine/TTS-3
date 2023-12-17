@@ -770,34 +770,34 @@ class StyleforwardTTS(BaseTTS):
         # STYLE ENCODER PASS
         ## Look Up
         if(self.config.style_encoder_config.se_type == 'lookup'):
-	    o_en = encoder_outputs.permute(0,2,1)
-	    style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
-	    o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
-	    o_en = o_en.permute(0,2,1)
-	    style_encoder_outputs['style_embedding'].squeeze(1)
+            o_en = encoder_outputs.permute(0,2,1)
+            style_encoder_outputs = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
+            o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
+            o_en = o_en.permute(0,2,1)
+            style_encoder_outputs['style_embedding'].squeeze(1)
 
-	else:
-	    # STYLE REFERENCE FEATURES
-	    style_reference_features = {}
-	    if "pitch" in self.config.style_encoder_config.style_reference_features:
-	        style_reference_features['pitch'] = pitch.detach().clone().requires_grad_()
-	    # REFERENCE ENERGY ENCODER PASS
-	    if "energy" in self.config.style_encoder_config.style_reference_features:
-	        style_reference_features['energy'] = energy.detach().clone().requires_grad_()
-	    if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
-	        style_reference_features['melspectrogram'] = y_norm
-	    assert style_reference_features, 'No style reference feature has been selected. Please choose one!'
+        else:
+            # STYLE REFERENCE FEATURES
+            style_reference_features = {}
+            if "pitch" in self.config.style_encoder_config.style_reference_features:
+                style_reference_features['pitch'] = pitch.detach().clone().requires_grad_()
+            # REFERENCE ENERGY ENCODER PASS
+            if "energy" in self.config.style_encoder_config.style_reference_features:
+                style_reference_features['energy'] = energy.detach().clone().requires_grad_()
+            if "melspectrogram" in self.config.style_encoder_config.style_reference_features:
+                style_reference_features['melspectrogram'] = y_norm
+            assert style_reference_features, 'No style reference feature has been selected. Please choose one!'
 
-	    ## Arguments 
-	    se_args = {'out_txt_encoder':encoder_outputs.permute(0,2,1), 'reference_features':style_reference_features}
-	    if(self.config.style_encoder_config.se_type == 'finegrainedre'):
-	        se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
-	    if(self.config.style_encoder_config.se_type == 'modifiedre'):
-	        se_args.update({'speaker_embedding':g.permute(0,2,1)})
-	    if(self.config.style_encoder_config.se_type == 'metastyle'):
-	        se_args.update({'mel_mask':y_lengths})  
-	    ## Pass
-	    style_encoder_outputs = self.style_encoder_layer.forward(**se_args)
+            ## Arguments 
+            se_args = {'out_txt_encoder':encoder_outputs.permute(0,2,1), 'reference_features':style_reference_features}
+            if(self.config.style_encoder_config.se_type == 'finegrainedre'):
+                se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
+            if(self.config.style_encoder_config.se_type == 'modifiedre'):
+                se_args.update({'speaker_embedding':g.permute(0,2,1)})
+            if(self.config.style_encoder_config.se_type == 'metastyle'):
+                se_args.update({'mel_mask':y_lengths})  
+            ## Pass
+            style_encoder_outputs = self.style_encoder_layer.forward(**se_args)
 
         ## Residual Disentanglement
         residual_style_preds = None
@@ -881,24 +881,24 @@ class StyleforwardTTS(BaseTTS):
             # CYCLE STYLE ENCODER PASS
             ## Look Up
             if(self.config.style_encoder_config.se_type == 'lookup'):
-	        o_en_cycle = encoder_outputs.permute(0,2,1)
-		style_encoder_outputs_cycle = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
-		o_en_cycle = o_en_cycle + style_encoder_outputs_cycle['style_embedding'] # [B, 1, C]
-		o_en_cycle = o_en_cycle.permute(0,2,1)
-		style_encoder_outputs_cycle['style_embedding'].squeeze(1)
+                o_en_cycle = encoder_outputs.permute(0,2,1)
+                style_encoder_outputs_cycle = {'style_embedding': self.emb_s(aux_input["style_ids"].unsqueeze(1))}
+                o_en_cycle = o_en_cycle + style_encoder_outputs_cycle['style_embedding'] # [B, 1, C]
+                o_en_cycle = o_en_cycle.permute(0,2,1)
+                style_encoder_outputs_cycle['style_embedding'].squeeze(1)
 
-	    else:
-		## Arguments 
-		se_args = {'out_txt_encoder':encoder_outputs_cycle.permute(0,2,1), 'reference_features':style_reference_features}
-		if(self.config.style_encoder_config.se_type == 'finegrainedre'):
-		se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
-		if(self.config.style_encoder_config.se_type == 'modifiedre'):
-		se_args.update({'speaker_embedding':g.permute(0,2,1)})
-		if(self.config.style_encoder_config.se_type == 'metastyle'):
-		se_args.update({'mel_mask':y_lengths})  
-		
-		## Pass
-		style_encoder_outputs_cycle = self.style_encoder_layer.forward(**se_args)
+            else:
+                ## Arguments 
+                se_args = {'out_txt_encoder':encoder_outputs_cycle.permute(0,2,1), 'reference_features':style_reference_features}
+                if(self.config.style_encoder_config.se_type == 'finegrainedre'):
+                    se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
+                if(self.config.style_encoder_config.se_type == 'modifiedre'):
+                    se_args.update({'speaker_embedding':g.permute(0,2,1)})
+                if(self.config.style_encoder_config.se_type == 'metastyle'):
+                    se_args.update({'mel_mask':y_lengths})  
+                
+                ## Pass
+                style_encoder_outputs_cycle = self.style_encoder_layer.forward(**se_args)
 
             ## Residual Disentanglement
             if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
