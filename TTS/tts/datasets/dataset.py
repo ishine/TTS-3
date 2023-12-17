@@ -632,7 +632,7 @@ class PitchExtractor:
 
         if ds_name == 'cpqd_style_read' or ds_name == 'cpqd_read':
             file_name = wav_file.split('/')[-6] + '_' + wav_file.split('/')[-5] + '_' + wav_file.split('/')[-4] + '_' + wav_file.split('/')[-3] + '_' + wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
-        elif ds_name == 'emovdb' or ds_name == 'iemocap':
+        elif ds_name == 'emovdb' or ds_name == 'iemocap' or ds_name == 'esd':
             file_name = wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
         elif ds_name == 'blizzard_2023':
             file_name = wav_file.split('/')[-1]
@@ -815,7 +815,7 @@ class EnergyExtractor:
 
         if ds_name == 'cpqd_style_read' or ds_name == 'cpqd_read':
             file_name = wav_file.split('/')[-6] + '_' + wav_file.split('/')[-5] + '_' + wav_file.split('/')[-4] + '_' + wav_file.split('/')[-3] + '_' + wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
-        elif ds_name == 'emovdb' or ds_name == 'iemocap':
+        elif ds_name == 'emovdb' or ds_name == 'iemocap' or ds_name == 'esd':
             file_name = wav_file.split('/')[-2] + '_' + os.path.splitext(os.path.basename(wav_file))[0]
         elif ds_name == 'blizzard_2023':
             file_name = wav_file.split('/')[-1]
