@@ -1070,18 +1070,20 @@ class StyleforwardTTS(BaseTTS):
             o_en = o_en + style_encoder_outputs['style_embedding'] # [B, 1, C]
             o_en = o_en.permute(0,2,1)
             style_encoder_outputs['style_embedding'].squeeze(1)
+        
+        else:
 
-        ## Arguments 
-        se_args = {'out_txt_encoder':encoder_outputs.permute(0,2,1), 'reference_features':style_reference_features}
-        if(self.config.style_encoder_config.se_type == 'finegrainedre'):
-            se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
-        if(self.config.style_encoder_config.se_type == 'modifiedre'):
-            se_args.update({'speaker_embedding':g.permute(0,2,1)})
-        if(self.config.style_encoder_config.se_type == 'metastyle'):
-            se_args.update({'mel_mask':y_lengths})  
+            ## Arguments 
+            se_args = {'out_txt_encoder':encoder_outputs.permute(0,2,1), 'reference_features':style_reference_features}
+            if(self.config.style_encoder_config.se_type == 'finegrainedre'):
+                se_args.update({'text_len':x_lengths, 'mel_len':y_lengths})
+            if(self.config.style_encoder_config.se_type == 'modifiedre'):
+                se_args.update({'speaker_embedding':g.permute(0,2,1)})
+            if(self.config.style_encoder_config.se_type == 'metastyle'):
+                se_args.update({'mel_mask':y_lengths})  
 
-        ## Pass
-        style_encoder_outputs = self.style_encoder_layer.inference(**se_args)
+            ## Pass
+            style_encoder_outputs = self.style_encoder_layer.inference(**se_args)
 
         ## Residual Disentanglement
         # residual_style_preds = None
