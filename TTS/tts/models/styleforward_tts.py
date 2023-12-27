@@ -746,6 +746,7 @@ class StyleforwardTTS(BaseTTS):
             y_norm = (y-means)/stds
         elif self.use_timbre_perturbation:
             y_norm = aux_input["mel_perturbed"]
+            print(y_norm.mean(), y.mean())
         else:
             y_norm = y
 
