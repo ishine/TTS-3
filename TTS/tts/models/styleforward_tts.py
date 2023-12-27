@@ -278,7 +278,7 @@ class StyleforwardTTS(BaseTTS):
         self.use_binary_alignment_loss = False
         self.use_timbre_perturbation = config.style_encoder_config.use_timbre_perturbation
 
-        print("Using timbre perturbation augmentation in Style Encoder: ", self.args.use_timbre_perturbation)
+        print("Using timbre perturbation augmentation in Style Encoder: ", self.use_timbre_perturbation)
 
         self.length_scale = (
             float(self.args.length_scale) if isinstance(self.args.length_scale, int) else self.args.length_scale
