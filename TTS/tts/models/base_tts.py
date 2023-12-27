@@ -194,6 +194,7 @@ class BaseTTS(BaseModel):
         energy = batch["energy"]
         language_ids = batch["language_ids"]
         style_ids = batch["style_ids"]
+        mel_perturbed = batch["mel_perturbed"]
 
         max_text_length = torch.max(text_lengths.float())
         max_spec_length = torch.max(mel_lengths.float())
@@ -244,7 +245,8 @@ class BaseTTS(BaseModel):
             "pitch": pitch,
             "energy": energy,
             "language_ids": language_ids,
-            "style_ids": style_ids
+            "style_ids": style_ids,
+            "mel_perturbed": mel_perturbed
         }
 
     def get_data_loader(
