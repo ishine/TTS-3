@@ -495,11 +495,11 @@ class TTSDataset(Dataset):
             mel_perturbed = None
             mel_perturbed_lengths = None
             if self.use_timbre_perturbation:
-                print(batch["wav"][0].shape)
-                y_ = self.timbre_perturb(batch["wav"][0])
-                print(y_)
+                # print(batch["wav"][0].shape)
+                # y_ = self.timbre_perturb(batch["wav"][0])
+                # print(y_)
 
-                mel_perturbed = [self.ap.melspectrogram(self.timbre_perturb(w)) for w in batch["wav"]]
+                mel_perturbed = [self.ap.melspectrogram(self.timbre_perturb.augment(w)) for w in batch["wav"]]
 
                 mel_perturbed_lengths = [m.shape[1] for m in mel_perturbed]
 
