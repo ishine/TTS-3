@@ -3,7 +3,7 @@ from typing import Union
 import numpy as np
 import parselmouth
 
-from config import Config
+# from config import Config
 
 
 def sampler(ratio):
