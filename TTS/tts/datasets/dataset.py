@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 from TTS.tts.utils.data import prepare_data, prepare_stop_target, prepare_tensor
 from TTS.tts.utils.text import pad_with_eos_bos, phoneme_to_sequence, text_to_sequence
 from TTS.utils.audio import AudioProcessor
-
+from TTS.utils.praat import PraatAugment, sampler
 
 class TTSDataset(Dataset):
     def __init__(
@@ -43,6 +43,7 @@ class TTSDataset(Dataset):
         d_vector_mapping: Dict = None,
         language_id_mapping: Dict = None,
         use_noise_augment: bool = False,
+        use_timbre_perturbation: bool = False,
         verbose: bool = False,
     ):
         """Generic 📂 data loader for `tts` models. It is configurable for different outputs and needs.
@@ -136,7 +137,7 @@ class TTSDataset(Dataset):
         self.d_vector_mapping = d_vector_mapping
         self.language_id_mapping = language_id_mapping
         self.use_noise_augment = use_noise_augment
-
+        self.use_timbre_perturbation = use_timbre_perturbation
         # print(self.items[:2])
 
         self.verbose = verbose
@@ -150,6 +151,8 @@ class TTSDataset(Dataset):
             self.pitch_extractor = PitchExtractor(self.ds_name, self.items, verbose=verbose)
         if compute_energy:
             self.energy_extractor = EnergyExtractor(self.ds_name, self.items, verbose=verbose)
+        if use_timbre_perturbation:
+            self.timbre_perturb = PraatAugment(self.sample_rate)
         if self.verbose:
             print("\n > DataLoader initialization")
             print(" | > Use phonemes: {}".format(self.use_phonemes))
@@ -488,6 +491,32 @@ class TTSDataset(Dataset):
                 for m in mel
             ]
 
+            
+            mel_perturbed = None
+            mel_perturbed_lengths = None
+            if self.use_timbre_perturbation:
+                mel_perturbed = [self.ap.melspectrogram(self.timbre_perturb(w)) for w in batch["wav"]]
+
+                mel_perturbed_lengths = [m.shape[1] for m in mel_perturbed]
+
+                # lengths adjusted by the reduction factor
+                mel_lengths_adjusted_perturbed = [
+                    m.shape[1] + (self.outputs_per_step - (m.shape[1] % self.outputs_per_step))
+                    if m.shape[1] % self.outputs_per_step
+                    else m.shape[1]
+                    for m in mel_perturbed
+                ]
+
+                # PAD features with longest instance
+                mel_perturbed = prepare_tensor(mel_perturbed, self.outputs_per_step)
+
+                # B x D x T --> B x T x D
+                mel_perturbed = mel_perturbed.transpose(0, 2, 1)
+
+                mel_perturbed = torch.FloatTensor(mel_perturbed).contiguous()
+                mel_perturbed_lengths = torch.LongTensor(mel_perturbed_lengths)
+
+
             # compute 'stop token' targets
             stop_targets = [np.array([0.0] * (mel_len - 1) + [1.0]) for mel_len in mel_lengths]
 
@@ -595,7 +624,9 @@ class TTSDataset(Dataset):
                 "energy": energy,
                 "language_ids": language_ids,
                 "style_ids": style_ids,
-                "style_target": batch["style_target"]
+                "style_target": batch["style_target"],
+                "mel_perturbed": mel_perturbed,
+                "mel_perturbed_lengths": mel_perturbed_lengths
             }
 
         raise TypeError(

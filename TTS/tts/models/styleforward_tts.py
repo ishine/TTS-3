@@ -276,6 +276,9 @@ class StyleforwardTTS(BaseTTS):
         self.use_pitch = self.args.use_pitch
         self.use_energy = self.args.use_energy
         self.use_binary_alignment_loss = False
+        self.use_timbre_perturbation = config.style_encoder_config.use_timbre_perturbation
+
+        print("Using timbre perturbation augmentation in Style Encoder: ", self.args.use_timbre_perturbation)
 
         self.length_scale = (
             float(self.args.length_scale) if isinstance(self.args.length_scale, int) else self.args.length_scale
@@ -699,7 +702,7 @@ class StyleforwardTTS(BaseTTS):
         dr: torch.IntTensor = None,
         pitch: torch.FloatTensor = None,
         energy: torch.FloatTensor = None,
-        aux_input: Dict = {"d_vectors": None, "speaker_ids": None, "style_ids": None},  # pylint: disable=unused-argument
+        aux_input: Dict = {"d_vectors": None, "speaker_ids": None, "style_ids": None, "mel_perturbed": None},  # pylint: disable=unused-argument
     ) -> Dict:
         """Model's forward pass.
 
@@ -741,6 +744,8 @@ class StyleforwardTTS(BaseTTS):
             means = torch.Tensor(means).unsqueeze(1).to(y.device)
             stds = torch.Tensor(stds).unsqueeze(1).to(y.device)
             y_norm = (y-means)/stds
+        elif self.use_timbre_perturbation:
+            y_norm = aux_input["mel_perturbed"]
         else:
             y_norm = y
 
@@ -1190,8 +1195,9 @@ class StyleforwardTTS(BaseTTS):
         speaker_ids = batch["speaker_ids"]
         durations = batch["durations"]
         style_ids = batch['style_ids'] if self.config.style_encoder_config.use_supervised_style else None
+        mel_perturbed = batch["mel_perturbed"]
         # print(style_ids) -> Ta vindo do batch errado, ta vindo None
-        aux_input = {"d_vectors": d_vectors, "speaker_ids": speaker_ids, "style_ids": style_ids}
+        aux_input = {"d_vectors": d_vectors, "speaker_ids": speaker_ids, "style_ids": style_ids, "mel_perturbed": mel_perturbed}
 
         # forward pass
         outputs = self.forward(

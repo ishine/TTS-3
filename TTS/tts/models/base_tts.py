@@ -324,7 +324,8 @@ class BaseTTS(BaseModel):
                 speaker_id_mapping=speaker_id_mapping,
                 d_vector_mapping=d_vector_mapping,
                 language_id_mapping=language_id_mapping,
-                style_id_mapping=style_id_mapping
+                style_id_mapping=style_id_mapping,
+                use_timbre_perturbation=config.style_encoder_config.use_timbre_perturbation
             )
 
             # pre-compute phonemes
