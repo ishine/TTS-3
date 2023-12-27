@@ -669,6 +669,8 @@ class PitchExtractor:
             file_name = wav_file.split('/')[-1]
         elif ds_name == 'ljspeech':
             file_name = os.path.splitext(os.path.basename(wav_file))[0]
+        else:
+            file_name = os.path.splitext(os.path.basename(wav_file))[0]
         
         pitch_file = os.path.join(cache_path, file_name + "_pitch.npy")
         return pitch_file
@@ -851,6 +853,8 @@ class EnergyExtractor:
         elif ds_name == 'blizzard_2023':
             file_name = wav_file.split('/')[-1]
         elif ds_name == 'ljspeech':
+            file_name = os.path.splitext(os.path.basename(wav_file))[0]
+        else:
             file_name = os.path.splitext(os.path.basename(wav_file))[0]
         
         energy_file = os.path.join(cache_path, file_name + "_energy.npy")
