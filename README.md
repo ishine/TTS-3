@@ -5,6 +5,7 @@ Clone this repo (duh), create a new conda env, then pip install locally the libr
 
 ```
 git clone https://github.com/m-pana/spk_anon_nac_lm.git
+cd spk_anon_nac_lm
 conda create -n spk_anon python=3.11
 conda activate spk_anon
 pip install -e coqui_tts
