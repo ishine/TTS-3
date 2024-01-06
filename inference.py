@@ -45,7 +45,7 @@ print(f'Num processes: {distributed_state.num_processes}')
 # create output folder if needed
 if not os.path.isdir(args.output_folder):
     print(f'Output folder {args.output_folder} does not exist, creating it')
-    os.mkdir(args.output_folder)
+    os.makedirs(args.output_folder)
 
 print(f'(device {device}) Speaker level: {args.speaker_level}')
 if args.target_rate is not None:
