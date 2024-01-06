@@ -532,7 +532,7 @@ def emolj_style_read(root_path, meta_file, **kwargs):
 
     with open(meta_path, 'r', encoding='utf-8') as f:
         for line in f:
-            cols = line.split(';')
+            cols = line.split('|')
             if(cols[0] == 'phonetic_transcription'): # It indicates that the first row is the header so we need to skip
                 continue
             wav_file = cols[1]
