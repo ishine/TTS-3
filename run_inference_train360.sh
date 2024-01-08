@@ -6,10 +6,10 @@ if [ "$#" -ne 1 ]; then
 fi
 
 chunk_num=$1
-scp_path="output_data/scp/libri360_part${chunk_num}.scp"
+scp_path="scp/libri360_part${chunk_num}.scp"
 output_folder="output_data/libri360"
-checkpoint_dir='/homes/panariel/.local/share/tts/tts_models--multilingual--multi-dataset--bark'
-data_root="/medias/speech/data/voicePrivacy2022/Voice-Privacy-Challenge-2022/baseline"
+checkpoint_dir="${HOME}/.local/share/tts/tts_models--multilingual--multi-dataset--bark"
+data_root="Voice-Privacy-Challenge-2022/baseline"
 voice_dir="suno_voices/v2"
 ds_type="libri"
 config_file='accelerate_config.yaml'

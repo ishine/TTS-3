@@ -45,7 +45,8 @@ print(f'Num processes: {distributed_state.num_processes}')
 # create output folder if needed
 if not os.path.isdir(args.output_folder):
     print(f'Output folder {args.output_folder} does not exist, creating it')
-    os.makedirs(args.output_folder)
+    os.makedirs(args.output_folder, exist_ok=True)  # yes i know i'm already checking, but exist_ok=True is needed
+    # because if you are using multi-GPU you can end up in a race condition
 
 print(f'(device {device}) Speaker level: {args.speaker_level}')
 if args.target_rate is not None:

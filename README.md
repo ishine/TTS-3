@@ -40,3 +40,6 @@ voices = 'suno_voices/v2'
 anonymizer = Anonymizer(args.checkpoint_dir, voice_dirs=[voices])
 anon_wav = anonymizer('path_to_audio.wav', target_voice_id='it_speaker_0')
 ```
+# other stuff
+- VPC2022 repo must be cloned within the folder, else you can modify the `data_root` path in the bash scripts
+- must change the port in accelerate config every time (or set it to 0, but didn't work for me)
