@@ -28,10 +28,15 @@ pip install torch==2.0.1 torchaudio==2.0.2 torchvision==0.15.2
 ```
 (I don't think downgrading torchvision is actually necessary, but the error message is scary so I did it anyway)
 
-## Files
+## Files and folders
 - the model is class is in `anonymizer.py`
 - `data.py` has a dataset class that also handles the speaker-lever/utterance-level mapping
-- `inference.py` performs anonymization with multi-GPU (uses huggingface accelerate)
+- `inference.py` performs anonymization of an entire data partition with multi-GPU processing (uses huggingface accelerate)
+- `simple_forward.py` shows a no-frills forward call to the model, anonymizing one utterance with one of the available target voices
+- `run_inference_eval.sh` and `run_inference_train360.sh` are scripts with some pre-defined parameters to perform anonymization specifically of the VoicePrivacy datasets
+- `bark_patch.patch` is a git patch that contains all the modifications that were made to the 🐸TTS Bark modules to adapt them for anonymization. It technically allows to recreate the model from a fresh 🐸TTS fork - though it's not really needed for anything here
+- `speaker_mappings` contains the generated randomly speaker-to-pseudospeaker mappings used to produce the results reported in the paper
+- `suno_voices` contains the voice samples made available by Suno AI, developers of Bark. They are taken from [here](https://suno-ai.notion.site/8b8e8749ed514b0cbf3f699013548683?v=bc67cff786b04b50b3ceb756fd05f68c)
 
 ## Usage
 ### Just a forward
@@ -47,7 +52,7 @@ anon_wav = anonymizer('path_to_audio.wav')  #output has shape (L,)
 ```
 ### Using custom voices
 Instantiate the model with a folder of voices. (provided in the repo)
-```
+```python
 # same as before, then
 
 voices = 'suno_voices/v2'
