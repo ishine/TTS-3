@@ -67,7 +67,7 @@ anonymizer = Anonymizer(args.checkpoint_dir, voice_dirs=[voices])
 anon_wav = anonymizer('path_to_audio.wav', target_voice_id='it_speaker_0')
 ```
 
-## Anonymizing the VoicePrivacy 2022 datasets
+### Anonymizing the VoicePrivacy 2022 datasets
 Scripts `run_inference_eval.sh` and `run_inference_train360.sh` are available to perform the anonymization of the VoicePrivacy Challenge 2022 datasets (respecting the spk-level/utt-level rules). To do that, you will of course need to download the datasets first. The scripts assume that the top-level folder of the [challenge repository](https://github.com/Voice-Privacy-Challenge/Voice-Privacy-Challenge-2022) has been placed in the root of this repo. If not, you can change the parameter `data_root` within the scripts.
 
 For example, to anonymize libri dev enrolls, run
@@ -78,9 +78,10 @@ Similarly, for libri360:
 ```bash
 bash run_inference_train360.sh 1
 ```
-The positional parameter `1` can be `{1,2,3,4}`. I split the file list in 4 parts as a sloppy way to make up for the lack of batched inference: at least you can run more multiple processes in parallel on different parts of libri360 to speed things up. It's unbelievably stupid, but I wanna see you come up with something better when the conference deadline is in a week.  
-If you decide to comply with my hacky design and launch multiple scripts in parallel, you should use a different process port for Accelerate in every run - otherwise anything but the first script you launch will crash. To do so, modify the `main_process_port` value in `accelerate_config.yaml` before running a new process.
+The first and only positional parameter can be `{1,2,3,4}`. I split the file list in 4 parts as a sloppy way to make up for the lack of batched inference: at least you can run more multiple processes in parallel on different parts of libri360 to speed things up. It's unbelievably stupid, but I wanna see you come up with something better when the conference deadline is in a week.  
+If you decide to comply with my hacky design and launch multiple scripts in parallel, you should use a different process port for Accelerate in every run - otherwise anything but the first script you launch will crash. To avoid such a tragic outcome, modify the `main_process_port` value in `accelerate_config.yaml` before running a new process (I think if you leave the value `null` it will just select the next available port, but I haven't tested that).  
+The `accelerate_config.yaml` file in this repository is set to run the inference on 4 GPUs in parallel.
 
-# other stuff
-- must change the port in accelerate config every time (or set it to 0, but didn't work for me)
-- recall that each process runs on 4 GPUs by default
+## Other comments
+- There is no training code because there was no training. This model is basically the result of bypassing the semantic regressor of Bark and using ground-truth semantic tokens instead of estimating them from text input. Thus, all modules are taken from either Bark or EnCodec.
+- I do not have the code of the alternative Speechbrain-based evaluation pipeline - if you are interested in that, please contact the second author of the paper.
