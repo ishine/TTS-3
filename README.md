@@ -85,3 +85,4 @@ The `accelerate_config.yaml` file in this repository is set to run the inference
 ## Other comments
 - There is no training code because there was no training. This model is basically the result of bypassing the semantic regressor of Bark and using ground-truth semantic tokens instead of estimating them from text input. Thus, all modules are taken from either Bark or EnCodec.
 - I do not have the code of the alternative Speechbrain-based evaluation pipeline - if you are interested in that, please contact the second author of the paper.
+- This work is distributed under the Mozilla Public License 2.0.
