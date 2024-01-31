@@ -880,8 +880,8 @@ class Vits(BaseTTS):
         self._log(ap, batch, outputs, "train")
 
     @torch.no_grad()
-    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int):
-        return self.train_step(batch, criterion, optimizer_idx)
+    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int, steps:int):
+        return self.train_step(batch, criterion, optimizer_idx, steps)
 
     def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
         ap = assets["audio_processor"]
