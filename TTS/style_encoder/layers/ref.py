@@ -110,6 +110,7 @@ class ReferenceEncoder(nn.Module):
 
     def forward(self, inputs):
         batch_size = inputs.size(0)
+        inputs = inputs.permute(0,2,1)
         x = inputs.view(batch_size, 1, -1, self.num_mel)
         # x: 4D tensor [batch_size, num_channels==1, num_frames, num_mel]
         for conv, bn in zip(self.convs, self.bns):

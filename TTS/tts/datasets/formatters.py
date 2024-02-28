@@ -535,7 +535,7 @@ def emolj_style_read(root_path, meta_file, **kwargs):
             cols = line.split('|')
             if(cols[0] == 'phonetic_transcription'): # It indicates that the first row is the header so we need to skip
                 continue
-            wav_file = cols[1]
+            wav_file = cols[1]a
             text = cols[0]
             speaker_name = cols[2]
             style_name = cols[3][:-1] # The last char is always "\n" since after this line is a breakline
