@@ -71,6 +71,12 @@ class TrainingArgs(Coqpit):
             "help": "Path to a model checkpoit. Restore the model with the given checkpoint and start a new training."
         },
     )
+    restore_style_encoder_path: str = field(
+        default="",
+        metadata={
+            "help": "Path to a style encoder model checkpoit. Restore the model with the given checkpoint and freeze it."
+        },
+    )
     best_path: str = field(
         default="",
         metadata={
@@ -309,6 +315,9 @@ class Trainer:
             self.model, self.optimizer, self.scaler, self.restore_step = self.restore_model(
                 self.config, args.restore_path, self.model, self.optimizer, self.scaler
             )
+        
+        if self.args.restore_style_encoder_path:
+            self.model = self.restore_freezed_style_encoder(args.restore_style_encoder_path, self.model)
 
         # setup scheduler
         self.scheduler = self.get_scheduler(self.model, self.config, self.optimizer)
@@ -405,6 +414,44 @@ class Trainer:
                 train_samples, eval_samples = get_data_samples()
             return train_samples, eval_samples
         return None, None
+
+    def restore_freezed_style_encoder(
+            self, 
+            restore_path,
+            model
+    ):
+        
+        print("Loading pre trained style encoder and freezing it")
+
+        def count_parameters(model):
+            return sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        init_params = count_parameters(model)
+
+        try:
+            checkpoint = torch.load(restore_path)
+            new_key = 'layer.'
+            new_checkpoint = {}
+            for key, value in checkpoint.items():
+                nova_chave = f"{new_key}{key.split('.', 1)[1]}"
+                if nova_chave in model.style_encoder_layer.state_dict().keys():
+                    # Substituir a primeira parte do nome da chave
+                    new_checkpoint[nova_chave] = value
+
+            for param in model.style_encoder_layer.parameters():
+                param.requires_grad = False
+
+            end_params = count_parameters(model)
+
+            freezed_params = init_params - end_params
+            print(f'There are {freezed_params} freezed params, which represents {freezed_params/init_params} of original model.')
+
+        except:
+            print('There is no possible to restore style encoder')
+
+
+        return model
+
 
     def restore_model(
         self,
