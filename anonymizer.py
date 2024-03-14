@@ -15,6 +15,10 @@ from TTS.tts.layers.bark.hubert.tokenizer import HubertTokenizer
 class Anonymizer(torch.nn.Module):
     def __init__(self, checkpoint_dir: str, voice_dirs: Union[list[str], None] = None):
         super().__init__()
+        
+        if not os.path.exists(checkpoint_dir):
+            print(f"Checkpoint directory {checkpoint_dir} not found, creating it")
+            os.makedirs(checkpoint_dir)
 
         # 1. initialize Bark
         config = BarkConfig()  # don't change the custom config for the love of god

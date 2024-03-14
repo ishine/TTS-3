@@ -68,7 +68,8 @@ class BarkConfig(BaseTTSConfig):
     COARSE_SEMANTIC_PAD_TOKEN: int = 12_048
     COARSE_INFER_TOKEN: int = 12_050
 
-    REMOTE_BASE_URL = "https://huggingface.co/erogol/bark/tree/main/"
+    # REMOTE_BASE_URL = "https://huggingface.co/erogol/bark/tree/main/"  # this used to return the actual model, now returns an HTML page lol
+    REMOTE_BASE_URL = "https://huggingface.co/erogol/bark/resolve/main/"
     REMOTE_MODEL_PATHS: Dict = None
     LOCAL_MODEL_PATHS: Dict = None
     SMALL_REMOTE_MODEL_PATHS: Dict = None
