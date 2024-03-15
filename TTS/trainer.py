@@ -54,6 +54,12 @@ if is_apex_available():
     from apex import amp
 
 
+def set_batchnorm_eval(m):
+    classname = m.__class__.__name__
+    if classname.find('BatchNorm') != -1:
+        m.eval()
+
+
 @dataclass
 class TrainingArgs(Coqpit):
     """Trainer arguments to be defined externally. It helps integrating the `Trainer` with the higher level APIs and
@@ -292,6 +298,11 @@ class Trainer:
             else:
                 self.criterion.cuda()
 
+        self.freeze_style_encoder = False
+        if self.args.restore_style_encoder_path:
+            self.freeze_style_encoder = True
+            self.model = self.restore_freezed_style_encoder(args.restore_style_encoder_path, self.model)
+
         # setup optimizer
         self.optimizer = self.get_optimizer(self.model, self.config)
 
@@ -316,8 +327,6 @@ class Trainer:
                 self.config, args.restore_path, self.model, self.optimizer, self.scaler
             )
         
-        if self.args.restore_style_encoder_path:
-            self.model = self.restore_freezed_style_encoder(args.restore_style_encoder_path, self.model)
 
         # setup scheduler
         self.scheduler = self.get_scheduler(self.model, self.config, self.optimizer)
@@ -442,11 +451,6 @@ class Trainer:
                 param.requires_grad = False
 
             end_params = count_parameters(model)
-
-            def set_batchnorm_eval(m):
-                classname = m.__class__.__name__
-                if classname.find('BatchNorm') != -1:
-                    m.eval()
 
             model.style_encoder_layer.apply(set_batchnorm_eval)
 
@@ -885,6 +889,10 @@ class Trainer:
             self.model.module.train()
         else:
             self.model.train()
+
+        if(self.freeze_style_encoder):
+            self.model.style_encoder_layer.apply(set_batchnorm_eval)
+
         epoch_start_time = time.time()
         if self.use_cuda:
             batch_num_steps = int(len(self.train_loader.dataset) / (self.config.batch_size * self.num_gpus))
