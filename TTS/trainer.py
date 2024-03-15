@@ -453,6 +453,8 @@ class Trainer:
 
             end_params = count_parameters(model)
 
+            model.style_encoder_layer.load_state_dict(new_checkpoint)
+
             model.style_encoder_layer.apply(set_batchnorm_eval)
 
             freezed_params = init_params - end_params
