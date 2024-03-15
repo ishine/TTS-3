@@ -443,6 +443,13 @@ class Trainer:
 
             end_params = count_parameters(model)
 
+            def set_batchnorm_eval(m):
+                classname = m.__class__.__name__
+                if classname.find('BatchNorm') != -1:
+                    m.eval()
+
+            model.style_encoder_layer.apply(set_batchnorm_eval)
+
             freezed_params = init_params - end_params
             print(f'There are {freezed_params} freezed params, which represents {freezed_params/init_params} of original model.')
 
