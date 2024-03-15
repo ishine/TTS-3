@@ -449,6 +449,7 @@ class Trainer:
 
             for param in model.style_encoder_layer.parameters():
                 param.requires_grad = False
+                param.grad = None
 
             end_params = count_parameters(model)
 
@@ -713,8 +714,8 @@ class Trainer:
             if(step_optimizer):
                 if grad_clip > 0:
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                parameters_with_grad = filter(lambda p: p.requires_grad, model.parameters())
-                optimizer.step(parameters_with_grad)
+                # parameters_with_grad = filter(lambda p: p.requires_grad, model.parameters())
+                optimizer.step()
                 #print('Optimizer step') #Its working
 
         # pytorch skips the step when the norm is 0. So ignore the norm value when it is NaN
