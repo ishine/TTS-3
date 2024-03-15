@@ -713,7 +713,8 @@ class Trainer:
             if(step_optimizer):
                 if grad_clip > 0:
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                optimizer.step()
+                parameters_with_grad = filter(lambda p: p.requires_grad, model.parameters())
+                optimizer.step(parameters_with_grad)
                 #print('Optimizer step') #Its working
 
         # pytorch skips the step when the norm is 0. So ignore the norm value when it is NaN

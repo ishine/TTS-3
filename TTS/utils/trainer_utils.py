@@ -90,7 +90,7 @@ def get_optimizer(
         
     if model is not None:
         parameters = model.parameters()
-    return optimizer(filter(lambda p: p.requires_grad, parameters()), lr=lr, **optimizer_params)
+    return optimizer(parameters, lr=lr, **optimizer_params)
 
 
 def get_last_checkpoint(path: str) -> Tuple[str, str]:
