@@ -1,0 +1,48 @@
+diff --git a/coqui_tts/TTS/tts/models/bark.py b/coqui_tts/TTS/tts/models/bark.py
+index e2cb132a..17c0dc1b 100644
+--- a/coqui_tts/TTS/tts/models/bark.py
++++ b/coqui_tts/TTS/tts/models/bark.py
+@@ -130,6 +130,43 @@ class Bark(BaseTTS):
+         audio_arr = codec_decode(x_fine_gen, self)
+         return audio_arr, x_coarse_gen, x_fine_gen
+ 
++    def semantic_to_fine(
++        self,
++        semantic_tokens: np.ndarray,
++        history_prompt: Optional[str] = None,
++        coarse_temp: float = 0.7,
++        fine_temp: float = 0.5,
++        base=None,
++    ):
++        """(mipa-authored) Generate fine & coarse tokens array from semantic input.
++
++        Args:
++            semantic_tokens: semantic token output from `text_to_semantic`
++            history_prompt: history choice for audio cloning
++            coarse_temp: generation temperature (1.0 more diverse, 0.0 more conservative)
++            fine_temp: fine tokens generation temperature (1.0 more diverse, 0.0 more conservative)
++
++        Returns:
++            coarse+fine tokens in a (8,L) matrix.
++        """
++        x_coarse_gen = generate_coarse(
++            semantic_tokens,
++            self,
++            history_prompt=history_prompt,
++            temp=coarse_temp,
++            base=base,
++            silent=True  # panariel: i changed this to True
++        )
++        x_fine_gen = generate_fine(
++            x_coarse_gen,
++            self,
++            history_prompt=history_prompt,
++            temp=fine_temp,  # used to be 0.5
++            base=base,
++        )
++        return x_coarse_gen, x_fine_gen
++
++
+     def generate_audio(
+         self,
+         text: str,

@@ -8,8 +8,8 @@ fi
 ds_name=$1
 partition=$2
 
-scp_path="scp/${ds_name}_wav.scp"
-output_folder="output_data/$ds_name"
+scp_path="scp/${ds_name}_${partition}_wav.scp"
+output_folder="output_data/${ds_name}_${partition}"
 checkpoint_dir="${HOME}/.local/share/tts/tts_models--multilingual--multi-dataset--bark"
 data_root="Voice-Privacy-Challenge-2022/baseline"
 voice_dir="suno_voices/v2"

@@ -89,7 +89,7 @@ for i, batch in enumerate(dl, 1):
             print(f'[{i}/{len_dl}] {device}\t| {utt_id}\t| {proxy_speaker}')
 
             with torch.no_grad():
-                anon_wav = anonymizer(path, target_voice_id=proxy_speaker)
+                anon_wav, _, _ = anonymizer(path, target_voice_id=proxy_speaker)
 
             # we save the output in wav regardless of what the input format was
             basename_file, _ = os.path.splitext(basename)
