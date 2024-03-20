@@ -22,7 +22,10 @@ parser.add_argument('--mapping_file', help="Path to a JSON mapping file. If give
 parser.add_argument('--speaker_level', default=False, action='store_true',
                     help='Whether to use speaker-level anon or utterance-level anon. Ignored if mapping_file is given.')
 parser.add_argument('--ds_type', help="Either 'libri' or 'vctk'. Defaults to the former.", default='libri')
-parser.add_argument('--target_rate', type=int, help="Resample output audio to this sampling rate. If not given, does not resample", default=None)
+parser.add_argument('--target_rate', type=int, help="Resample output audio to this sampling rate. If not given, "
+                                                    "does not resample", default=None)
+parser.add_argument('--vocos_ckp', type=str, help="Path to an optional Vocos checkpoint. If not given, default "
+                                                  "pretrained Vocos-encodec is used.", default=None)
 args = parser.parse_args()
 
 
@@ -95,6 +98,7 @@ for i, batch in enumerate(dl, 1):
             basename_file, _ = os.path.splitext(basename)
             new_basename = f'{basename_file}.wav'
             out_path = os.path.join(args.output_folder, new_basename)
+            anon_wav = anon_wav.cpu().squeeze().numpy()
             if args.target_rate is None:
                 sf.write(out_path, anon_wav, samplerate=anonymizer.sample_rate)
             else:

@@ -1,5 +1,7 @@
 from typing import Union
 
+import os
+
 from TTS.tts.configs.bark_config import BarkConfig
 from TTS.tts.models.bark import Bark
 from encodec.utils import convert_audio
@@ -12,9 +14,11 @@ from TTS.tts.layers.bark.hubert.kmeans_hubert import CustomHubert
 from TTS.tts.layers.bark.hubert.tokenizer import HubertTokenizer
 
 from vocos import Vocos
+from utils import get_trained_vocos
 
 class Anonymizer(torch.nn.Module):
-    def __init__(self, checkpoint_dir: str, voice_dirs: Union[list[str], None] = None, use_vocos=True):
+    def __init__(self, checkpoint_dir: str, voice_dirs: Union[list[str], None] = None, use_vocos=True,
+                 vocos_checkpoint=None):
         super().__init__()
         
         if not os.path.exists(checkpoint_dir):
@@ -41,8 +45,13 @@ class Anonymizer(torch.nn.Module):
 
         self.use_vocos = use_vocos
         if self.use_vocos:
-        # 3. if setting is given, initialize culos, i mean vocos
-            self.vocos = Vocos.from_pretrained("charactr/vocos-encodec-24khz")
+            # 3. if setting is given, initialize culos, i mean vocos
+            if vocos_checkpoint is None:
+                self.vocos = Vocos.from_pretrained("charactr/vocos-encodec-24khz")
+            elif type(vocos_checkpoint) is str:
+                self.vocos = get_trained_vocos(vocos_checkpoint)
+            else:
+                raise ValueError("Argument 'vocos_checkpoint' can only be str (path to a trained checkpoint) or None.")
 
     def forward(
             self,
