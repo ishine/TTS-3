@@ -11,6 +11,7 @@ from TTS.tts.layers.bark.hubert.hubert_manager import HubertManager
 from TTS.tts.layers.bark.hubert.kmeans_hubert import CustomHubert
 from TTS.tts.layers.bark.hubert.tokenizer import HubertTokenizer
 
+from vocos import Vocos
 
 class Anonymizer(torch.nn.Module):
     def __init__(self, checkpoint_dir: str, voice_dirs: Union[list[str], None] = None, use_vocos=True):
