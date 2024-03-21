@@ -92,17 +92,19 @@ for i, batch in enumerate(dl, 1):
             print(f'[{i}/{len_dl}] {device}\t| {utt_id}\t| {proxy_speaker}')
 
             with torch.no_grad():
-                anon_wav, _, _ = anonymizer(path, target_voice_id=proxy_speaker)
+                anon_wav_encodec, anon_wav_vocos = anonymizer(path, target_voice_id=proxy_speaker)
+                anon_wav_vocos = anon_wav_vocos.cpu().squeeze().numpy()
 
             # we save the output in wav regardless of what the input format was
             basename_file, _ = os.path.splitext(basename)
-            new_basename = f'{basename_file}.wav'
-            out_path = os.path.join(args.output_folder, new_basename)
-            anon_wav = anon_wav.cpu().squeeze().numpy()
-            if args.target_rate is None:
-                sf.write(out_path, anon_wav, samplerate=anonymizer.sample_rate)
-            else:
-                anon_wav = librosa.resample(anon_wav, orig_sr=anonymizer.sample_rate, target_sr=args.target_rate)
-                sf.write(out_path, anon_wav, samplerate=args.target_rate)
+            for anon_wav, vocoder in zip([anon_wav_encodec, anon_wav_vocos], ['encodec', 'vocos']):
+                new_basename = f'{basename_file}_{vocoder}.wav'
+                out_path = os.path.join(args.output_folder, new_basename)
+                # anon_wav = anon_wav.cpu().squeeze().numpy()
+                if args.target_rate is None:
+                    sf.write(out_path, anon_wav, samplerate=anonymizer.sample_rate)
+                else:
+                    anon_wav = librosa.resample(anon_wav, orig_sr=anonymizer.sample_rate, target_sr=args.target_rate)
+                    sf.write(out_path, anon_wav, samplerate=args.target_rate)
         else:
             print(f'[{i}/{len_dl}] {device}\t| Received item {single_item}, this is probably the last batch. Skipping.')

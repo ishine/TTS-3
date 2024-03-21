@@ -88,24 +88,26 @@ class Anonymizer(torch.nn.Module):
         # 'temp' here is only the coarse temperature. The fine temperature is internally fixed to 0.5
         # (i fiddled with it a bit and it does seem a bit of a sweet spot, any higher and the audio gets a bit dirty)
         # the other two returned values are coarse and fine tokens, we don't need them for now
-        if not self.use_vocos:
-            audio_arr, x_coarse_gen, x_fine_gen = self.model.semantic_to_waveform(
-                semantic_tokens, history_prompt=history_prompt, temp=coarse_temperature
-            )
-        else:
-            x_coarse_gen, x_fine_gen = self.model.semantic_to_fine(
-                semantic_tokens, history_prompt=history_prompt, coarse_temp=coarse_temperature
-            )
-            x_fine_gen = torch.tensor(x_fine_gen, device=self.model.device)
-            features = self.vocos.codes_to_features(x_fine_gen)
-            # i'm keeping the bandwidth the same as encodec (6 kbps)
-            # i genuinely have no idea what difference it makes inside vocos
-            # it seems to only internally affect layer norms, where they train the scale/bias according to the bitrate
-            # do they know that torch's layer norm already scales? I guess they do.
-            # yeah, the index '2' is 6 kbps according to their git
-            bandwidth_id = torch.tensor([2], device=self.model.device)
-            audio_arr = self.vocos.decode(features, bandwidth_id=bandwidth_id)
-        return audio_arr, x_coarse_gen, x_fine_gen
+
+        # exceptionally produce both decodings
+
+        audio_arr_encodec, _, _ = self.model.semantic_to_waveform(
+            semantic_tokens, history_prompt=history_prompt, temp=coarse_temperature
+        )
+
+        x_coarse_gen, x_fine_gen = self.model.semantic_to_fine(
+            semantic_tokens, history_prompt=history_prompt, coarse_temp=coarse_temperature
+        )
+        x_fine_gen = torch.tensor(x_fine_gen, device=self.model.device)
+        features = self.vocos.codes_to_features(x_fine_gen)
+        # i'm keeping the bandwidth the same as encodec (6 kbps)
+        # i genuinely have no idea what difference it makes inside vocos
+        # it seems to only internally affect layer norms, where they train the scale/bias according to the bitrate
+        # do they know that torch's layer norm already scales? I guess they do.
+        # yeah, the index '2' is 6 kbps according to their git
+        bandwidth_id = torch.tensor([2], device=self.model.device)
+        audio_arr_vocos = self.vocos.decode(features, bandwidth_id=bandwidth_id)
+        return audio_arr_encodec, audio_arr_vocos
 
 
 checkpoint_dir = '/homes/panariel/.local/share/tts/tts_models--multilingual--multi-dataset--bark'
