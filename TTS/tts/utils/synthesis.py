@@ -312,7 +312,7 @@ def synthesis(
         if cond_speaker_id is not None:
             cond_speaker_id = id_to_torch(cond_speaker_id, cuda=use_cuda)
         
-        # print(style_representation.shape)
+        print(style_representation)
         if style_representation is not None:
             style_mel = style_representation
 

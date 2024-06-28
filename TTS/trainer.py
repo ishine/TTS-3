@@ -54,6 +54,12 @@ if is_apex_available():
     from apex import amp
 
 
+def set_batchnorm_eval(m):
+    classname = m.__class__.__name__
+    if classname.find('BatchNorm') != -1:
+        m.eval()
+
+
 @dataclass
 class TrainingArgs(Coqpit):
     """Trainer arguments to be defined externally. It helps integrating the `Trainer` with the higher level APIs and
@@ -69,6 +75,12 @@ class TrainingArgs(Coqpit):
         default="",
         metadata={
             "help": "Path to a model checkpoit. Restore the model with the given checkpoint and start a new training."
+        },
+    )
+    restore_style_encoder_path: str = field(
+        default="",
+        metadata={
+            "help": "Path to a style encoder model checkpoit. Restore the model with the given checkpoint and freeze it."
         },
     )
     best_path: str = field(
@@ -286,6 +298,7 @@ class Trainer:
             else:
                 self.criterion.cuda()
 
+
         # setup optimizer
         self.optimizer = self.get_optimizer(self.model, self.config)
 
@@ -309,7 +322,13 @@ class Trainer:
             self.model, self.optimizer, self.scaler, self.restore_step = self.restore_model(
                 self.config, args.restore_path, self.model, self.optimizer, self.scaler
             )
-
+        
+        ## After restore path to guarantee style encoder will be freezed
+        self.freeze_style_encoder = False
+        if self.args.restore_style_encoder_path:
+            self.freeze_style_encoder = True
+            self.model = self.restore_freezed_style_encoder(args.restore_style_encoder_path, self.model)
+        
         # setup scheduler
         self.scheduler = self.get_scheduler(self.model, self.config, self.optimizer)
 
@@ -405,6 +424,49 @@ class Trainer:
                 train_samples, eval_samples = get_data_samples()
             return train_samples, eval_samples
         return None, None
+
+    def restore_freezed_style_encoder(
+            self, 
+            restore_path,
+            model
+    ):
+        
+        print("Loading pre trained style encoder and freezing it")
+
+        def count_parameters(model):
+            return sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        init_params = count_parameters(model)
+
+        try:
+            checkpoint = torch.load(restore_path)
+            new_key = 'layer.'
+            new_checkpoint = {}
+            for key, value in checkpoint.items():
+                nova_chave = f"{new_key}{key.split('.', 1)[1]}"
+                if nova_chave in model.style_encoder_layer.state_dict().keys():
+                    # Substituir a primeira parte do nome da chave
+                    new_checkpoint[nova_chave] = value
+
+            for param in model.style_encoder_layer.parameters():
+                param.requires_grad = False
+                param.grad = None
+
+            end_params = count_parameters(model)
+
+            model.style_encoder_layer.load_state_dict(new_checkpoint)
+
+            model.style_encoder_layer.apply(set_batchnorm_eval)
+
+            freezed_params = init_params - end_params
+            print(f'There are {freezed_params} freezed params, which represents {freezed_params/init_params} of original model.')
+
+        except:
+            print('There is no possible to restore style encoder')
+
+
+        return model
+
 
     def restore_model(
         self,
@@ -655,6 +717,7 @@ class Trainer:
             if(step_optimizer):
                 if grad_clip > 0:
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                # parameters_with_grad = filter(lambda p: p.requires_grad, model.parameters())
                 optimizer.step()
                 #print('Optimizer step') #Its working
 
@@ -831,6 +894,10 @@ class Trainer:
             self.model.module.train()
         else:
             self.model.train()
+
+        if(self.freeze_style_encoder):
+            self.model.style_encoder_layer.apply(set_batchnorm_eval)
+
         epoch_start_time = time.time()
         if self.use_cuda:
             batch_num_steps = int(len(self.train_loader.dataset) / (self.config.batch_size * self.num_gpus))

@@ -42,6 +42,9 @@ class StyleEncoderConfig(Coqpit):
     proj_dim: int = 384 # Projection dim, often the encoder output (512 is the tacotron2 default encoder output, 384 for fastpitch)
     use_nonlinear_proj: bool = False # Whether use or not a linear (last_dim, last_dim) + tanh before agg in TTS encoder outputs
 
+    # Timbre perturbation
+    use_timbre_perturbation: bool = False
+
     # Normalization
     use_melstat_norm: bool = False # If want to use pre computed melspec statistic only in input of style encoder
 

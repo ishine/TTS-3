@@ -276,6 +276,9 @@ class StyleforwardTTS(BaseTTS):
         self.use_pitch = self.args.use_pitch
         self.use_energy = self.args.use_energy
         self.use_binary_alignment_loss = False
+        self.use_timbre_perturbation = config.style_encoder_config.use_timbre_perturbation
+
+        print("Using timbre perturbation augmentation in Style Encoder: ", self.use_timbre_perturbation)
 
         self.length_scale = (
             float(self.args.length_scale) if isinstance(self.args.length_scale, int) else self.args.length_scale
@@ -699,7 +702,7 @@ class StyleforwardTTS(BaseTTS):
         dr: torch.IntTensor = None,
         pitch: torch.FloatTensor = None,
         energy: torch.FloatTensor = None,
-        aux_input: Dict = {"d_vectors": None, "speaker_ids": None, "style_ids": None},  # pylint: disable=unused-argument
+        aux_input: Dict = {"d_vectors": None, "speaker_ids": None, "style_ids": None, "mel_perturbed": None},  # pylint: disable=unused-argument
     ) -> Dict:
         """Model's forward pass.
 
@@ -741,6 +744,9 @@ class StyleforwardTTS(BaseTTS):
             means = torch.Tensor(means).unsqueeze(1).to(y.device)
             stds = torch.Tensor(stds).unsqueeze(1).to(y.device)
             y_norm = (y-means)/stds
+        elif self.use_timbre_perturbation:
+            y_norm = aux_input["mel_perturbed"]
+            # print(y_norm.mean(), y.mean())
         else:
             y_norm = y
 
@@ -1083,25 +1089,26 @@ class StyleforwardTTS(BaseTTS):
                 se_args.update({'mel_mask':y_lengths})  
 
             ## Pass
+            print(se_args['reference_features'])
             style_encoder_outputs = self.style_encoder_layer.inference(**se_args)
 
-        ## Residual Disentanglement
-        # residual_style_preds = None
-        # residual_speaker_preds = None
-        # if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
-        #     o_en = encoder_outputs.permute(0,2,1)
-        #     assert self.config.style_encoder_config.se_type == 'metastyle', 'the line above only works for the metastyle output format'
-        #     residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
-        #     style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
-        #     style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
-        #     grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
-        #     residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
-        #     residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
-        #     style_encoder_outputs['style_embedding'] = style_embeddings
-        #     style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
-        #     o_en = (o_en + style_embeddings).permute(0,2,1)
-        # else:
-        #     o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
+        # Residual Disentanglement
+        residual_style_preds = None
+        residual_speaker_preds = None
+        if(self.config.style_encoder_config.use_residual_speaker_disentanglement):
+            o_en = encoder_outputs.permute(0,2,1)
+            assert self.config.style_encoder_config.se_type == 'metastyle', 'the line above only works for the metastyle output format'
+            residual_speaker_embeddings = self.post_speaker_processor(style_encoder_outputs['style_embedding']) # Linear in style output to predict speaker
+            style_embeddings = style_encoder_outputs['style_embedding'] - residual_speaker_embeddings # Style embeddings minus speaker information embedding
+            style_embeddings = self.post_style_processor(style_embeddings) # Style post processing to be input of the decoder
+            grl_style_outs = self.grl_on_styles_in_speaker_embedding(residual_speaker_embeddings)
+            residual_style_preds = self.style_classifier_using_style_embedding(grl_style_outs)
+            residual_speaker_preds = self.resisual_speaker_classifier(residual_speaker_embeddings)
+            style_encoder_outputs['style_embedding'] = style_embeddings
+            style_embeddings = style_embeddings.unsqueeze(1).expand(o_en.size(0), o_en.size(1), -1)
+            o_en = (o_en + style_embeddings).permute(0,2,1)
+        else:
+            o_en = style_encoder_outputs['styled_inputs'].permute(0,2,1)
 
 
         if self.config.style_encoder_config.agg_stl_emb_adaptors:
@@ -1190,8 +1197,9 @@ class StyleforwardTTS(BaseTTS):
         speaker_ids = batch["speaker_ids"]
         durations = batch["durations"]
         style_ids = batch['style_ids'] if self.config.style_encoder_config.use_supervised_style else None
+        mel_perturbed = batch["mel_perturbed"]
         # print(style_ids) -> Ta vindo do batch errado, ta vindo None
-        aux_input = {"d_vectors": d_vectors, "speaker_ids": speaker_ids, "style_ids": style_ids}
+        aux_input = {"d_vectors": d_vectors, "speaker_ids": speaker_ids, "style_ids": style_ids, "mel_perturbed": mel_perturbed}
 
         # forward pass
         outputs = self.forward(
