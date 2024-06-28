@@ -139,6 +139,8 @@ recipes/**/*.npy
 recipes/**/*.json
 VCTK-Corpus-removed-silence/*
 style_classifier/*
+tmp_data/*
+
 # ignore training logs
 trainer_*_log.txt
 
