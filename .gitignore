@@ -140,6 +140,7 @@ recipes/**/*.json
 VCTK-Corpus-removed-silence/*
 style_classifier/*
 tmp_data/*
+data_path/*
 
 # ignore training logs
 trainer_*_log.txt
