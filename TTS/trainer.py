@@ -298,10 +298,6 @@ class Trainer:
             else:
                 self.criterion.cuda()
 
-        self.freeze_style_encoder = False
-        if self.args.restore_style_encoder_path:
-            self.freeze_style_encoder = True
-            self.model = self.restore_freezed_style_encoder(args.restore_style_encoder_path, self.model)
 
         # setup optimizer
         self.optimizer = self.get_optimizer(self.model, self.config)
@@ -327,7 +323,12 @@ class Trainer:
                 self.config, args.restore_path, self.model, self.optimizer, self.scaler
             )
         
-
+        ## After restore path to guarantee style encoder will be freezed
+        self.freeze_style_encoder = False
+        if self.args.restore_style_encoder_path:
+            self.freeze_style_encoder = True
+            self.model = self.restore_freezed_style_encoder(args.restore_style_encoder_path, self.model)
+        
         # setup scheduler
         self.scheduler = self.get_scheduler(self.model, self.config, self.optimizer)
 

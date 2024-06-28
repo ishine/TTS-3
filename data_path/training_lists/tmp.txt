@@ -1,0 +1,1 @@
+The intermediate features S are passed through the Decoder consisting of two linear layers, one of output size 192 and another for a linear transformation from 192 to the final number of classes N, to compute the probability that the current segment belongs to a speaker from the training set.

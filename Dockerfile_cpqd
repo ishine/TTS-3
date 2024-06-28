@@ -1,0 +1,118 @@
+
+#FROM pytorch/pytorch:1.0.1-cuda10.0-cudnn7-devel
+FROM pytorch/pytorch:1.7.0-cuda11.0-cudnn8-devel
+
+#cuda installation folder
+ARG CUDAROOT=/usr/local/cuda
+
+#nccl instalation folder
+#In order to check where nccl lib and include folders are located, run: dpkg-query -L libnccl-dev
+ARG NCCL_LIB=/usr/lib/x86_64-linux-gnu/
+ARG NCCL_INCLUDE=/usr/lib/x86_64-linux-gnu/
+
+#environment variables
+ENV PATH=$CUDAROOT/bin:$PATH
+ENV CPATH=$NCCL_INCLUDE:$CPATH
+ENV LD_LIBRARY_PATH=$NCCL_LIB/:$CUDAROOT/lib64:$LD_LIBRARY_PATH
+ENV LIBRARY_PATH=$NCCL_LIB/:$LIBRARY_PATH
+ENV CFLAGS="-I$CUDAROOT/include $CFLAGS"
+ENV CUDA_HOME=$CUDAROOT
+ENV CUDA_PATH=$CUDAROOT
+
+# Install system packages
+#RUN apt-get update && \
+#    apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
+      gcc \
+      g++ \
+      git \
+      automake \
+      autoconf \
+#      libprotobuf9v5 \
+      protobuf-compiler \
+      libprotobuf-dev \
+      libsndfile1-dev \
+      python3-pip \
+      python3-setuptools \
+      tree \
+      unzip \
+      wget \
+      sox \
+      gfortran \
+      libtool \
+      subversion \
+      cmake \
+      bc \
+      jq
+#      jq && \
+#    apt-get clean
+
+
+#RUN pip install setuptools \
+#       librosa \
+#       soundfile \
+#       tensorboardX \
+#       matplotlib \
+#       PyYAML \
+#       tqdm \
+#       kaldiio \
+#       h5py \
+#       yq \
+#       numpy \
+#       pytest-runner \
+#       pytest \
+#       hacking \
+#       flake8 \
+#       flake8-docstrings \
+#       numba==0.43.0 \
+#       llvmlite==0.32.1 \
+#       scikit-learn==0.22.2
+
+
+RUN pip install -U pip
+
+
+# If you want to use distributed training, please install
+# apex manually by following https://github.com/NVIDIA/apex
+RUN echo "Install Apex ..."
+RUN git clone https://github.com/NVIDIA/apex
+WORKDIR apex
+RUN pip install -v --no-cache-dir ./
+#RUN pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+
+
+# https://github.com/ipython/ipykernel/issues/422
+#RUN pip install jupyter ipykernel==5.1.1 nbconvert==4.4.0 matplotlib
+RUN pip install jupyter ipykernel==5.1.1 nbconvert matplotlib
+RUN pip install jupyter_http_over_ws
+RUN jupyter serverextension enable --py jupyter_http_over_ws
+
+
+#RUN conda install numba
+
+# Neet to run coqui-tts
+RUN pip3 install --upgrade setuptools \
+  && \
+  pip3 install cython \
+  && \
+  pip3 install numpy==1.18.5 \
+  && \
+  pip3 install llvmlite==0.35.0 \
+  && \
+  pip3 install soundfile
+
+
+WORKDIR /workspace/coqui-tts
+
+#Install Coqui-TTS
+RUN echo "Install Coqui-TTS ..."
+COPY setup.py .
+COPY setup.cfg .
+COPY requirements.txt .
+COPY requirements.dev.txt .
+COPY requirements.notebooks.txt .
+COPY requirements.tf.txt .
+COPY README.md .
+COPY TTS/VERSION /workspace/coqui-tts/TTS/VERSION
+COPY TTS/tts/utils/monotonic_align/ TTS/tts/utils/monotonic_align
+RUN pip install -r requirements.txt
