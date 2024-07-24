@@ -14,16 +14,26 @@ from TTS.tts.layers.bark.hubert.kmeans_hubert import CustomHubert
 from TTS.tts.layers.bark.hubert.tokenizer import HubertTokenizer
 
 from vocos import Vocos
+from char_vocos.pretrained import CharVocos
 from utils import get_trained_vocos
+
+from speechbrain.inference.ASR import EncoderASR
 
 class Anonymizer(torch.nn.Module):
     def __init__(self, checkpoint_dir: str, voice_dirs: Union[list[str], None] = None, use_vocos=True,
-                 vocos_checkpoint=None):
+                 vocos_checkpoint=None, device='cpu'):
         super().__init__()
         
         if not os.path.exists(checkpoint_dir):
             print(f"Checkpoint directory {checkpoint_dir} not found, creating it")
             os.makedirs(checkpoint_dir)
+
+        # 0. get speechbrain asr
+        self.asr_model = EncoderASR.from_hparams(
+            source="speechbrain/asr-wav2vec2-librispeech",
+            savedir="pretrained_models_sb/asr-wav2vec2-librispeech",
+            run_opts={"device": device, "freeze": True}
+        )
 
         # 1. initialize Bark
         config = BarkConfig()  # don't change the custom config for the love of god
@@ -47,9 +57,15 @@ class Anonymizer(torch.nn.Module):
         if self.use_vocos:
             # 3. if setting is given, initialize culos, i mean vocos
             if vocos_checkpoint is None:
+                print("Using normal pretrained vocos")
                 self.vocos = Vocos.from_pretrained("charactr/vocos-encodec-24khz")
             elif type(vocos_checkpoint) is str:
+                print(f"Using vocos checkpoint {vocos_checkpoint}")
                 self.vocos = get_trained_vocos(vocos_checkpoint)
+            elif type(vocos_checkpoint) is tuple:
+                config_path, model_path = vocos_checkpoint
+                print(f"Using char vocos\n\tconfig_path: {config_path}\n\tmodel_path: {model_path}")
+                self.vocos = CharVocos.from_local_pretrained(config_path, model_path)
             else:
                 raise ValueError("Argument 'vocos_checkpoint' can only be str (path to a trained checkpoint) or None.")
 
@@ -63,15 +79,26 @@ class Anonymizer(torch.nn.Module):
         # If you directly give a tensor: must be 1 channel, 24k sr, and shape (1, L)
         # batched inference is currently not supported, sorry
         if isinstance(audio, str):
-            audio, sr = torchaudio.load(audio)
+            audio_path = audio
+            audio, sr = torchaudio.load(audio_path)
             audio = convert_audio(audio, sr, self.model.config.sample_rate, self.model.encodec.channels)
             audio = audio.to(
                 self.model.device)  # there used to be an unsqueeze here but then they squeeze it back so it's useless
 
+            audio_asr_model = self.asr_model.load_audio(audio_path, savedir='./useless_links').unsqueeze(
+                0)  # will automatically resample
+            audio_asr_model = audio_asr_model.to(self.model.device)
+        else:
+            raise ValueError('In this implementation, audio must only be provided in the form of a string.')
+
+        fake_lens = torch.tensor([1.0], device=self.model.device)
+        log_softmax_scores = self.asr_model.encode_batch(audio_asr_model, fake_lens)  # recall, this is log softmax (1, T, 31)
+        # log_softmax_scores = log_softmax_scores.squeeze()
+
         # 1. Extraction of semantic tokens
         semantic_vectors = self.hubert_model.forward(audio, input_sample_hz=self.model.config.sample_rate)
         semantic_tokens = self.tokenizer.get_token(semantic_vectors)
-        semantic_tokens = semantic_tokens.cpu().numpy() # they must be shifted to cpu
+        semantic_tokens = semantic_tokens.cpu().numpy()  # they must be shifted to cpu
         # this probably slows things down, but the following api function from bark specifically requires numpy
         # but i mean, what the fuck do i know
 
@@ -89,11 +116,9 @@ class Anonymizer(torch.nn.Module):
         # (i fiddled with it a bit and it does seem a bit of a sweet spot, any higher and the audio gets a bit dirty)
         # the other two returned values are coarse and fine tokens, we don't need them for now
 
-        # exceptionally produce both decodings
-
-        audio_arr_encodec, _, _ = self.model.semantic_to_waveform(
-            semantic_tokens, history_prompt=history_prompt, temp=coarse_temperature
-        )
+        # audio_arr_encodec, _, _ = self.model.semantic_to_waveform(
+        #     semantic_tokens, history_prompt=history_prompt, temp=coarse_temperature
+        # )
 
         x_coarse_gen, x_fine_gen = self.model.semantic_to_fine(
             semantic_tokens, history_prompt=history_prompt, coarse_temp=coarse_temperature
@@ -106,8 +131,10 @@ class Anonymizer(torch.nn.Module):
         # do they know that torch's layer norm already scales? I guess they do.
         # yeah, the index '2' is 6 kbps according to their git
         bandwidth_id = torch.tensor([2], device=self.model.device)
-        audio_arr_vocos = self.vocos.decode(features, bandwidth_id=bandwidth_id)
-        return audio_arr_encodec, audio_arr_vocos
+        # audio_arr_vocos = self.vocos.decode(features, bandwidth_id=bandwidth_id)
+        audio_arr_vocos = self.vocos.decode(features, bandwidth_id=bandwidth_id, log_probs_transcript=log_softmax_scores)
+        # return audio_arr_encodec, audio_arr_vocos
+        return audio_arr_vocos
 
 
 checkpoint_dir = '/homes/panariel/.local/share/tts/tts_models--multilingual--multi-dataset--bark'

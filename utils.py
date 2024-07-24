@@ -1,6 +1,7 @@
 import torch
 import torchaudio
 from vocos import Vocos
+from char_vocos.pretrained import CharVocos
 from huggingface_hub import hf_hub_download
 import soundfile as sf
 
@@ -42,7 +43,24 @@ def get_trained_vocos(checkpoint_train_path) -> Vocos:
     state_dict = d['state_dict']
     # dict comprehension abomination
     filtered_state_dict = {k: state_dict[k] for k in state_dict.keys() if
+                           not ('multiresddisc' in k or 'multiperioddisc' in k or 'melspec_loss' in k or 'asr_model' in k)}
+    missing_keys, unexpected_keys = vaffanculos.load_state_dict(filtered_state_dict)
+    print(f'Loaded Vocos (encodec) from checkpoint in path {checkpoint_train_path}.\n\tMissing keys: {missing_keys}\n'
+          f'\tUnexpected keys: {unexpected_keys}')
+    vaffanculos.eval()
+    return vaffanculos
+
+
+def get_trained_char_vocos(checkpoint_train_path, config_path) -> Vocos:
+    # load the saved state dict and only keep those related to the generator (discrim is useless)
+    d = torch.load(checkpoint_train_path)
+    state_dict = d['state_dict']
+    # dict comprehension abomination
+    filtered_state_dict = {k: state_dict[k] for k in state_dict.keys() if
                            not ('multiresddisc' in k or 'multiperioddisc' in k or 'melspec_loss' in k)}
+    vaffanculos = CharVocos.from_local_pretrained(checkpoint_train_path, config_path)
+
+
     missing_keys, unexpected_keys = vaffanculos.load_state_dict(filtered_state_dict)
     print(f'Loaded Vocos (encodec) from checkpoint in path {checkpoint_train_path}.\n\tMissing keys: {missing_keys}\n'
           f'\tUnexpected keys: {unexpected_keys}')

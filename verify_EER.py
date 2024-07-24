@@ -6,7 +6,7 @@ Also, ponder about the misery of human condition.
 import argparse
 import os
 
-from speechbrain.inference.ASR import EncoderASR
+from speechbrain.inference.ASR import EncoderASR, EncoderDecoderASR
 from speechbrain.utils.data_utils import batch_pad_right
 from speechbrain.utils.edit_distance import wer_details_for_batch, wer_summary
 from speechbrain.dataio.wer import print_wer_summary
@@ -24,9 +24,15 @@ def main():
 
     # Do something adorable with the arguments here!
     print('A SpicBrein is born?')
-    asr_model = EncoderASR.from_hparams(
-        source="speechbrain/asr-wav2vec2-librispeech",
-        savedir="pretrained_models_sb/asr-wav2vec2-librispeech",
+    # asr_model = EncoderASR.from_hparams(
+    #     source="speechbrain/asr-wav2vec2-librispeech",
+    #     savedir="pretrained_models_sb/asr-wav2vec2-librispeech",
+    #     run_opts={"device": args.device, "freeze": True}
+    # )
+
+    asr_model = EncoderDecoderASR.from_hparams(
+        source="speechbrain/asr-crdnn-rnnlm-librispeech",
+        savedir="pretrained_models/asr-crdnn-rnnlm-librispeech",
         run_opts={"device": args.device, "freeze": True}
     )
 
