@@ -1,4 +1,4 @@
-# Speaker anonymization using neural audio codec language models
+# Preserving spoken content in voice anonymisation with character-level vocoder conditioning
 Author's implementation of [Preserving spoken content in voice anonymisation with character-level vocoder conditioning](https://arxiv.org/abs/link_not_available_yet_google_the_paper_name_in_the_meantime), published at SPSC Symposium 2024. The repository provides model weights and instructions on how to perform inference on the [VoicePrivacy Challenge 2024](https://github.com/Voice-Privacy-Challenge/Voice-Privacy-Challenge-2024) datasets.
 
 ## Installation
@@ -36,17 +36,11 @@ pip install vocos
 EnCodec natively operates at 24 kHz; therefore, so does Bark; therefore, so does our model. If you forward an audio array, make sure it is 24k and of shape (1,L). You can also just provide a file path, in which case the model will internally handle any needed resampling.  
 Batched inference is not supported. I know, that sucks. I didn't dare tinkering with Bark's internal modules to make them support batched input - not yet, at least.
 
-Anyhow, below is the code to anonymize a single wav file with a totally random pseudo-voice. When instantiating the model, you need to pass the directory where the pretrained weights are stored; normally, it will be `~/.local/share/tts/tts_models--multilingual--multi-dataset--bark`.
-```python
-import os  # just needed to expand '~' to $HOME
-from anonymizer import Anonymizer
+Note that this version uses a re-trained version of Vocos that uses character-level conditioning. [➡️ HERE IS THE LINK TO DOWNLOAD THE CHECKPOINT ⬅️.](https://nextcloud.eurecom.fr/s/xoHw6fjgJBJtWna).
+We do not provide the training code because, trust me, you don't wanna see that abomination. But if you are really itching to try and train the character-conditioned Vocos by yourself, send an email to the first author.
 
-chekpoint_dir = os.path.expanduser('~/.local/share/tts/tts_models--multilingual--multi-dataset--bark')
-
-anonymizer = Anonymizer(args.checkpoint_dir)  # you can call .to(device) if you want
-anon_wav = anonymizer('path_to_audio.wav')  # output has shape (L,)
-```
-To perform speaker-level anonymization, you need to provide a pseudo-speaker prompt for each speaker. To do so, when instantiating the model, pass the position of the voice prompts folder (in this repo, it is `suno_voices/v2`). To select a pseudo-speaker, pass a target voice id to the forward method. The IDs of the provided voice prompts have the format `<country code>_speaker_<number>`.
+Once you have the file `char_vocos.ckpt`, you supply it to the class constructor along with the configuration file `char_vocos_config.yaml`. They need to be joined in a tuple in which the config file goes first. Not a list, not a set, a tuple. Not doing so will result in the model using the normal EnCodec decoder, collapsing back to the anon system in the other branch.
+You can provide pseudo-speaker IDs to the forward call. To do so, when instantiating the model, pass the position of the voice prompts folder (in this repo, it is `suno_voices/v2`). To select a pseudo-speaker, pass a target voice id to the forward method. The IDs of the provided voice prompts have the format `<country code>_speaker_<number>` (note that not passing a voice dir will result in the model sampling the acoustic prompt from nothing - see the other branch for more info).
 ```python
 import os
 from anonymizer import Anonymizer
@@ -54,26 +48,18 @@ from anonymizer import Anonymizer
 chekpoint_dir = os.path.expanduser('~/.local/share/tts/tts_models--multilingual--multi-dataset--bark')
 voices = 'suno_voices/v2'
 
-anonymizer = Anonymizer(args.checkpoint_dir, voice_dirs=[voices])
+anonymizer = Anonymizer(args.checkpoint_dir, voice_dirs=[voices], vocos_checkpoint=('char_vocos_config.yaml', 'char_vocos.ckpt'))
 anon_wav = anonymizer('path_to_audio.wav', target_voice_id='it_speaker_0')
 ```
 
-### Anonymizing the VoicePrivacy 2022 datasets
-Scripts `run_inference_eval.sh` and `run_inference_train360.sh` are available to perform the anonymization of the VoicePrivacy Challenge 2022 datasets (respecting the spk-level/utt-level rules). To do that, you will of course need to download the datasets first. The scripts assume that the top-level folder of the [challenge repository](https://github.com/Voice-Privacy-Challenge/Voice-Privacy-Challenge-2022) has been placed in the root of this repo. If not, you can change the parameter `data_root` within the scripts.
+### Anonymizing the VoicePrivacy 2024 datasets
+Scripts `run_inference_eval_2024.sh` and `run_inference_train360_2024.sh` are available to perform the anonymization of the VoicePrivacy Challenge 2024 datasets.
 
 For example, to anonymize libri dev enrolls, run
 ```bash
-bash run_inference_eval.sh libri_dev enrolls
+bash run_inference_eval_2024.sh libri_dev enrolls <root of the data that will be contatenated to the paths in the SCP file>
 ```
-Similarly, for libri360:
-```bash
-bash run_inference_train360.sh 1
-```
-The first and only positional parameter can be `{1,2,3,4}`. I split the file list in 4 parts as a sloppy way to make up for the lack of batched inference: at least you can run more multiple processes in parallel on different parts of libri360 to speed things up. It's unbelievably stupid, but I wanna see you come up with something better when the conference deadline is in a week.  
-If you decide to comply with my hacky design and launch multiple scripts in parallel, you should use a different process port for Accelerate in every run - otherwise anything but the first script you launch will crash. To avoid such a tragic outcome, modify the `main_process_port` value in `accelerate_config.yaml` before running a new process (I think if you leave the value `null` it will just select the next available port, but I haven't tested that).  
-The `accelerate_config.yaml` file in this repository is set to run the inference on 4 GPUs in parallel.
+For libri 360, you need to modify the root internally, because basically I didn't have the time to make it as modular as the version in the old branch. Mea culpa, life is hard, academia is harder.
 
-## Other comments
-- There is no training code because there was no training. This model is basically the result of bypassing the semantic regressor of Bark and using ground-truth semantic tokens instead of estimating them from text input. Thus, all modules are taken from either Bark or EnCodec.
-- I do not have the code of the alternative Speechbrain-based evaluation pipeline - if you are interested in that, please contact the second author of the paper.
-- This work is distributed under the Mozilla Public License 2.0.
+### Final remark
+Yes, this README kinda sucks compared to the one in the aforementioned "other branch". Hopefully I'll be able to refine it a little bit afterwards. Bye.
